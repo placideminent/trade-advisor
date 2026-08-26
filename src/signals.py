@@ -145,8 +145,8 @@ def recommend(an: Analysis, htf_6m_action: str | None = None) -> Signal:
         reasons.append(f"예상 손익비 {rr:.2f} (목표 {_fmt(target)} / 손절 {_fmt(stop)})")
 
     bar_count = 0 if an.df is None else len(an.df)
-    buy_cut = 3 if bar_count < 50 else 2
-    sell_cut = -3 if bar_count < 50 else -2
+    buy_cut = 5 if bar_count < 50 else 4
+    sell_cut = -5 if bar_count < 50 else -4
     if bar_count < 50:
         reasons.append(f"표본 {bar_count}봉으로 짧음 — 매수/매도 기준을 더 엄격히 적용")
 
