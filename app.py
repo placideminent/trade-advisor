@@ -291,7 +291,7 @@ st.markdown(
       분석일 {as_of} · {meta.get("bar", bar_name)} · {analysis.price_label} 기준
       {(" · " + analysis.price_source) if analysis.price_source else ""}</div>
       <div style="font-size:1.8rem;font-weight:700;margin:0.2rem 0">제안: {signal.action}
-      <span style="font-size:1rem;font-weight:500">신뢰 {signal.confidence}</span></div>
+      <span style="font-size:1rem;font-weight:500">신뢰 {signal.confidence} · 합산 {signal.score:+d}</span></div>
       <div>{signal.summary}</div>
     </div>
     """,
