@@ -11,7 +11,7 @@ import streamlit as st
 from src.analysis import analyze
 from src.chart import build_chart
 from src.data import fetch_ohlcv, fetch_spot_price, search_kr
-from src.signals import recommend, _fmt
+from src.signals import recommend, score_to_pct, _fmt
 
 
 def _make_signal(an, htf_6m_action=None, htf_6m_pct=None):
@@ -22,6 +22,11 @@ def _make_signal(an, htf_6m_action=None, htf_6m_pct=None):
             return recommend(an, htf_6m_action=htf_6m_action)
         except TypeError:
             return recommend(an)
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def _cached_spot(market: str, ticker: str):
+    return fetch_spot_price(market, ticker)
 from src.universe import (
     CRYPTO,
     KR_PRESETS,
@@ -232,7 +237,7 @@ spot_price = None
 spot_source = ""
 if as_of == date.today():
     try:
-        spot_price, spot_source = fetch_spot_price(market, ticker)
+        spot_price, spot_source = _cached_spot(market, ticker)
     except Exception:
         spot_price, spot_source = None, ""
     if spot_price is None:
@@ -282,7 +287,8 @@ try:
                 )
                 sig_6m = _make_signal(an_6m)
                 htf_6m_action = sig_6m.action
-                htf_6m_pct = getattr(sig_6m, "score_pct", None)
+                # 6개월 화면과 같은 눈금으로 %를 다시 계산한다.
+                htf_6m_pct = score_to_pct(sig_6m.score)
         except Exception:
             htf_6m_action = None
             htf_6m_pct = None
@@ -292,6 +298,7 @@ except Exception as exc:
     st.stop()
 
 action_class = {"매수": "action-buy", "매도": "action-sell", "홀딩": "action-hold"}[signal.action]
+six_txt = f" · 6개월 {htf_6m_pct}%" if htf_6m_pct is not None else ""
 st.markdown(
     f"""
     <div class="{action_class}">
@@ -299,7 +306,7 @@ st.markdown(
       분석일 {as_of} · {meta.get("bar", bar_name)} · {analysis.price_label} 기준
       {(" · " + analysis.price_source) if analysis.price_source else ""}</div>
       <div style="font-size:1.8rem;font-weight:700;margin:0.2rem 0">제안: {signal.action}
-      <span style="font-size:1rem;font-weight:500">합산 {signal.score_pct}% · 신뢰 {signal.confidence}%</span></div>
+      <span style="font-size:1rem;font-weight:500">합산 {signal.score_pct}%{six_txt} · 신뢰 {signal.confidence}%</span></div>
       <div>{signal.summary}</div>
     </div>
     """,

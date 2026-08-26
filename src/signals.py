@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-SIGNAL_RULE_VERSION = 5
+SIGNAL_RULE_VERSION = 6
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 10
-# 1~3개월: 6개월 평가±1 + 상방/하단 근접±3 포함
-SCORE_SPAN_6M = (-10, 9)
-SCORE_SPAN_PLAIN = (-7, 6)
+# 합산 %는 조회 기간과 상관없이 같은 눈금(이론상 최저~최고)을 쓴다.
+SCORE_LO = SCORE_BASE - 10  # 0
+SCORE_HI = SCORE_BASE + 9  # 19
 
 from .analysis import Analysis, Level
 
@@ -31,13 +31,12 @@ class Signal:
     score_max: int = 0
 
 
-def score_bounds(has_6m: bool) -> tuple[int, int]:
-    lo_d, hi_d = SCORE_SPAN_6M if has_6m else SCORE_SPAN_PLAIN
-    return SCORE_BASE + lo_d, SCORE_BASE + hi_d
+def score_bounds(_has_6m: bool | None = None) -> tuple[int, int]:
+    return SCORE_LO, SCORE_HI
 
 
-def score_to_pct(score: int, has_6m: bool) -> int:
-    lo, hi = score_bounds(has_6m)
+def score_to_pct(score: int, _has_6m: bool | None = None) -> int:
+    lo, hi = SCORE_LO, SCORE_HI
     if hi <= lo:
         return 50
     pct = (score - lo) / (hi - lo) * 100
@@ -194,9 +193,8 @@ def recommend(
         )
 
     score = max(0, score)
-    has_6m = htf_6m_action is not None or htf_6m_pct is not None
-    lo, hi = score_bounds(has_6m)
-    score_pct = score_to_pct(score, has_6m)
+    lo, hi = SCORE_LO, SCORE_HI
+    score_pct = score_to_pct(score)
     reasons.append(
         f"합산 {score_pct}% ({score}점, 범위 {lo}~{hi}) · 매수 {buy_pct_cut}%↑ / 매도 {sell_pct_cut}%↓"
     )
