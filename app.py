@@ -64,8 +64,9 @@ st.markdown(
 
 st.title("매매시점 제안")
 st.caption(
-    "원하는 날짜의 일봉만 사용해 추세선·지지/저항·매물대를 계산하고 "
-    "매수 / 매도 / 홀딩을 제안합니다. 투자 자문이 아닙니다."
+    "원하는 날짜까지 시세로 추세선·지지/저항·매물대를 계산하고 "
+    "매수 / 매도 / 홀딩을 제안합니다. "
+    "1~3개월은 4시간봉, 6개월·1년은 일봉입니다. 투자 자문이 아닙니다."
 )
 
 
@@ -129,17 +130,20 @@ with st.sidebar:
     as_of = st.date_input("분석 시점", value=date.today(), max_value=date.today())
     lookback_keys = list(LOOKBACK_OPTIONS.keys())
     lookback_label = st.selectbox("조회 기간", lookback_keys, index=lookback_keys.index("1년"))
-    lookback_days = LOOKBACK_OPTIONS[lookback_label]
+    lookback_spec = LOOKBACK_OPTIONS[lookback_label]
+    lookback_days = lookback_spec["days"]
+    timeframe = lookback_spec["timeframe"]
     run = st.button("분석하기", type="primary", use_container_width=True)
 
     st.markdown("---")
     st.markdown(
         """
 **계산 방식**
-- 지정일 **당일 종가까지**만 사용 (이후 봉 제외)
+- 지정일까지 시세만 사용 (이후 봉 제외)
+- **1·2·3개월 → 4시간봉**, **6개월·1년 → 일봉**
 - 추세선: 최근 스윙 고점/저점 연결
 - 지지·저항: 스윙 군집 + 매물대
-- 매물대: 일봉 고가~저가 구간에 거래량 분배
+- 매물대: 각 봉의 고가~저가에 거래량 분배
 - 신호: 규칙 점수 (추세, 이격, RSI, 손익비)
         """
     )
@@ -154,7 +158,7 @@ if not run:
         2. **과거 특정 날짜**를 시점으로 넣으면 그 날 이후 시세는 보지 않습니다.
         3. 그 시점의 추세선, 지지/저항, 주요 매물대를 그린 뒤 매수·매도·홀딩을 제안합니다.
 
-        일봉 근사라 분봉 매물대보다는 거칠지만, 날짜를 바꿔가며 복기하기 좋습니다.
+        1~3개월은 4시간봉, 6개월·1년은 일봉으로 계산합니다.
         """
     )
     st.stop()
@@ -164,13 +168,22 @@ if not ticker:
     st.stop()
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _cached_ohlcv(market: str, ticker: str, as_of_iso: str, lookback_days: int):
-    return fetch_ohlcv(market, ticker, date.fromisoformat(as_of_iso), lookback_days)
+def _cached_ohlcv(market: str, ticker: str, as_of_iso: str, lookback_days: int, timeframe: str):
+    return fetch_ohlcv(
+        market,
+        ticker,
+        date.fromisoformat(as_of_iso),
+        lookback_days,
+        timeframe=timeframe,
+    )
 
 
-with st.spinner(f"{display_name or ticker} / {as_of} 일봉 수집 중..."):
+bar_name = "4시간봉" if timeframe == "4h" else "일봉"
+with st.spinner(f"{display_name or ticker} / {as_of} {bar_name} 수집 중..."):
     try:
-        df, meta = _cached_ohlcv(market, ticker, as_of.isoformat(), lookback_days)
+        df, meta = _cached_ohlcv(
+            market, ticker, as_of.isoformat(), lookback_days, timeframe
+        )
         df = df.copy()
         meta = dict(meta)
     except Exception as extra:
@@ -178,20 +191,19 @@ with st.spinner(f"{display_name or ticker} / {as_of} 일봉 수집 중..."):
         st.stop()
 
 if df.empty:
-    st.error("해당 기간에 일봉이 없습니다. 종목 코드나 날짜를 확인하세요.")
+    st.error("해당 기간에 봉이 없습니다. 종목 코드나 날짜를 확인하세요.")
     st.stop()
 
 # 오늘 봉은 장중·코인 24시간에 계속 변하므로, 당일 조회는 직전 완성 봉까지만 쓴다.
-if as_of == date.today() and len(df) > 1 and pd.Timestamp(df.index[-1]).date() == date.today():
-    df = df.iloc[:-1].copy()
-    meta["note"] = "당일 미완성 봉 제외"
+if as_of == date.today() and len(df) > 1:
+    last_ts = pd.Timestamp(df.index[-1])
+    if last_ts.date() == date.today():
+        df = df.iloc[:-1].copy()
+        meta["note"] = "당일 미완성 봉 제외"
 
-min_bars = 40
-if lookback_days <= 90 or len(df) < min_bars:
+if len(df) < 40:
     st.warning(
-        f"조회 기간이 짧습니다 (일봉 {len(df)}개). "
-        "1~3개월은 추세·매물대가 봉 한두 개에 흔들려 제안이 쉽게 바뀝니다. "
-        "같은 조건이면 10분간 결과를 재사용합니다."
+        f"{bar_name}이 {len(df)}개로 적습니다. 지지·저항 신뢰도가 낮을 수 있습니다."
     )
 
 try:
@@ -206,7 +218,7 @@ st.markdown(
     f"""
     <div class="{action_class}">
       <div style="font-size:0.9rem;opacity:0.8">{meta.get("name") or display_name} ·
-      분석일 {as_of} · 마지막 봉 {analysis.last_bar.date()}</div>
+      분석일 {as_of} · {meta.get("bar", bar_name)} · 마지막 봉 {analysis.last_bar.strftime("%Y-%m-%d %H:%M") if timeframe == "4h" else analysis.last_bar.date()}</div>
       <div style="font-size:1.8rem;font-weight:700;margin:0.2rem 0">제안: {signal.action}
       <span style="font-size:1rem;font-weight:500">신뢰 {signal.confidence}</span></div>
       <div>{signal.summary}</div>
@@ -249,11 +261,17 @@ with right:
         )
     st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
 
-title = f"{meta.get('name', ticker)} ({meta.get('ticker', ticker)})  ·  {analysis.last_bar.date()} 종가 기준"
+last_txt = (
+    analysis.last_bar.strftime("%Y-%m-%d %H:%M")
+    if timeframe == "4h"
+    else str(analysis.last_bar.date())
+)
+title = f"{meta.get('name', ticker)} ({meta.get('ticker', ticker)})  ·  {bar_name}  ·  {last_txt} 기준"
 st.plotly_chart(build_chart(analysis, signal, title), use_container_width=True)
 
 st.caption(
-    f"데이터: {meta.get('source')} · 조회 시작 {df.index[0].date()} ~ {df.index[-1].date()} "
-    f"({len(df)}봉) · 지정일 이후 시세는 포함하지 않습니다. "
-    "일봉 매물대는 분봉 프로파일의 근사치입니다."
+    f"데이터: {meta.get('source')} · {bar_name} · "
+    f"{df.index[0]} ~ {df.index[-1]} ({len(df)}봉) · "
+    "지정일 이후 시세는 포함하지 않습니다. "
+    "매물대는 각 봉의 고가~저가에 거래량을 나눠 쌓은 근사치입니다."
 )

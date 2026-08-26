@@ -39,12 +39,11 @@ US_PRESETS = [
 ]
 
 LOOKBACK_OPTIONS = {
-    "1개월": 30,
-    "3개월": 90,
-    "6개월": 180,
-    "1년": 365,
-    "2년": 730,
-    "5년": 1825,
+    "1개월": {"days": 30, "timeframe": "4h"},
+    "2개월": {"days": 60, "timeframe": "4h"},
+    "3개월": {"days": 90, "timeframe": "4h"},
+    "6개월": {"days": 180, "timeframe": "1d"},
+    "1년": {"days": 365, "timeframe": "1d"},
 }
 
 MARKETS = {

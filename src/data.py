@@ -4,10 +4,17 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 
 from .universe import CRYPTO
+
+MARKET_TZ = {
+    "KR": "Asia/Seoul",
+    "US": "America/New_York",
+    "CRYPTO": "UTC",
+}
 
 def _cache_dir() -> Path:
     primary = Path(__file__).resolve().parent.parent / ".cache"
@@ -96,7 +103,7 @@ def _normalize_ohlcv(df: pd.DataFrame) -> pd.DataFrame:
         raise ValueError(f"OHLCV 컬럼 없음: {missing} / 실제={list(df.columns)}")
 
     out = out[needed].copy()
-    out.index = pd.to_datetime(out.index).tz_localize(None)
+    out.index = pd.to_datetime(out.index)
     out = out.sort_index()
     out = out[~out.index.duplicated(keep="last")]
     out = out.dropna(subset=["open", "high", "low", "close"])
@@ -114,14 +121,21 @@ def _fetch_fdr(code: str, start: date, end: date) -> pd.DataFrame:
     return _normalize_ohlcv(raw)
 
 
-def _fetch_yf(symbol: str, start: date, end: date) -> pd.DataFrame:
+def _index_naive_wall(idx) -> pd.DatetimeIndex:
+    idx = pd.DatetimeIndex(pd.to_datetime(idx))
+    if idx.tz is not None:
+        return pd.to_datetime(idx.strftime("%Y-%m-%d %H:%M:%S"))
+    return idx
+
+
+def _fetch_yf(symbol: str, start: date, end: date, interval: str = "1d") -> pd.DataFrame:
     import yfinance as yf
 
-    # yfinance end is exclusive on daily bars in some versions
     raw = yf.download(
         symbol,
         start=start.isoformat(),
         end=(end + timedelta(days=1)).isoformat(),
+        interval=interval,
         auto_adjust=True,
         progress=False,
         threads=False,
@@ -129,16 +143,62 @@ def _fetch_yf(symbol: str, start: date, end: date) -> pd.DataFrame:
     return _normalize_ohlcv(raw)
 
 
+def resample_4h(df: pd.DataFrame, market: str) -> pd.DataFrame:
+    """1시간봉을 시장 시간대 기준 4시간봉으로 합친다."""
+    if df.empty:
+        return df
+    work = df.copy()
+    tz = ZoneInfo(MARKET_TZ.get(market, "UTC"))
+    idx = pd.DatetimeIndex(pd.to_datetime(work.index))
+    if idx.tz is None:
+        idx = idx.tz_localize("UTC")
+    work.index = idx.tz_convert(tz)
+    out = work.resample("4h", label="left", closed="left").agg(
+        open=("open", "first"),
+        high=("high", "max"),
+        low=("low", "min"),
+        close=("close", "last"),
+        volume=("volume", "sum"),
+    )
+    out = out.dropna(subset=["open", "high", "low", "close"])
+    out.index = _index_naive_wall(out.index)
+    return out
+
+
+def _kr_yahoo_symbols(code: str) -> list[str]:
+    suffixes = [".KS", ".KQ"]
+    try:
+        listing = load_kr_listing()
+        row = listing.loc[listing["Code"] == code]
+        if not row.empty and "Market" in row.columns:
+            market_name = str(row.iloc[0]["Market"]).upper()
+            if "KOSDAQ" in market_name:
+                suffixes = [".KQ", ".KS"]
+    except Exception:
+        pass
+    return [f"{code}{s}" for s in suffixes]
+
+
 def fetch_ohlcv(
     market: str,
     ticker: str,
     as_of: date,
     lookback_days: int = 365,
+    timeframe: str = "1d",
 ) -> tuple[pd.DataFrame, dict]:
-    """지정일(as_of)까지의 일봉만 반환. 미래 데이터는 넣지 않는다."""
+    """지정일(as_of)까지의 봉만 반환. 1~3개월은 4시간봉, 그 이상은 일봉."""
     as_of = _to_date(as_of)
-    start = as_of - timedelta(days=int(lookback_days * 1.6) + 10)
-    meta = {"market": market, "ticker": ticker, "name": ticker, "source": ""}
+    timeframe = "4h" if timeframe == "4h" else "1d"
+    interval = "1h" if timeframe == "4h" else "1d"
+    pad = 7 if timeframe == "4h" else 10
+    start = as_of - timedelta(days=int(lookback_days * 1.2) + pad)
+    meta = {
+        "market": market,
+        "ticker": ticker,
+        "name": ticker,
+        "source": "",
+        "timeframe": timeframe,
+    }
 
     if market == "KR":
         code = ticker.strip().zfill(6)
@@ -151,18 +211,19 @@ def fetch_ohlcv(
         except Exception:
             pass
         df = pd.DataFrame()
-        try:
-            df = _fetch_fdr(code, start, as_of)
-            meta["source"] = "FinanceDataReader"
-        except Exception:
-            df = pd.DataFrame()
+        if timeframe == "1d":
+            try:
+                df = _fetch_fdr(code, start, as_of)
+                meta["source"] = "FinanceDataReader"
+            except Exception:
+                df = pd.DataFrame()
         if df.empty:
             last_err = None
-            for suffix in (".KS", ".KQ"):
+            for symbol in _kr_yahoo_symbols(code):
                 try:
-                    df = _fetch_yf(f"{code}{suffix}", start, as_of)
+                    df = _fetch_yf(symbol, start, as_of, interval=interval)
                     if not df.empty:
-                        meta["source"] = f"Yahoo Finance ({code}{suffix})"
+                        meta["source"] = f"Yahoo Finance ({symbol})"
                         break
                 except Exception as exc:
                     last_err = exc
@@ -174,9 +235,11 @@ def fetch_ohlcv(
         meta["ticker"] = symbol
         meta["name"] = symbol
         try:
-            df = _fetch_yf(symbol, start, as_of)
+            df = _fetch_yf(symbol, start, as_of, interval=interval)
             meta["source"] = "Yahoo Finance"
         except Exception:
+            if timeframe == "4h":
+                raise
             df = _fetch_fdr(symbol, start, as_of)
             meta["source"] = "FinanceDataReader"
     elif market == "CRYPTO":
@@ -185,7 +248,7 @@ def fetch_ohlcv(
         symbol = info["symbol"] if info else f"{key}-USD"
         meta["ticker"] = key
         meta["name"] = info["name"] if info else key
-        df = _fetch_yf(symbol, start, as_of)
+        df = _fetch_yf(symbol, start, as_of, interval=interval)
         meta["source"] = "Yahoo Finance"
     else:
         raise ValueError(f"지원하지 않는 시장: {market}")
@@ -193,6 +256,15 @@ def fetch_ohlcv(
     if df.empty:
         return df, meta
 
+    if timeframe == "4h":
+        df = resample_4h(df, market)
+        meta["bar"] = "4시간봉"
+    else:
+        df = df.copy()
+        df.index = _index_naive_wall(df.index)
+        meta["bar"] = "일봉"
+
     cutoff = pd.Timestamp(as_of) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
-    df = df.loc[df.index <= cutoff]
+    window_start = pd.Timestamp(as_of) - pd.Timedelta(days=lookback_days)
+    df = df.loc[(df.index >= window_start) & (df.index <= cutoff)]
     return df, meta

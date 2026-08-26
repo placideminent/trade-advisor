@@ -70,6 +70,6 @@ GitHub 연결 후 `streamlit run app.py --server.port $PORT --server.address 0.0
 | | ngrok | Streamlit Cloud | 홈 공유기 포트 개방 |
 |---|---|---|---|
 | 컴퓨터 꺼도 되나 | 아니오 | 예 | 예(공유기+PC 켜져 있어야) |
-| 지금 가능한가 | 예 | Git 설치 후 | 비추천 |
+| 지금 가능한가 | 예 | 저장소 연결됨 | 비추천 |
 | 주소 고정 | 유료면 가능 | 예 | 공인 IP 변동 |
 | 보안 | 비밀번호 + HTTPS | 비밀번호 | 해킹 위험 |
