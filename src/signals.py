@@ -92,9 +92,9 @@ def recommend(
     add("기본", "중립 시작점", SCORE_BASE)
 
     if an.trend == "up":
-        add("추세", f"상승 · 비싸게 살 수 있어 감점. {an.price_label} {_fmt(price)}", -2)
+        add("추세", f"상승 (방향 점수 없음). {an.price_label} {_fmt(price)}", 0)
     elif an.trend == "down":
-        add("추세", f"하락 · 싸게 살 수 있어 가점. {an.price_label} {_fmt(price)}", 2)
+        add("추세", f"하락 (방향 점수 없음). {an.price_label} {_fmt(price)}", 0)
     else:
         add("추세", f"횡보. {an.price_label} {_fmt(price)}", 0)
 
@@ -106,8 +106,8 @@ def recommend(
         add("6개월 평가", "홀딩", 0)
 
     if htf_6m_pct is not None:
-        if htf_6m_pct >= 60:
-            add("6개월 상방/하단", f"합산 {htf_6m_pct}% · 상승 상방 근접", -3)
+        if htf_6m_pct >= 80:
+            add("6개월 상방/하단", f"합산 {htf_6m_pct}% · 과열", -3)
         elif htf_6m_pct < 40:
             add("6개월 상방/하단", f"합산 {htf_6m_pct}% · 하락 하단 근접", 3)
         else:
@@ -143,11 +143,11 @@ def recommend(
         else:
             add("POC", f"최대 매물 {_fmt(an.poc)} 부근 · 횡보", 0)
         add("VAL", f"하단 {_fmt(an.val)} (POC가 우선이라 미적용)", 0)
-        add("VAH", f"상단 {_fmt(an.vah)}", -2)
+        add("VAH", f"상단 {_fmt(an.vah)} (강세 구간 정상 · 감점 없음)", 0)
     elif price > an.vah:
         add("POC", f"최대 매물 {_fmt(an.poc)} · 현재가가 멀리 있음", 0)
         add("VAL", f"하단 {_fmt(an.val)} · 현재가가 VAL 위", 0)
-        add("VAH", f"상단 {_fmt(an.vah)} 위", -2)
+        add("VAH", f"상단 {_fmt(an.vah)} 위 (강세 구간 정상 · 감점 없음)", 0)
     elif price < an.val:
         add("POC", f"최대 매물 {_fmt(an.poc)} · 현재가가 멀리 있음", 0)
         if an.trend == "down":
@@ -156,11 +156,11 @@ def recommend(
             add("VAL", f"하단 {_fmt(an.val)} 아래 · 상승 추세", 1)
         else:
             add("VAL", f"하단 {_fmt(an.val)} 아래 · 횡보", 0)
-        add("VAH", f"상단 {_fmt(an.vah)}", -2)
+        add("VAH", f"상단 {_fmt(an.vah)} (감점 없음)", 0)
     else:
         add("POC", f"최대 매물 {_fmt(an.poc)} · 밸류 구간 내부", 0)
         add("VAL", f"하단 {_fmt(an.val)} ~ 현재가 사이", 0)
-        add("VAH", f"상단 {_fmt(an.vah)}", -2)
+        add("VAH", f"상단 {_fmt(an.vah)} (감점 없음)", 0)
 
     if an.rsi >= 70:
         add("RSI", f"{an.rsi:.1f} 과매수", -1)
@@ -184,7 +184,7 @@ def recommend(
     elif chg >= 1.0:
         add("1개월 상승률", f"{chg * 100:.1f}% (100% 이상)", -4)
     elif chg >= 0.5:
-        add("1개월 상승률", f"{chg * 100:.1f}% (50% 이상)", -2)
+        add("1개월 상승률", f"{chg * 100:.1f}% (50% 이상)", -1)
     else:
         add("1개월 상승률", f"{chg * 100:.1f}%", 0)
 
@@ -210,8 +210,8 @@ def recommend(
         add("손익비", "목표·손절을 잡지 못함", 0)
 
     bar_count = 0 if an.df is None else len(an.df)
-    buy_pct_cut = 70 if bar_count < 50 else 60
-    sell_pct_cut = 40 if bar_count < 50 else 50
+    buy_pct_cut = 65 if bar_count < 50 else 55
+    sell_pct_cut = 35 if bar_count < 50 else 30
     if bar_count < 50:
         reasons.append(
             f"표본 {bar_count}봉으로 짧음 — 매수 {buy_pct_cut}% 이상 / 매도 {sell_pct_cut}% 이하"
