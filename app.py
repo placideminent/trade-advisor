@@ -317,12 +317,17 @@ c1, c2, c3, c4, c5, c6 = st.columns(6)
 c1.metric(analysis.price_label, _fmt(analysis.price))
 c2.metric("지지", _fmt(signal.nearest_support.price) if signal.nearest_support else "-")
 c3.metric("저항", _fmt(signal.nearest_resistance.price) if signal.nearest_resistance else "-")
-c4.metric("POC 매물", _fmt(analysis.poc))
+c4.metric("POC", _fmt(analysis.poc))
 c5.metric("RSI", f"{analysis.rsi:.1f}")
 c6.metric(
     "손익비",
     f"{signal.reward_risk:.2f}" if signal.reward_risk is not None else "-",
 )
+
+st.subheader("점수 내역")
+if signal.score_rows:
+    st.dataframe(pd.DataFrame(signal.score_rows), hide_index=True, use_container_width=True)
+st.caption(f"VAL {_fmt(analysis.val)} · VAH {_fmt(analysis.vah)} · POC {_fmt(analysis.poc)}")
 
 left, right = st.columns([1.15, 0.85])
 with left:
