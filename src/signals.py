@@ -211,7 +211,7 @@ def recommend(
 
     bar_count = 0 if an.df is None else len(an.df)
     buy_pct_cut = 70 if bar_count < 50 else 60
-    sell_pct_cut = 30 if bar_count < 50 else 40
+    sell_pct_cut = 40 if bar_count < 50 else 50
     if bar_count < 50:
         reasons.append(
             f"표본 {bar_count}봉으로 짧음 — 매수 {buy_pct_cut}% 이상 / 매도 {sell_pct_cut}% 이하"
