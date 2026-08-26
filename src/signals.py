@@ -4,11 +4,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-SIGNAL_RULE_VERSION = 6
+import pandas as pd
+
+SIGNAL_RULE_VERSION = 7
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 10
 # 합산 %는 조회 기간과 상관없이 같은 눈금(이론상 최저~최고)을 쓴다.
-SCORE_LO = SCORE_BASE - 10  # 0
+SCORE_LO = SCORE_BASE - 15  # -5
 SCORE_HI = SCORE_BASE + 9  # 19
 
 from .analysis import Analysis, Level
@@ -42,6 +44,18 @@ def score_to_pct(score: int, _has_6m: bool | None = None) -> int:
         return 50
     pct = (score - lo) / (hi - lo) * 100
     return int(round(max(0.0, min(100.0, pct))))
+
+
+def _one_month_change(an: Analysis, price: float) -> float | None:
+    df = an.df
+    if df is None or df.empty:
+        return None
+    start = pd.Timestamp(an.as_of) - pd.Timedelta(days=30)
+    past = df.loc[df.index <= start]
+    base = float(past["close"].iloc[-1]) if not past.empty else float(df["close"].iloc[0])
+    if base <= 0:
+        return None
+    return price / base - 1.0
 
 
 def _fmt(price: float) -> str:
@@ -129,14 +143,11 @@ def recommend(
         else:
             add("POC", f"최대 매물 {_fmt(an.poc)} 부근 · 횡보", 0)
         add("VAL", f"하단 {_fmt(an.val)} (POC가 우선이라 미적용)", 0)
-        add("VAH", f"상단 {_fmt(an.vah)} (POC가 우선이라 미적용)", 0)
+        add("VAH", f"상단 {_fmt(an.vah)}", -2)
     elif price > an.vah:
         add("POC", f"최대 매물 {_fmt(an.poc)} · 현재가가 멀리 있음", 0)
         add("VAL", f"하단 {_fmt(an.val)} · 현재가가 VAL 위", 0)
-        if an.trend == "down":
-            add("VAH", f"상단 {_fmt(an.vah)} 위 · 하락 추세", -1)
-        else:
-            add("VAH", f"상단 {_fmt(an.vah)} 위", 0)
+        add("VAH", f"상단 {_fmt(an.vah)} 위", -2)
     elif price < an.val:
         add("POC", f"최대 매물 {_fmt(an.poc)} · 현재가가 멀리 있음", 0)
         if an.trend == "down":
@@ -145,11 +156,11 @@ def recommend(
             add("VAL", f"하단 {_fmt(an.val)} 아래 · 상승 추세", 1)
         else:
             add("VAL", f"하단 {_fmt(an.val)} 아래 · 횡보", 0)
-        add("VAH", f"상단 {_fmt(an.vah)} · 현재가가 VAL 아래", 0)
+        add("VAH", f"상단 {_fmt(an.vah)}", -2)
     else:
         add("POC", f"최대 매물 {_fmt(an.poc)} · 밸류 구간 내부", 0)
         add("VAL", f"하단 {_fmt(an.val)} ~ 현재가 사이", 0)
-        add("VAH", f"상단 {_fmt(an.vah)} ~ 현재가 사이", 0)
+        add("VAH", f"상단 {_fmt(an.vah)}", -2)
 
     if an.rsi >= 70:
         add("RSI", f"{an.rsi:.1f} 과매수", -1)
@@ -166,6 +177,16 @@ def recommend(
         add("MA20", f"{an.price_label} < MA20 ({_fmt(an.ma20)})", -1)
     else:
         add("MA20", f"{an.price_label} < MA20 ({_fmt(an.ma20)}) · 상승 추세라 감점 없음", 0)
+
+    chg = _one_month_change(an, price)
+    if chg is None:
+        add("1개월 상승률", "계산 불가", 0)
+    elif chg >= 1.0:
+        add("1개월 상승률", f"{chg * 100:.1f}% (100% 이상)", -4)
+    elif chg >= 0.5:
+        add("1개월 상승률", f"{chg * 100:.1f}% (50% 이상)", -2)
+    else:
+        add("1개월 상승률", f"{chg * 100:.1f}%", 0)
 
     stop = None
     target = None
