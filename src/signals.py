@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
-SIGNAL_RULE_VERSION = 11
+SIGNAL_RULE_VERSION = 12
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 10
 # 합산 %는 조회 기간과 상관없이 같은 눈금(이론상 최저~최고)을 쓴다.
@@ -136,18 +136,6 @@ def recommend(
             add("1개월 추세", "1개월 조회 기준 횡보", 0)
         else:
             add("1개월 추세", "1개월 조회 추세를 계산하지 못함", 0)
-
-    chg6 = six_month_chg
-    if chg6 is None:
-        chg6 = period_return(an.df, an.as_of, price, 180)
-    if chg6 is None:
-        add("6개월 상승률", "6개월 전 가격 없음", 0)
-    elif chg6 >= 0.20:
-        add("6개월 상승률", f"{chg6 * 100:.1f}% (20% 이상)", 2)
-    elif chg6 >= 0.10:
-        add("6개월 상승률", f"{chg6 * 100:.1f}% (10% 이상)", 1)
-    else:
-        add("6개월 상승률", f"{chg6 * 100:.1f}%", 0)
 
     if nsup:
         dist_s = price - nsup.price
