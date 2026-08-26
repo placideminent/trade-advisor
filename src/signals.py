@@ -43,12 +43,12 @@ def recommend(an: Analysis) -> Signal:
     trend_kr = {"up": "상승", "down": "하락", "sideways": "횡보"}.get(an.trend, an.trend)
     if an.trend == "up":
         score += 2
-        reasons.append(f"추세: 상승 (스윙 구조/이동평균). 현재가 {_fmt(price)}")
+        reasons.append(f"추세: 상승 (스윙 구조/이동평균). {an.price_label} {_fmt(price)}")
     elif an.trend == "down":
         score -= 2
-        reasons.append(f"추세: 하락. 현재가 {_fmt(price)}")
+        reasons.append(f"추세: 하락. {an.price_label} {_fmt(price)}")
     else:
-        reasons.append(f"추세: 횡보. 현재가 {_fmt(price)}")
+        reasons.append(f"추세: 횡보. {an.price_label} {_fmt(price)}")
 
     if nsup:
         dist_s = price - nsup.price
@@ -106,9 +106,9 @@ def recommend(an: Analysis) -> Signal:
 
     if an.ma20 is not None:
         if price > an.ma20:
-            reasons.append(f"종가 > MA20 ({_fmt(an.ma20)})")
+            reasons.append(f"{an.price_label} > MA20 ({_fmt(an.ma20)})")
         else:
-            reasons.append(f"종가 < MA20 ({_fmt(an.ma20)})")
+            reasons.append(f"{an.price_label} < MA20 ({_fmt(an.ma20)})")
             if an.trend != "up":
                 score -= 1
 

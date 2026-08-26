@@ -84,6 +84,7 @@ def build_chart(an: Analysis, sig: Signal, title: str) -> go.Figure:
     for lv in an.resistances[:4]:
         hline(lv.price, "#dc2626", "dash", f"저항 { _price_text(lv.price) }")
 
+    hline(an.price, "#0f172a", "solid", f"{an.price_label} {_price_text(an.price)}", 2.0)
     hline(an.poc, "#ca8a04", "solid", f"POC {_price_text(an.poc)}", 1.6)
     hline(an.val, "#a3a3a3", "dot", f"VAL {_price_text(an.val)}")
     hline(an.vah, "#a3a3a3", "dot", f"VAH {_price_text(an.vah)}")

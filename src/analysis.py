@@ -40,6 +40,9 @@ class Analysis:
     swing_highs: list[tuple[pd.Timestamp, float]] = field(default_factory=list)
     swing_lows: list[tuple[pd.Timestamp, float]] = field(default_factory=list)
     df: pd.DataFrame | None = None
+    bar_close: float | None = None
+    price_label: str = "종가"
+    price_source: str = ""
 
 
 def rsi(close: pd.Series, period: int = 14) -> pd.Series:
@@ -167,7 +170,13 @@ def cluster_prices(prices: list[float], threshold: float) -> list[tuple[float, i
     return [(sum(c) / len(c), len(c)) for c in clusters]
 
 
-def analyze(df: pd.DataFrame, as_of=None) -> Analysis:
+def analyze(
+    df: pd.DataFrame,
+    as_of=None,
+    spot_price: float | None = None,
+    price_source: str = "",
+    live: bool = False,
+) -> Analysis:
     if df is None or df.empty:
         raise ValueError("분석할 일봉이 없습니다.")
 
@@ -184,7 +193,13 @@ def analyze(df: pd.DataFrame, as_of=None) -> Analysis:
     work["atr"] = atr(work)
 
     last = work.iloc[-1]
-    price = float(last["close"])
+    bar_close = float(last["close"])
+    if spot_price is not None and spot_price > 0:
+        price = float(spot_price)
+        price_label = "현재가" if live else "해당일 종가"
+    else:
+        price = bar_close
+        price_label = "종가"
     last_atr = float(last["atr"]) if pd.notna(last["atr"]) else max(price * 0.02, 1e-8)
     last_rsi = float(last["rsi"]) if pd.notna(last["rsi"]) else 50.0
     ma20 = float(last["ma20"]) if pd.notna(last["ma20"]) else None
@@ -306,6 +321,9 @@ def analyze(df: pd.DataFrame, as_of=None) -> Analysis:
         as_of=pd.Timestamp(as_of) if as_of is not None else work.index[-1],
         last_bar=work.index[-1],
         price=price,
+        bar_close=bar_close,
+        price_label=price_label,
+        price_source=price_source,
         trend=trend,
         rsi=last_rsi,
         atr=last_atr,

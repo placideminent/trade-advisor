@@ -251,6 +251,95 @@ def _kr_yahoo_symbols(code: str) -> list[str]:
     return [f"{code}{s}" for s in suffixes]
 
 
+def _naver_spot(code: str) -> float | None:
+    import requests
+
+    headers = {"User-Agent": "Mozilla/5.0"}
+    try:
+        resp = requests.get(
+            "https://polling.finance.naver.com/api/realtime",
+            params={"query": f"SERVICE_ITEM:{code}"},
+            headers=headers,
+            timeout=10,
+        )
+        resp.raise_for_status()
+        datas = (((resp.json().get("result") or {}).get("areas") or [{}])[0].get("datas") or [{}])[0]
+        nv = datas.get("nv")
+        if nv is None:
+            return None
+        return float(nv)
+    except Exception:
+        try:
+            resp = requests.get(
+                f"https://m.stock.naver.com/api/stock/{code}/basic",
+                headers=headers,
+                timeout=10,
+            )
+            resp.raise_for_status()
+            js = resp.json()
+            for key in ("closePrice", "nowVal", "nv", "currentPrice"):
+                if js.get(key) is not None:
+                    return float(str(js[key]).replace(",", ""))
+        except Exception:
+            return None
+    return None
+
+
+def _yahoo_spot(symbol: str) -> float | None:
+    import requests
+
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+    for host in ("query1.finance.yahoo.com", "query2.finance.yahoo.com"):
+        try:
+            resp = requests.get(
+                f"https://{host}/v8/finance/chart/{symbol}",
+                params={"range": "1d", "interval": "1m", "includePrePost": "false"},
+                headers=headers,
+                timeout=12,
+            )
+            resp.raise_for_status()
+            result = (resp.json().get("chart") or {}).get("result") or []
+            if not result:
+                continue
+            node = result[0]
+            meta = node.get("meta") or {}
+            px = meta.get("regularMarketPrice")
+            if px is not None:
+                return float(px)
+            quote = ((node.get("indicators") or {}).get("quote") or [{}])[0]
+            closes = [c for c in (quote.get("close") or []) if c is not None]
+            if closes:
+                return float(closes[-1])
+        except Exception:
+            continue
+    return None
+
+
+def fetch_spot_price(market: str, ticker: str) -> tuple[float | None, str]:
+    """조회 직후 현재가. 장중이 아니면 최근 체결가."""
+    if market == "KR":
+        code = ticker.strip().zfill(6)
+        px = _naver_spot(code)
+        if px:
+            return px, "Naver 현재가"
+        for symbol in _kr_yahoo_symbols(code):
+            px = _yahoo_spot(symbol)
+            if px:
+                return px, f"Yahoo 현재가 ({symbol})"
+        return None, ""
+    if market == "US":
+        symbol = ticker.strip().upper()
+        px = _yahoo_spot(symbol)
+        return (px, "Yahoo 현재가") if px else (None, "")
+    if market == "CRYPTO":
+        key = ticker.strip().upper().replace("-USD", "").replace("USDT", "").replace("/", "")
+        info = CRYPTO.get(key)
+        symbol = info["symbol"] if info else f"{key}-USD"
+        px = _yahoo_spot(symbol)
+        return (px, "Yahoo 현재가") if px else (None, "")
+    return None, ""
+
+
 def fetch_ohlcv(
     market: str,
     ticker: str,

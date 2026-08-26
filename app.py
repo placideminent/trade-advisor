@@ -10,7 +10,7 @@ import streamlit as st
 
 from src.analysis import analyze
 from src.chart import build_chart
-from src.data import fetch_ohlcv, search_kr
+from src.data import fetch_ohlcv, fetch_spot_price, search_kr
 from src.signals import recommend, _fmt
 from src.universe import (
     CRYPTO,
@@ -72,7 +72,7 @@ st.markdown(
 
 st.title("매매시점 제안")
 st.caption(
-    "원하는 날짜까지 시세로 추세선·지지/저항·매물대를 계산하고 "
+    "조회 시점의 현재가를 기준으로 추세선·지지/저항·매물대를 보고 "
     "매수 / 매도 / 홀딩을 제안합니다. "
     "1~3개월은 4시간봉, 6개월·1년은 일봉입니다. 투자 자문이 아닙니다."
 )
@@ -215,12 +215,23 @@ if df.empty:
 if meta.get("note"):
     st.warning(meta["note"])
 
-# 오늘 봉은 장중·코인 24시간에 계속 변하므로, 당일 조회는 직전 완성 봉까지만 쓴다.
-if as_of == date.today() and len(df) > 1:
-    last_ts = pd.Timestamp(df.index[-1])
-    if last_ts.date() == date.today():
+last_bar_price = float(df["close"].iloc[-1])
+spot_price = None
+spot_source = ""
+if as_of == date.today():
+    try:
+        spot_price, spot_source = fetch_spot_price(market, ticker)
+    except Exception:
+        spot_price, spot_source = None, ""
+    if spot_price is None:
+        spot_price = last_bar_price
+        spot_source = "최근 봉 마지막 가격"
+    # 추세·매물대는 완성 봉만 쓰고, 제안 가격만 현재가를 쓴다.
+    if len(df) > 1 and pd.Timestamp(df.index[-1]).date() == date.today():
         df = df.iloc[:-1].copy()
-        meta["note"] = "당일 미완성 봉 제외"
+else:
+    spot_price = last_bar_price
+    spot_source = "해당일 종가"
 
 if len(df) < 40:
     st.warning(
@@ -228,7 +239,13 @@ if len(df) < 40:
     )
 
 try:
-    analysis = analyze(df, as_of=as_of)
+    analysis = analyze(
+        df,
+        as_of=as_of,
+        spot_price=spot_price,
+        price_source=spot_source,
+        live=(as_of == date.today()),
+    )
     signal = recommend(analysis)
 except Exception as exc:
     st.error(f"분석 실패: {exc}")
@@ -239,7 +256,8 @@ st.markdown(
     f"""
     <div class="{action_class}">
       <div style="font-size:0.9rem;opacity:0.8">{meta.get("name") or display_name} ·
-      분석일 {as_of} · {meta.get("bar", bar_name)} · 마지막 봉 {analysis.last_bar.strftime("%Y-%m-%d %H:%M") if timeframe == "4h" else analysis.last_bar.date()}</div>
+      분석일 {as_of} · {meta.get("bar", bar_name)} · {analysis.price_label} 기준
+      {(" · " + analysis.price_source) if analysis.price_source else ""}</div>
       <div style="font-size:1.8rem;font-weight:700;margin:0.2rem 0">제안: {signal.action}
       <span style="font-size:1rem;font-weight:500">신뢰 {signal.confidence}</span></div>
       <div>{signal.summary}</div>
@@ -249,7 +267,7 @@ st.markdown(
 )
 
 c1, c2, c3, c4, c5, c6 = st.columns(6)
-c1.metric("종가", _fmt(analysis.price))
+c1.metric(analysis.price_label, _fmt(analysis.price))
 c2.metric("지지", _fmt(signal.nearest_support.price) if signal.nearest_support else "-")
 c3.metric("저항", _fmt(signal.nearest_resistance.price) if signal.nearest_resistance else "-")
 c4.metric("POC 매물", _fmt(analysis.poc))
@@ -287,12 +305,15 @@ last_txt = (
     if timeframe == "4h"
     else str(analysis.last_bar.date())
 )
-title = f"{meta.get('name', ticker)} ({meta.get('ticker', ticker)})  ·  {bar_name}  ·  {last_txt} 기준"
+title = f"{meta.get('name', ticker)} ({meta.get('ticker', ticker)})  ·  {bar_name}  ·  {analysis.price_label} {_fmt(analysis.price)}"
 st.plotly_chart(build_chart(analysis, signal, title), use_container_width=True)
 
 st.caption(
     f"데이터: {meta.get('source')} · {bar_name} · "
     f"{df.index[0]} ~ {df.index[-1]} ({len(df)}봉) · "
-    "지정일 이후 시세는 포함하지 않습니다. "
+    f"제안 기준: {analysis.price_label} {_fmt(analysis.price)}"
+    + (f" ({analysis.price_source})" if analysis.price_source else "")
+    + (f" · 봉 종가 {_fmt(analysis.bar_close)}" if analysis.bar_close else "")
+    + " · 지정일 이후 시세는 포함하지 않습니다. "
     "매물대는 각 봉의 고가~저가에 거래량을 나눠 쌓은 근사치입니다."
 )
