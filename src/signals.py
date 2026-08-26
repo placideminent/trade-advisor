@@ -4,9 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-SIGNAL_RULE_VERSION = 3
+SIGNAL_RULE_VERSION = 4
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 10
+# 이론상 가감: 6개월 가산 있으면 -8~+7, 없으면 -7~+6
+SCORE_SPAN_6M = (-8, 7)
+SCORE_SPAN_PLAIN = (-7, 6)
 
 from .analysis import Analysis, Level
 
@@ -23,6 +26,22 @@ class Signal:
     nearest_support: Level | None = None
     nearest_resistance: Level | None = None
     summary: str = ""
+    score_pct: int = 0
+    score_min: int = 0
+    score_max: int = 0
+
+
+def score_bounds(has_6m: bool) -> tuple[int, int]:
+    lo_d, hi_d = SCORE_SPAN_6M if has_6m else SCORE_SPAN_PLAIN
+    return SCORE_BASE + lo_d, SCORE_BASE + hi_d
+
+
+def score_to_pct(score: int, has_6m: bool) -> int:
+    lo, hi = score_bounds(has_6m)
+    if hi <= lo:
+        return 50
+    pct = (score - lo) / (hi - lo) * 100
+    return int(round(max(0.0, min(100.0, pct))))
 
 
 def _fmt(price: float) -> str:
@@ -159,7 +178,14 @@ def recommend(an: Analysis, htf_6m_action: str | None = None) -> Signal:
         reasons.append(f"표본 {bar_count}봉으로 짧음 — 매수 {buy_cut}점 이상 / 매도 {sell_cut}점 이하")
 
     score = max(0, score)
-    reasons.append(f"합산 {score}점 (매수 {buy_cut}↑ / 홀딩 / 매도 {sell_cut}↓)")
+    has_6m = htf_6m_action is not None
+    lo, hi = score_bounds(has_6m)
+    score_pct = score_to_pct(score, has_6m)
+    buy_pct = score_to_pct(buy_cut, has_6m)
+    sell_pct = score_to_pct(sell_cut, has_6m)
+    reasons.append(
+        f"합산 {score_pct}% ({score}점, 범위 {lo}~{hi}) · 매수 {buy_pct}%↑ / 매도 {sell_pct}%↓"
+    )
 
     if score >= buy_cut:
         action = "매수"
@@ -189,4 +215,7 @@ def recommend(an: Analysis, htf_6m_action: str | None = None) -> Signal:
         nearest_support=nsup,
         nearest_resistance=nres,
         summary=summary,
+        score_pct=score_pct,
+        score_min=lo,
+        score_max=hi,
     )
