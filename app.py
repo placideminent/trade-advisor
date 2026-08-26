@@ -82,8 +82,12 @@ st.markdown(
     """
     <style>
       .block-container { padding-top: 1.2rem; }
+      .action-buy-strong { background:#86efac; color:#14532d; padding:1rem 1.2rem; border-radius:12px; }
       .action-buy { background:#dcfce7; color:#14532d; padding:1rem 1.2rem; border-radius:12px; }
+      .action-buy-weak { background:#ecfccb; color:#3f6212; padding:1rem 1.2rem; border-radius:12px; }
+      .action-sell-strong { background:#fca5a5; color:#7f1d1d; padding:1rem 1.2rem; border-radius:12px; }
       .action-sell { background:#fee2e2; color:#7f1d1d; padding:1rem 1.2rem; border-radius:12px; }
+      .action-sell-weak { background:#fecaca; color:#9f1239; padding:1rem 1.2rem; border-radius:12px; }
       .action-hold { background:#fef9c3; color:#713f12; padding:1rem 1.2rem; border-radius:12px; }
     </style>
     """,
@@ -180,7 +184,7 @@ with st.sidebar:
 - 추세선: 최근 스윙 고점/저점 연결
 - 지지·저항: 스윙 군집 + 매물대
 - 매물대: 각 봉의 고가~저가에 거래량 분배
-- 신호: 규칙 점수 (추세, 이격, RSI, 손익비)
+- 신호: 약한 매수 65%↑ / 매수 70%↑ / 강한 매수 75%↑ · 약한 매도 27%↓ / 매도 24%↓ / 강한 매도 21%↓
         """
     )
 
@@ -311,7 +315,15 @@ except Exception as exc:
     st.error(f"분석 실패: {exc}")
     st.stop()
 
-action_class = {"매수": "action-buy", "매도": "action-sell", "홀딩": "action-hold"}[signal.action]
+action_class = {
+    "강한 매수": "action-buy-strong",
+    "매수": "action-buy",
+    "약한 매수": "action-buy-weak",
+    "강한 매도": "action-sell-strong",
+    "매도": "action-sell",
+    "약한 매도": "action-sell-weak",
+    "홀딩": "action-hold",
+}.get(signal.action, "action-hold")
 six_txt = (
     f" · 6개월 가격 {six_month_chg * 100:+.1f}%"
     if six_month_chg is not None

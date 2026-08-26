@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
-SIGNAL_RULE_VERSION = 10
+SIGNAL_RULE_VERSION = 11
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 10
 # 합산 %는 조회 기간과 상관없이 같은 눈금(이론상 최저~최고)을 쓴다.
@@ -256,37 +256,56 @@ def recommend(
         add("손익비", "목표·손절을 잡지 못함", 0)
 
     bar_count = 0 if an.df is None else len(an.df)
-    buy_pct_cut = 65
-    sell_pct_cut = 27
+    buy_weak, buy_mid, buy_strong = 65, 70, 75
+    sell_weak, sell_mid, sell_strong = 27, 24, 21
     if bar_count < 50:
         reasons.append(
-            f"표본 {bar_count}봉으로 짧음 — 매수 {buy_pct_cut}% 이상 / 매도 {sell_pct_cut}% 이하"
+            f"표본 {bar_count}봉으로 짧음 — 약한 매수 {buy_weak}%↑ / 강한 매도 {sell_strong}%↓"
         )
 
     score = max(0, score)
     lo, hi = SCORE_LO, SCORE_HI
     score_pct = score_to_pct(score)
     reasons.append(
-        f"합산 {score_pct}% ({score}점, 범위 {lo}~{hi}) · 매수 {buy_pct_cut}%↑ / 매도 {sell_pct_cut}%↓"
+        f"합산 {score_pct}% ({score}점, 범위 {lo}~{hi}) · "
+        f"약한매수 {buy_weak}%↑ / 매수 {buy_mid}%↑ / 강한매수 {buy_strong}%↑ · "
+        f"약한매도 {sell_weak}%↓ / 매도 {sell_mid}%↓ / 강한매도 {sell_strong}%↓"
     )
 
-    if score_pct >= buy_pct_cut:
+    if score_pct >= buy_strong:
+        action = "강한 매수"
+        summary = "합산이 높아 강한 매수 구간입니다."
+    elif score_pct >= buy_mid:
         action = "매수"
-        if follow_trend:
-            summary = "단기 상승 추세 쪽으로 기울어 매수를 제안합니다."
-        else:
-            summary = "하락·눌림 쪽에서 지지·하단 조건이 맞아 매수 쪽으로 기울었습니다."
-    elif score_pct <= sell_pct_cut:
+        summary = "매수 구간에 들어왔습니다."
+    elif score_pct >= buy_weak:
+        action = "약한 매수"
+        summary = "매수 쪽으로 기울었지만 강도는 약한 구간입니다."
+    elif score_pct <= sell_strong:
+        action = "강한 매도"
+        summary = "합산이 낮아 강한 매도 구간입니다."
+    elif score_pct <= sell_mid:
         action = "매도"
-        if follow_trend:
-            summary = "단기 하락 추세 쪽으로 기울어 매도/관망을 제안합니다."
-        else:
-            summary = "상승·고가 쪽에서 저항·상단 조건이 맞아 매도/관망 쪽으로 기울었습니다."
+        summary = "매도 구간에 들어왔습니다."
+    elif score_pct <= sell_weak:
+        action = "약한 매도"
+        summary = "매도 쪽으로 기울었지만 강도는 약한 구간입니다."
     else:
         action = "홀딩"
         summary = "지지와 저항 사이이거나 신호가 엇갈려 관망(홀딩)이 낫습니다."
         if bar_count < 50:
             summary = "조회 기간이 짧아 신호가 쉽게 바뀝니다. 지금은 관망(홀딩)이 낫습니다."
+
+    if action in ("매수", "약한 매수", "강한 매수"):
+        if follow_trend:
+            summary = "단기 상승 추세 쪽으로 기울었습니다. " + summary
+        else:
+            summary = "하락·눌림 쪽에서 지지·하단 조건이 맞습니다. " + summary
+    elif action in ("매도", "약한 매도", "강한 매도"):
+        if follow_trend:
+            summary = "단기 하락 추세 쪽으로 기울었습니다. " + summary
+        else:
+            summary = "상승·고가 쪽에서 저항·상단 조건이 맞습니다. " + summary
 
     tilt = abs(score - SCORE_BASE)
     confidence = int(max(35, min(90, 50 + tilt * 12)))
