@@ -1,10 +1,10 @@
 """규칙 기반 매수/매도/홀딩. 지정일 현재가와 지지·저항·매물대·추세만 사용."""
 
-SIGNAL_RULE_VERSION = 2
-
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+
+SIGNAL_RULE_VERSION = 2
 
 from .analysis import Analysis, Level
 
