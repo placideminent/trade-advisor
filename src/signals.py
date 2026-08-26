@@ -234,8 +234,8 @@ def recommend(
         add("손익비", "목표·손절을 잡지 못함", 0)
 
     bar_count = 0 if an.df is None else len(an.df)
-    buy_pct_cut = 70 if bar_count < 50 else 60
-    sell_pct_cut = 22 if bar_count < 50 else 25
+    buy_pct_cut = 70
+    sell_pct_cut = 24
     if bar_count < 50:
         reasons.append(
             f"표본 {bar_count}봉으로 짧음 — 매수 {buy_pct_cut}% 이상 / 매도 {sell_pct_cut}% 이하"
