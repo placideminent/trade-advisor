@@ -14,11 +14,14 @@ from src.data import fetch_ohlcv, fetch_spot_price, search_kr
 from src.signals import recommend, _fmt
 
 
-def _make_signal(an, htf_6m_action=None):
+def _make_signal(an, htf_6m_action=None, htf_6m_pct=None):
     try:
-        return recommend(an, htf_6m_action=htf_6m_action)
+        return recommend(an, htf_6m_action=htf_6m_action, htf_6m_pct=htf_6m_pct)
     except TypeError:
-        return recommend(an)
+        try:
+            return recommend(an, htf_6m_action=htf_6m_action)
+        except TypeError:
+            return recommend(an)
 from src.universe import (
     CRYPTO,
     KR_PRESETS,
@@ -162,6 +165,7 @@ with st.sidebar:
 - 지정일까지 시세만 사용 (이후 봉 제외)
 - **1개월 → 1시간봉**, **2·3개월 → 4시간봉**, **6개월·1년 → 일봉**
 - 1~3개월은 6개월 일봉 평가를 더함 (매수 +1 / 매도 −1 / 홀딩 0)
+- 6개월 합산 60% 이상(상방) −3, 40% 미만(하단) +3
 - 추세선: 최근 스윙 고점/저점 연결
 - 지지·저항: 스윙 군집 + 매물대
 - 매물대: 각 봉의 고가~저가에 거래량 분배
@@ -255,6 +259,7 @@ try:
         live=(as_of == date.today()),
     )
     htf_6m_action = None
+    htf_6m_pct = None
     if lookback_days <= 90:
         try:
             df_6m, _meta_6m = _cached_ohlcv(
@@ -275,10 +280,13 @@ try:
                     price_source=spot_source,
                     live=(as_of == date.today()),
                 )
-                htf_6m_action = _make_signal(an_6m).action
+                sig_6m = _make_signal(an_6m)
+                htf_6m_action = sig_6m.action
+                htf_6m_pct = getattr(sig_6m, "score_pct", None)
         except Exception:
             htf_6m_action = None
-    signal = _make_signal(analysis, htf_6m_action)
+            htf_6m_pct = None
+    signal = _make_signal(analysis, htf_6m_action, htf_6m_pct)
 except Exception as exc:
     st.error(f"분석 실패: {exc}")
     st.stop()

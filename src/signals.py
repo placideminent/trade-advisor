@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-SIGNAL_RULE_VERSION = 4
+SIGNAL_RULE_VERSION = 5
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 10
-# 이론상 가감: 6개월 가산 있으면 -8~+7, 없으면 -7~+6
-SCORE_SPAN_6M = (-8, 7)
+# 1~3개월: 6개월 평가±1 + 상방/하단 근접±3 포함
+SCORE_SPAN_6M = (-10, 9)
 SCORE_SPAN_PLAIN = (-7, 6)
 
 from .analysis import Analysis, Level
@@ -52,7 +52,11 @@ def _fmt(price: float) -> str:
     return f"{price:.6f}"
 
 
-def recommend(an: Analysis, htf_6m_action: str | None = None) -> Signal:
+def recommend(
+    an: Analysis,
+    htf_6m_action: str | None = None,
+    htf_6m_pct: int | None = None,
+) -> Signal:
     price = an.price
     atr = an.atr if an.atr and an.atr > 0 else price * 0.02
     near = max(atr * 0.45, price * 0.008)
@@ -81,6 +85,16 @@ def recommend(an: Analysis, htf_6m_action: str | None = None) -> Signal:
         reasons.append("6개월 일봉 평가: 매도 −1")
     elif htf_6m_action == "홀딩":
         reasons.append("6개월 일봉 평가: 홀딩 +0")
+
+    if htf_6m_pct is not None:
+        if htf_6m_pct >= 60:
+            score -= 3
+            reasons.append(f"6개월 합산 {htf_6m_pct}% (상승 상방 근접) −3")
+        elif htf_6m_pct < 40:
+            score += 3
+            reasons.append(f"6개월 합산 {htf_6m_pct}% (하락 하단 근접) +3")
+        else:
+            reasons.append(f"6개월 합산 {htf_6m_pct}% (중간) +0")
 
     if nsup:
         dist_s = price - nsup.price
@@ -178,7 +192,7 @@ def recommend(an: Analysis, htf_6m_action: str | None = None) -> Signal:
         reasons.append(f"표본 {bar_count}봉으로 짧음 — 매수 {buy_cut}점 이상 / 매도 {sell_cut}점 이하")
 
     score = max(0, score)
-    has_6m = htf_6m_action is not None
+    has_6m = htf_6m_action is not None or htf_6m_pct is not None
     lo, hi = score_bounds(has_6m)
     score_pct = score_to_pct(score, has_6m)
     buy_pct = score_to_pct(buy_cut, has_6m)
