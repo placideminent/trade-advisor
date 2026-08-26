@@ -163,20 +163,36 @@ if not ticker:
     st.error("종목을 선택하세요.")
     st.stop()
 
+@st.cache_data(ttl=600, show_spinner=False)
+def _cached_ohlcv(market: str, ticker: str, as_of_iso: str, lookback_days: int):
+    return fetch_ohlcv(market, ticker, date.fromisoformat(as_of_iso), lookback_days)
+
+
 with st.spinner(f"{display_name or ticker} / {as_of} 일봉 수집 중..."):
     try:
-        df, meta = fetch_ohlcv(market, ticker, as_of, lookback_days)
-    except Exception as exc:
-        st.error(f"시세 수집 실패: {exc}")
+        df, meta = _cached_ohlcv(market, ticker, as_of.isoformat(), lookback_days)
+        df = df.copy()
+        meta = dict(meta)
+    except Exception as extra:
+        st.error(f"시세 수집 실패: {extra}")
         st.stop()
 
 if df.empty:
     st.error("해당 기간에 일봉이 없습니다. 종목 코드나 날짜를 확인하세요.")
     st.stop()
 
+# 오늘 봉은 장중·코인 24시간에 계속 변하므로, 당일 조회는 직전 완성 봉까지만 쓴다.
+if as_of == date.today() and len(df) > 1 and pd.Timestamp(df.index[-1]).date() == date.today():
+    df = df.iloc[:-1].copy()
+    meta["note"] = "당일 미완성 봉 제외"
+
 min_bars = 40
-if len(df) < min_bars:
-    st.warning(f"봉 수가 {len(df)}개로 적습니다. 지지·저항 신뢰도가 낮을 수 있습니다.")
+if lookback_days <= 90 or len(df) < min_bars:
+    st.warning(
+        f"조회 기간이 짧습니다 (일봉 {len(df)}개). "
+        "1~3개월은 추세·매물대가 봉 한두 개에 흔들려 제안이 쉽게 바뀝니다. "
+        "같은 조건이면 10분간 결과를 재사용합니다."
+    )
 
 try:
     analysis = analyze(df, as_of=as_of)

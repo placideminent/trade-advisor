@@ -133,15 +133,23 @@ def recommend(an: Analysis) -> Signal:
     elif rr is not None:
         reasons.append(f"예상 손익비 {rr:.2f} (목표 {_fmt(target)} / 손절 {_fmt(stop)})")
 
-    if score >= 2:
+    bar_count = 0 if an.df is None else len(an.df)
+    buy_cut = 3 if bar_count < 50 else 2
+    sell_cut = -3 if bar_count < 50 else -2
+    if bar_count < 50:
+        reasons.append(f"표본 {bar_count}봉으로 짧음 — 매수/매도 기준을 더 엄격히 적용")
+
+    if score >= buy_cut:
         action = "매수"
         summary = "상승 구조에서 지지·매물대 부근이라 매수 쪽으로 기울었습니다."
-    elif score <= -2:
+    elif score <= sell_cut:
         action = "매도"
         summary = "하락 구조이거나 저항·상단 매물대에 붙어 매도/관망 쪽으로 기울었습니다."
     else:
         action = "홀딩"
         summary = "지지와 저항 사이이거나 신호가 엇갈려 관망(홀딩)이 낫습니다."
+        if bar_count < 50:
+            summary = "조회 기간이 짧아 신호가 쉽게 바뀝니다. 지금은 관망(홀딩)이 낫습니다."
 
     confidence = int(max(35, min(90, 50 + abs(score) * 12)))
     if action == "홀딩":

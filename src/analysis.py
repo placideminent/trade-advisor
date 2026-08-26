@@ -220,7 +220,15 @@ def analyze(df: pd.DataFrame, as_of=None) -> Analysis:
         elif ma20 < ma60 * 0.995 and price < ma20:
             ma_trend = "down"
 
-    if structure == ma_trend:
+    if ma60 is None:
+        # 1~3개월처럼 봉이 짧으면 스윙 2개만으로 상승/하락을 확정하지 않는다.
+        if structure == "up" and ma20 is not None and price > ma20:
+            trend = "up"
+        elif structure == "down" and ma20 is not None and price < ma20:
+            trend = "down"
+        else:
+            trend = "sideways"
+    elif structure == ma_trend:
         trend = structure
     elif structure != "sideways":
         trend = structure
