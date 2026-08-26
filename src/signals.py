@@ -46,16 +46,20 @@ def score_to_pct(score: int, _has_6m: bool | None = None) -> int:
     return int(round(max(0.0, min(100.0, pct))))
 
 
-def _one_month_change(an: Analysis, price: float) -> float | None:
+def _n_day_change(an: Analysis, price: float, days: int) -> float | None:
     df = an.df
     if df is None or df.empty:
         return None
-    start = pd.Timestamp(an.as_of) - pd.Timedelta(days=30)
+    start = pd.Timestamp(an.as_of) - pd.Timedelta(days=days)
     past = df.loc[df.index <= start]
     base = float(past["close"].iloc[-1]) if not past.empty else float(df["close"].iloc[0])
     if base <= 0:
         return None
     return price / base - 1.0
+
+
+def _one_month_change(an: Analysis, price: float) -> float | None:
+    return _n_day_change(an, price, 30)
 
 
 def _fmt(price: float) -> str:
@@ -92,9 +96,9 @@ def recommend(
     add("기본", "중립 시작점", SCORE_BASE)
 
     if an.trend == "up":
-        add("추세", f"상승 (방향 점수 없음). {an.price_label} {_fmt(price)}", 0)
+        add("추세", f"상승 · 고점 추격 매수 감점. {an.price_label} {_fmt(price)}", -2)
     elif an.trend == "down":
-        add("추세", f"하락 (방향 점수 없음). {an.price_label} {_fmt(price)}", 0)
+        add("추세", f"하락 · 눌림 매수 가점. {an.price_label} {_fmt(price)}", 2)
     else:
         add("추세", f"횡보. {an.price_label} {_fmt(price)}", 0)
 
@@ -106,7 +110,7 @@ def recommend(
         add("6개월 평가", "홀딩", 0)
 
     if htf_6m_pct is not None:
-        if htf_6m_pct >= 80:
+        if htf_6m_pct >= 70:
             add("6개월 상방/하단", f"합산 {htf_6m_pct}% · 과열", -3)
         elif htf_6m_pct < 40:
             add("6개월 상방/하단", f"합산 {htf_6m_pct}% · 하락 하단 근접", 3)
@@ -184,9 +188,19 @@ def recommend(
     elif chg >= 1.0:
         add("1개월 상승률", f"{chg * 100:.1f}% (100% 이상)", -4)
     elif chg >= 0.5:
-        add("1개월 상승률", f"{chg * 100:.1f}% (50% 이상)", -1)
+        add("1개월 상승률", f"{chg * 100:.1f}% (50% 이상)", -3)
     else:
         add("1개월 상승률", f"{chg * 100:.1f}%", 0)
+
+    chg3 = _n_day_change(an, price, 90)
+    if chg3 is None:
+        add("3개월 상승률", "계산 불가", 0)
+    elif chg3 >= 1.0:
+        add("3개월 상승률", f"{chg3 * 100:.1f}% (100% 이상)", -4)
+    elif chg3 >= 0.5:
+        add("3개월 상승률", f"{chg3 * 100:.1f}% (50% 이상)", -3)
+    else:
+        add("3개월 상승률", f"{chg3 * 100:.1f}%", 0)
 
     stop = None
     target = None
@@ -210,8 +224,8 @@ def recommend(
         add("손익비", "목표·손절을 잡지 못함", 0)
 
     bar_count = 0 if an.df is None else len(an.df)
-    buy_pct_cut = 65 if bar_count < 50 else 55
-    sell_pct_cut = 35 if bar_count < 50 else 30
+    buy_pct_cut = 70 if bar_count < 50 else 60
+    sell_pct_cut = 22 if bar_count < 50 else 25
     if bar_count < 50:
         reasons.append(
             f"표본 {bar_count}봉으로 짧음 — 매수 {buy_pct_cut}% 이상 / 매도 {sell_pct_cut}% 이하"
