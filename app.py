@@ -14,11 +14,19 @@ from src.data import fetch_ohlcv, fetch_spot_price, search_kr
 from src.signals import recommend, period_return, _fmt
 
 
-def _make_signal(an, six_month_chg=None):
+def _make_signal(an, six_month_chg=None, lookback_days=None, trend_1m=None):
     try:
-        return recommend(an, six_month_chg=six_month_chg)
+        return recommend(
+            an,
+            six_month_chg=six_month_chg,
+            lookback_days=lookback_days,
+            trend_1m=trend_1m,
+        )
     except TypeError:
-        return recommend(an)
+        try:
+            return recommend(an, six_month_chg=six_month_chg)
+        except TypeError:
+            return recommend(an)
 
 
 @st.cache_data(ttl=60, show_spinner=False)
@@ -167,6 +175,8 @@ with st.sidebar:
 - 지정일까지 시세만 사용 (이후 봉 제외)
 - **1개월 → 1시간봉**, **2·3개월 → 4시간봉**, **6개월·1년 → 일봉**
 - 6개월 전 대비 현재가 10% 이상 +1, 20% 이상 +2
+- 1·2개월 추세: 상승 +2 / 하락 −2. 3개월 이상은 하락 +2 / 상승 −2
+- 3개월·6개월·1년: 같은 시점 1개월 조회 추세 상승 +1 / 하락 −1 / 횡보 0
 - 추세선: 최근 스윙 고점/저점 연결
 - 지지·저항: 스윙 군집 + 매물대
 - 매물대: 각 봉의 고가~저가에 거래량 분배
@@ -270,7 +280,33 @@ try:
         six_month_chg = period_return(src_6m, as_of, spot_price, 180)
     except Exception:
         six_month_chg = None
-    signal = _make_signal(analysis, six_month_chg)
+    trend_1m = None
+    if lookback_days >= 90:
+        try:
+            df_1m, _meta_1m = _cached_ohlcv(
+                market, ticker, as_of.isoformat(), 30, "1h"
+            )
+            df_1m = df_1m.copy()
+            if not df_1m.empty:
+                px_1m = float(df_1m["close"].iloc[-1])
+                if as_of == date.today() and spot_price:
+                    px_1m = spot_price
+                    if (
+                        len(df_1m) > 1
+                        and pd.Timestamp(df_1m.index[-1]).date() == date.today()
+                    ):
+                        df_1m = df_1m.iloc[:-1].copy()
+                an_1m = analyze(
+                    df_1m,
+                    as_of=as_of,
+                    spot_price=px_1m,
+                    price_source="1개월 조회",
+                    live=(as_of == date.today()),
+                )
+                trend_1m = an_1m.trend
+        except Exception:
+            trend_1m = None
+    signal = _make_signal(analysis, six_month_chg, lookback_days, trend_1m)
 except Exception as exc:
     st.error(f"분석 실패: {exc}")
     st.stop()

@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
-SIGNAL_RULE_VERSION = 7
+SIGNAL_RULE_VERSION = 9
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 10
 # 합산 %는 조회 기간과 상관없이 같은 눈금(이론상 최저~최고)을 쓴다.
@@ -87,6 +87,8 @@ def period_return(df, as_of, price: float, days: int = 180) -> float | None:
 def recommend(
     an: Analysis,
     six_month_chg: float | None = None,
+    lookback_days: int | None = None,
+    trend_1m: str | None = None,
 ) -> Signal:
     price = an.price
     atr = an.atr if an.atr and an.atr > 0 else price * 0.02
@@ -108,12 +110,32 @@ def recommend(
 
     add("기본", "중립 시작점", SCORE_BASE)
 
-    if an.trend == "up":
-        add("추세", f"상승 · 고점 추격 매수 감점. {an.price_label} {_fmt(price)}", -2)
-    elif an.trend == "down":
-        add("추세", f"하락 · 눌림 매수 가점. {an.price_label} {_fmt(price)}", 2)
+    # 1·2개월은 추세 추종(상승 +, 하락 −). 3개월 이상은 눌림 매수(하락 +, 상승 −).
+    follow_trend = lookback_days is not None and lookback_days <= 60
+    if follow_trend:
+        if an.trend == "up":
+            add("추세", f"상승 · 추세 추종 가점. {an.price_label} {_fmt(price)}", 2)
+        elif an.trend == "down":
+            add("추세", f"하락 · 추세 추종 감점. {an.price_label} {_fmt(price)}", -2)
+        else:
+            add("추세", f"횡보. {an.price_label} {_fmt(price)}", 0)
     else:
-        add("추세", f"횡보. {an.price_label} {_fmt(price)}", 0)
+        if an.trend == "up":
+            add("추세", f"상승 · 고점 추격 매수 감점. {an.price_label} {_fmt(price)}", -2)
+        elif an.trend == "down":
+            add("추세", f"하락 · 눌림 매수 가점. {an.price_label} {_fmt(price)}", 2)
+        else:
+            add("추세", f"횡보. {an.price_label} {_fmt(price)}", 0)
+
+    if lookback_days is not None and lookback_days >= 90:
+        if trend_1m == "up":
+            add("1개월 추세", "1개월 조회 기준 상승", 1)
+        elif trend_1m == "down":
+            add("1개월 추세", "1개월 조회 기준 하락", -1)
+        elif trend_1m == "sideways":
+            add("1개월 추세", "1개월 조회 기준 횡보", 0)
+        else:
+            add("1개월 추세", "1개월 조회 추세를 계산하지 못함", 0)
 
     chg6 = six_month_chg
     if chg6 is None:
@@ -234,7 +256,7 @@ def recommend(
         add("손익비", "목표·손절을 잡지 못함", 0)
 
     bar_count = 0 if an.df is None else len(an.df)
-    buy_pct_cut = 70
+    buy_pct_cut = 65
     sell_pct_cut = 24
     if bar_count < 50:
         reasons.append(
@@ -250,10 +272,16 @@ def recommend(
 
     if score_pct >= buy_pct_cut:
         action = "매수"
-        summary = "하락·눌림 쪽에서 지지·하단 조건이 맞아 매수 쪽으로 기울었습니다."
+        if follow_trend:
+            summary = "단기 상승 추세 쪽으로 기울어 매수를 제안합니다."
+        else:
+            summary = "하락·눌림 쪽에서 지지·하단 조건이 맞아 매수 쪽으로 기울었습니다."
     elif score_pct <= sell_pct_cut:
         action = "매도"
-        summary = "상승·고가 쪽에서 저항·상단 조건이 맞아 매도/관망 쪽으로 기울었습니다."
+        if follow_trend:
+            summary = "단기 하락 추세 쪽으로 기울어 매도/관망을 제안합니다."
+        else:
+            summary = "상승·고가 쪽에서 저항·상단 조건이 맞아 매도/관망 쪽으로 기울었습니다."
     else:
         action = "홀딩"
         summary = "지지와 저항 사이이거나 신호가 엇갈려 관망(홀딩)이 낫습니다."
