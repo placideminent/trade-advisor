@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-SIGNAL_RULE_VERSION = 2
+SIGNAL_RULE_VERSION = 3
+# 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
+SCORE_BASE = 10
 
 from .analysis import Analysis, Level
 
@@ -39,27 +41,27 @@ def recommend(an: Analysis, htf_6m_action: str | None = None) -> Signal:
     nsup = an.supports[0] if an.supports else None
     nres = an.resistances[0] if an.resistances else None
 
-    score = 0
-    reasons: list[str] = []
+    score = SCORE_BASE
+    reasons: list[str] = [f"기본 {SCORE_BASE}점 (중립)"]
 
     trend_kr = {"up": "상승", "down": "하락", "sideways": "횡보"}.get(an.trend, an.trend)
     if an.trend == "up":
         score += 2
-        reasons.append(f"추세: 상승 (스윙 구조/이동평균). {an.price_label} {_fmt(price)}")
+        reasons.append(f"추세: 상승 +2. {an.price_label} {_fmt(price)}")
     elif an.trend == "down":
         score -= 2
-        reasons.append(f"추세: 하락. {an.price_label} {_fmt(price)}")
+        reasons.append(f"추세: 하락 −2. {an.price_label} {_fmt(price)}")
     else:
-        reasons.append(f"추세: 횡보. {an.price_label} {_fmt(price)}")
+        reasons.append(f"추세: 횡보 +0. {an.price_label} {_fmt(price)}")
 
     if htf_6m_action == "매수":
         score += 1
-        reasons.append("6개월 일봉 평가: 매수 (+1)")
+        reasons.append("6개월 일봉 평가: 매수 +1")
     elif htf_6m_action == "매도":
         score -= 1
-        reasons.append("6개월 일봉 평가: 매도 (-1)")
+        reasons.append("6개월 일봉 평가: 매도 −1")
     elif htf_6m_action == "홀딩":
-        reasons.append("6개월 일봉 평가: 홀딩 (0)")
+        reasons.append("6개월 일봉 평가: 홀딩 +0")
 
     if nsup:
         dist_s = price - nsup.price
@@ -67,13 +69,13 @@ def recommend(an: Analysis, htf_6m_action: str | None = None) -> Signal:
         if dist_s <= near:
             score += 2
             reasons.append(
-                f"지지 근접: {_fmt(nsup.price)} ({nsup.note}, 이격 {pct_s:.2f}%)"
+                f"지지 근접 +2: {_fmt(nsup.price)} ({nsup.note}, 이격 {pct_s:.2f}%)"
             )
         else:
             reasons.append(f"최근 지지 {_fmt(nsup.price)} 까지 {pct_s:.2f}%")
         if price < nsup.price - atr * 0.15:
             score -= 2
-            reasons.append("지지선 아래로 종가 — 지지 이탈 가능성")
+            reasons.append("지지 이탈 −2")
 
     if nres:
         dist_r = nres.price - price
@@ -81,37 +83,42 @@ def recommend(an: Analysis, htf_6m_action: str | None = None) -> Signal:
         if dist_r <= near:
             score -= 2
             reasons.append(
-                f"저항 근접: {_fmt(nres.price)} ({nres.note}, 이격 {pct_r:.2f}%)"
+                f"저항 근접 −2: {_fmt(nres.price)} ({nres.note}, 이격 {pct_r:.2f}%)"
             )
         else:
             reasons.append(f"최근 저항 {_fmt(nres.price)} 까지 {pct_r:.2f}%")
 
     # 매물대 / 밸류 영역
     if abs(price - an.poc) <= near:
-        reasons.append(f"POC(최대 매물) {_fmt(an.poc)} 부근 — 방향 결정 구간")
+        reasons.append(f"POC(최대 매물) {_fmt(an.poc)} 부근")
         if an.trend == "up":
             score += 1
+            reasons.append("POC + 상승 추세 +1")
         elif an.trend == "down":
             score -= 1
+            reasons.append("POC + 하락 추세 −1")
     elif price > an.vah:
-        reasons.append(f"밸류 상단(VAH {_fmt(an.vah)}) 위 — 매물 소화 후 연장 또는 회귀")
+        reasons.append(f"밸류 상단(VAH {_fmt(an.vah)}) 위")
         if an.trend == "down":
             score -= 1
+            reasons.append("VAH 위 + 하락 추세 −1")
     elif price < an.val:
-        reasons.append(f"밸류 하단(VAL {_fmt(an.val)}) 아래 — 저가 매물 이탈 또는 과매도")
+        reasons.append(f"밸류 하단(VAL {_fmt(an.val)}) 아래")
         if an.trend == "down":
             score -= 1
+            reasons.append("VAL 아래 + 하락 추세 −1")
         elif an.trend == "up":
             score += 1
+            reasons.append("VAL 아래 + 상승 추세 +1")
     else:
         reasons.append(f"밸류 영역 내부 (VAL {_fmt(an.val)} ~ VAH {_fmt(an.vah)})")
 
     if an.rsi >= 70:
         score -= 1
-        reasons.append(f"RSI {an.rsi:.1f} 과매수")
+        reasons.append(f"RSI {an.rsi:.1f} 과매수 −1")
     elif an.rsi <= 30:
         score += 1
-        reasons.append(f"RSI {an.rsi:.1f} 과매도")
+        reasons.append(f"RSI {an.rsi:.1f} 과매도 +1")
     else:
         reasons.append(f"RSI {an.rsi:.1f} 중립")
 
@@ -122,6 +129,7 @@ def recommend(an: Analysis, htf_6m_action: str | None = None) -> Signal:
             reasons.append(f"{an.price_label} < MA20 ({_fmt(an.ma20)})")
             if an.trend != "up":
                 score -= 1
+                reasons.append("MA20 아래 −1")
 
     stop = None
     target = None
@@ -138,17 +146,20 @@ def recommend(an: Analysis, htf_6m_action: str | None = None) -> Signal:
             rr = reward / risk
 
     # 손익비가 나쁘면 매수 점수 하향
-    if rr is not None and rr < 1.2 and score >= 2:
+    if rr is not None and rr < 1.2 and score >= SCORE_BASE + 2:
         score -= 1
-        reasons.append(f"손익비 {rr:.2f}로 낮음 — 저항까지 여유가 부족")
+        reasons.append(f"손익비 {rr:.2f}로 낮음 −1")
     elif rr is not None:
         reasons.append(f"예상 손익비 {rr:.2f} (목표 {_fmt(target)} / 손절 {_fmt(stop)})")
 
     bar_count = 0 if an.df is None else len(an.df)
-    buy_cut = 5 if bar_count < 50 else 4
-    sell_cut = -5 if bar_count < 50 else -4
+    buy_cut = SCORE_BASE + 5 if bar_count < 50 else SCORE_BASE + 4
+    sell_cut = SCORE_BASE - 5 if bar_count < 50 else SCORE_BASE - 4
     if bar_count < 50:
-        reasons.append(f"표본 {bar_count}봉으로 짧음 — 매수/매도 기준을 더 엄격히 적용")
+        reasons.append(f"표본 {bar_count}봉으로 짧음 — 매수 {buy_cut}점 이상 / 매도 {sell_cut}점 이하")
+
+    score = max(0, score)
+    reasons.append(f"합산 {score}점 (매수 {buy_cut}↑ / 홀딩 / 매도 {sell_cut}↓)")
 
     if score >= buy_cut:
         action = "매수"
@@ -162,9 +173,10 @@ def recommend(an: Analysis, htf_6m_action: str | None = None) -> Signal:
         if bar_count < 50:
             summary = "조회 기간이 짧아 신호가 쉽게 바뀝니다. 지금은 관망(홀딩)이 낫습니다."
 
-    confidence = int(max(35, min(90, 50 + abs(score) * 12)))
+    tilt = abs(score - SCORE_BASE)
+    confidence = int(max(35, min(90, 50 + tilt * 12)))
     if action == "홀딩":
-        confidence = int(max(30, 55 - abs(score) * 4))
+        confidence = int(max(30, 55 - tilt * 4))
 
     return Signal(
         action=action,
