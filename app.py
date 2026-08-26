@@ -12,6 +12,13 @@ from src.analysis import analyze
 from src.chart import build_chart
 from src.data import fetch_ohlcv, fetch_spot_price, search_kr
 from src.signals import recommend, _fmt
+
+
+def _make_signal(an, htf_6m_action=None):
+    try:
+        return recommend(an, htf_6m_action=htf_6m_action)
+    except TypeError:
+        return recommend(an)
 from src.universe import (
     CRYPTO,
     KR_PRESETS,
@@ -268,10 +275,10 @@ try:
                     price_source=spot_source,
                     live=(as_of == date.today()),
                 )
-                htf_6m_action = recommend(an_6m).action
+                htf_6m_action = _make_signal(an_6m).action
         except Exception:
             htf_6m_action = None
-    signal = recommend(analysis, htf_6m_action=htf_6m_action)
+    signal = _make_signal(analysis, htf_6m_action)
 except Exception as exc:
     st.error(f"분석 실패: {exc}")
     st.stop()
