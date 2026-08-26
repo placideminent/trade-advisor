@@ -46,6 +46,16 @@ LOOKBACK_OPTIONS = {
     "1년": {"days": 365, "timeframe": "1d"},
 }
 
+
+def resolve_lookback(label) -> dict:
+    """조회 기간 설정을 항상 {days, timeframe} 로 맞춘다."""
+    spec = LOOKBACK_OPTIONS.get(label)
+    if isinstance(spec, dict) and "days" in spec and "timeframe" in spec:
+        return spec
+    if isinstance(spec, int):
+        return {"days": spec, "timeframe": "4h" if spec <= 90 else "1d"}
+    return LOOKBACK_OPTIONS["1년"]
+
 MARKETS = {
     "한국 주식": "KR",
     "미국 주식": "US",

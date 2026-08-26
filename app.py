@@ -12,7 +12,15 @@ from src.analysis import analyze
 from src.chart import build_chart
 from src.data import fetch_ohlcv, search_kr
 from src.signals import recommend, _fmt
-from src.universe import CRYPTO, KR_PRESETS, LOOKBACK_OPTIONS, MARKETS, US_PRESETS, crypto_choices
+from src.universe import (
+    CRYPTO,
+    KR_PRESETS,
+    LOOKBACK_OPTIONS,
+    MARKETS,
+    US_PRESETS,
+    crypto_choices,
+    resolve_lookback,
+)
 
 st.set_page_config(
     page_title="매매시점 제안",
@@ -129,10 +137,15 @@ with st.sidebar:
 
     as_of = st.date_input("분석 시점", value=date.today(), max_value=date.today())
     lookback_keys = list(LOOKBACK_OPTIONS.keys())
-    lookback_label = st.selectbox("조회 기간", lookback_keys, index=lookback_keys.index("1년"))
-    lookback_spec = LOOKBACK_OPTIONS[lookback_label]
-    lookback_days = lookback_spec["days"]
-    timeframe = lookback_spec["timeframe"]
+    lookback_label = st.selectbox(
+        "조회 기간",
+        lookback_keys,
+        index=lookback_keys.index("1년"),
+        key="lookback_v2",
+    )
+    lookback_spec = resolve_lookback(lookback_label)
+    lookback_days = int(lookback_spec["days"])
+    timeframe = str(lookback_spec["timeframe"])
     run = st.button("분석하기", type="primary", use_container_width=True)
 
     st.markdown("---")
