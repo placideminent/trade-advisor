@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
-SIGNAL_RULE_VERSION = 9
+SIGNAL_RULE_VERSION = 10
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 10
 # 합산 %는 조회 기간과 상관없이 같은 눈금(이론상 최저~최고)을 쓴다.
@@ -257,7 +257,7 @@ def recommend(
 
     bar_count = 0 if an.df is None else len(an.df)
     buy_pct_cut = 65
-    sell_pct_cut = 24
+    sell_pct_cut = 27
     if bar_count < 50:
         reasons.append(
             f"표본 {bar_count}봉으로 짧음 — 매수 {buy_pct_cut}% 이상 / 매도 {sell_pct_cut}% 이하"
