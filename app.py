@@ -81,7 +81,7 @@ st.title("매매시점 제안")
 st.caption(
     "조회 시점의 현재가를 기준으로 추세선·지지/저항·매물대를 보고 "
     "매수 / 매도 / 홀딩을 제안합니다. "
-    "1~3개월은 4시간봉, 6개월·1년은 일봉입니다. 투자 자문이 아닙니다."
+    "1개월은 1시간봉, 2·3개월은 4시간봉, 6개월·1년은 일봉입니다. 투자 자문이 아닙니다."
 )
 
 
@@ -160,7 +160,7 @@ with st.sidebar:
         """
 **계산 방식**
 - 지정일까지 시세만 사용 (이후 봉 제외)
-- **1·2·3개월 → 4시간봉**, **6개월·1년 → 일봉**
+- **1개월 → 1시간봉**, **2·3개월 → 4시간봉**, **6개월·1년 → 일봉**
 - 1~3개월은 6개월 일봉 평가를 더함 (매수 +1 / 매도 −1 / 홀딩 0)
 - 추세선: 최근 스윙 고점/저점 연결
 - 지지·저항: 스윙 군집 + 매물대
@@ -179,7 +179,7 @@ if not run:
         2. **과거 특정 날짜**를 시점으로 넣으면 그 날 이후 시세는 보지 않습니다.
         3. 그 시점의 추세선, 지지/저항, 주요 매물대를 그린 뒤 매수·매도·홀딩을 제안합니다.
 
-        1~3개월은 4시간봉, 6개월·1년은 일봉으로 계산합니다.
+        1개월은 1시간봉, 2·3개월은 4시간봉, 6개월·1년은 일봉으로 계산합니다.
         """
     )
     st.stop()
@@ -189,7 +189,7 @@ if not ticker:
     st.stop()
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _cached_ohlcv(market: str, ticker: str, as_of_iso: str, lookback_days: int, timeframe: str, _ver: str = "kr4h2"):
+def _cached_ohlcv(market: str, ticker: str, as_of_iso: str, lookback_days: int, timeframe: str, _ver: str = "1h1m"):
     return fetch_ohlcv(
         market,
         ticker,
@@ -199,7 +199,7 @@ def _cached_ohlcv(market: str, ticker: str, as_of_iso: str, lookback_days: int, 
     )
 
 
-bar_name = "4시간봉" if timeframe == "4h" else "일봉"
+bar_name = {"1h": "1시간봉", "4h": "4시간봉"}.get(timeframe, "일봉")
 with st.spinner(f"{display_name or ticker} / {as_of} {bar_name} 수집 중..."):
     try:
         df, meta = _cached_ohlcv(
@@ -216,7 +216,7 @@ with st.spinner(f"{display_name or ticker} / {as_of} {bar_name} 수집 중..."):
 if df.empty:
     st.error(
         "해당 기간에 봉이 없습니다. 종목 코드나 날짜를 확인하세요. "
-        "한국 주식 1~3개월은 4시간봉을 외부 시세에서 받는데, 서버에서 막히면 비어 보일 수 있습니다."
+        "한국 주식 단기 분·시간봉은 외부 시세에서 받는데, 서버에서 막히면 비어 보일 수 있습니다."
     )
     st.stop()
 
@@ -334,7 +334,7 @@ with right:
 
 last_txt = (
     analysis.last_bar.strftime("%Y-%m-%d %H:%M")
-    if timeframe == "4h"
+    if timeframe in ("1h", "4h")
     else str(analysis.last_bar.date())
 )
 title = f"{meta.get('name', ticker)} ({meta.get('ticker', ticker)})  ·  {bar_name}  ·  {analysis.price_label} {_fmt(analysis.price)}"

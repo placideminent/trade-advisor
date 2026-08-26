@@ -39,7 +39,7 @@ US_PRESETS = [
 ]
 
 LOOKBACK_OPTIONS = {
-    "1개월": {"days": 30, "timeframe": "4h"},
+    "1개월": {"days": 30, "timeframe": "1h"},
     "2개월": {"days": 60, "timeframe": "4h"},
     "3개월": {"days": 90, "timeframe": "4h"},
     "6개월": {"days": 180, "timeframe": "1d"},
@@ -53,7 +53,13 @@ def resolve_lookback(label) -> dict:
     if isinstance(spec, dict) and "days" in spec and "timeframe" in spec:
         return spec
     if isinstance(spec, int):
-        return {"days": spec, "timeframe": "4h" if spec <= 90 else "1d"}
+        if spec <= 30:
+            tf = "1h"
+        elif spec <= 90:
+            tf = "4h"
+        else:
+            tf = "1d"
+        return {"days": spec, "timeframe": tf}
     return LOOKBACK_OPTIONS["1년"]
 
 MARKETS = {

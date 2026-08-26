@@ -173,6 +173,20 @@ def resample_4h(df: pd.DataFrame, market: str) -> pd.DataFrame:
     return out
 
 
+def to_market_wall(df: pd.DataFrame, market: str) -> pd.DataFrame:
+    """시세 인덱스를 시장 시간대 벽시계로 맞춘다."""
+    if df.empty:
+        return df
+    work = df.copy()
+    tz = _market_tz(market)
+    idx = pd.DatetimeIndex(pd.to_datetime(work.index))
+    if idx.tz is None:
+        idx = idx.tz_localize("UTC")
+    work.index = idx.tz_convert(tz)
+    work.index = _index_naive_wall(work.index)
+    return work
+
+
 def _fetch_yahoo_chart(symbol: str, start: date, end: date, interval: str = "60m") -> pd.DataFrame:
     """yfinance가 막힐 때를 위한 Yahoo chart API. Streamlit Cloud에서 더 잘 되는 경우가 많다."""
     import requests
@@ -347,11 +361,12 @@ def fetch_ohlcv(
     lookback_days: int = 365,
     timeframe: str = "1d",
 ) -> tuple[pd.DataFrame, dict]:
-    """지정일(as_of)까지의 봉만 반환. 1~3개월은 4시간봉, 그 이상은 일봉."""
+    """지정일(as_of)까지의 봉만 반환. 1개월 주식은 1시간봉, 2~3개월은 4시간봉, 그 이상은 일봉."""
     as_of = _to_date(as_of)
-    timeframe = "4h" if timeframe == "4h" else "1d"
-    interval = "1h" if timeframe == "4h" else "1d"
-    pad = 7 if timeframe == "4h" else 10
+    if timeframe not in ("1h", "4h", "1d"):
+        timeframe = "1d"
+    interval = "1h" if timeframe in ("1h", "4h") else "1d"
+    pad = 7 if timeframe in ("1h", "4h") else 10
     start = as_of - timedelta(days=int(lookback_days * 1.2) + pad)
     meta = {
         "market": market,
@@ -382,7 +397,7 @@ def fetch_ohlcv(
             last_err = None
             for symbol in _kr_yahoo_symbols(code):
                 try:
-                    if timeframe == "4h":
+                    if timeframe in ("1h", "4h"):
                         df = _fetch_intraday(symbol, start, as_of)
                     else:
                         df = _fetch_yf(symbol, start, as_of, interval="1d")
@@ -392,14 +407,15 @@ def fetch_ohlcv(
                 except Exception as exc:
                     last_err = exc
                     df = pd.DataFrame()
-            if df.empty and timeframe == "4h":
+            if df.empty and timeframe in ("1h", "4h"):
                 try:
                     df = _fetch_fdr(code, start, as_of)
                     if not df.empty:
+                        missed = "1시간봉" if timeframe == "1h" else "4시간봉"
                         timeframe = "1d"
                         interval = "1d"
                         meta["source"] = "FinanceDataReader"
-                        meta["note"] = "한국 주식 4시간봉을 받지 못해 일봉으로 계산합니다."
+                        meta["note"] = f"한국 주식 {missed}을 받지 못해 일봉으로 계산합니다."
                 except Exception as exc:
                     last_err = exc
                     df = pd.DataFrame()
@@ -410,10 +426,10 @@ def fetch_ohlcv(
         meta["ticker"] = symbol
         meta["name"] = symbol
         try:
-            df = _fetch_intraday(symbol, start, as_of) if timeframe == "4h" else _fetch_yf(symbol, start, as_of)
+            df = _fetch_intraday(symbol, start, as_of) if timeframe in ("1h", "4h") else _fetch_yf(symbol, start, as_of)
             meta["source"] = "Yahoo Finance"
         except Exception:
-            if timeframe == "4h":
+            if timeframe in ("1h", "4h"):
                 df = _fetch_yahoo_chart(symbol, start, as_of, interval="60m")
                 meta["source"] = "Yahoo Finance"
                 if df.empty:
@@ -427,7 +443,7 @@ def fetch_ohlcv(
         symbol = info["symbol"] if info else f"{key}-USD"
         meta["ticker"] = key
         meta["name"] = info["name"] if info else key
-        if timeframe == "4h":
+        if timeframe in ("1h", "4h"):
             df = _fetch_intraday(symbol, start, as_of)
         else:
             df = _fetch_yf(symbol, start, as_of)
@@ -442,6 +458,9 @@ def fetch_ohlcv(
     if timeframe == "4h":
         df = resample_4h(df, market)
         meta["bar"] = "4시간봉"
+    elif timeframe == "1h":
+        df = to_market_wall(df, market)
+        meta["bar"] = "1시간봉"
     else:
         df = df.copy()
         df.index = _index_naive_wall(df.index)
