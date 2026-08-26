@@ -78,9 +78,9 @@ def recommend(
     add("기본", "중립 시작점", SCORE_BASE)
 
     if an.trend == "up":
-        add("추세", f"상승. {an.price_label} {_fmt(price)}", 2)
+        add("추세", f"상승 · 비싸게 살 수 있어 감점. {an.price_label} {_fmt(price)}", -2)
     elif an.trend == "down":
-        add("추세", f"하락. {an.price_label} {_fmt(price)}", -2)
+        add("추세", f"하락 · 싸게 살 수 있어 가점. {an.price_label} {_fmt(price)}", 2)
     else:
         add("추세", f"횡보. {an.price_label} {_fmt(price)}", 0)
 
@@ -205,10 +205,10 @@ def recommend(
 
     if score_pct >= buy_pct_cut:
         action = "매수"
-        summary = "상승 구조에서 지지·매물대 부근이라 매수 쪽으로 기울었습니다."
+        summary = "하락·눌림 쪽에서 지지·하단 조건이 맞아 매수 쪽으로 기울었습니다."
     elif score_pct <= sell_pct_cut:
         action = "매도"
-        summary = "하락 구조이거나 저항·상단 매물대에 붙어 매도/관망 쪽으로 기울었습니다."
+        summary = "상승·고가 쪽에서 저항·상단 조건이 맞아 매도/관망 쪽으로 기울었습니다."
     else:
         action = "홀딩"
         summary = "지지와 저항 사이이거나 신호가 엇갈려 관망(홀딩)이 낫습니다."
