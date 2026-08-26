@@ -62,7 +62,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-st.title("시점 매매 제안")
+st.title("매매시점 제안")
 st.caption(
     "원하는 날짜의 일봉만 사용해 추세선·지지/저항·매물대를 계산하고 "
     "매수 / 매도 / 홀딩을 제안합니다. 투자 자문이 아닙니다."
