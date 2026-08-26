@@ -6,12 +6,79 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
-SIGNAL_RULE_VERSION = 12
+SIGNAL_RULE_VERSION = 13
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 10
 # 합산 %는 조회 기간과 상관없이 같은 눈금(이론상 최저~최고)을 쓴다.
 SCORE_LO = SCORE_BASE - 15  # -5
 SCORE_HI = SCORE_BASE + 9  # 19
+
+DEFAULT_WEIGHTS = {
+    "base": 10,
+    "trend": 2,
+    "trend_1m": 1,
+    "chg6_10": 1,
+    "chg6_20": 2,
+    "support_near": 2,
+    "support_break": -2,
+    "resist_near": -2,
+    "poc": 1,
+    "val": 1,
+    "rsi": 1,
+    "ma20": -1,
+    "chg1_50": -3,
+    "chg1_100": -4,
+    "chg3_50": -3,
+    "chg3_100": -4,
+    "rr_penalty": -1,
+}
+
+DEFAULT_CUTS = {
+    "buy_weak": 65,
+    "buy_mid": 70,
+    "buy_strong": 75,
+    "sell_weak": 27,
+    "sell_mid": 24,
+    "sell_strong": 21,
+}
+
+WEIGHT_FIELDS = [
+    ("base", "기본", "중립 시작점"),
+    ("trend", "추세", "가점/감점 크기. 1·2개월은 상승 +, 3개월 이상은 하락 +"),
+    ("trend_1m", "1개월 추세", "3개월 이상 조회 시. 상승 +, 하락 −"),
+    ("chg6_10", "6개월 상승 10%", "6개월 전 대비 10% 이상"),
+    ("chg6_20", "6개월 상승 20%", "6개월 전 대비 20% 이상 (10% 대신)"),
+    ("support_near", "지지 근접", "지지 바로 아래/근처"),
+    ("support_break", "지지 이탈", "지지 아래로 이탈"),
+    ("resist_near", "저항 근접", "저항 바로 아래/근처"),
+    ("poc", "POC", "최대 매물 부근. 상승 +, 하락 −"),
+    ("val", "VAL", "밸류 하단 아래. 상승 +, 하락 −"),
+    ("rsi", "RSI", "과매도 +, 과매수 −"),
+    ("ma20", "MA20 아래", "현재가 < MA20 (상승 추세면 0)"),
+    ("chg1_50", "1개월 상승 50%", "1개월 상승 50% 이상"),
+    ("chg1_100", "1개월 상승 100%", "1개월 상승 100% 이상"),
+    ("chg3_50", "3개월 상승 50%", "3개월 상승 50% 이상"),
+    ("chg3_100", "3개월 상승 100%", "3개월 상승 100% 이상"),
+    ("rr_penalty", "손익비 부족", "손익비 1.2 미만이고 점수가 높을 때"),
+]
+
+CUT_FIELDS = [
+    ("buy_weak", "약한 매수", "% 이상"),
+    ("buy_mid", "매수", "% 이상"),
+    ("buy_strong", "강한 매수", "% 이상"),
+    ("sell_weak", "약한 매도", "% 이하"),
+    ("sell_mid", "매도", "% 이하"),
+    ("sell_strong", "강한 매도", "% 이하"),
+]
+
+
+def merge_rule(rule: dict | None) -> dict:
+    weights = dict(DEFAULT_WEIGHTS)
+    cuts = dict(DEFAULT_CUTS)
+    if isinstance(rule, dict):
+        weights.update(rule.get("weights") or {})
+        cuts.update(rule.get("cuts") or {})
+    return {"weights": weights, "cuts": cuts}
 
 from .analysis import Analysis, Level
 
@@ -89,7 +156,15 @@ def recommend(
     six_month_chg: float | None = None,
     lookback_days: int | None = None,
     trend_1m: str | None = None,
+    rule: dict | None = None,
 ) -> Signal:
+    cfg = merge_rule(rule)
+    w = cfg["weights"]
+    cuts = cfg["cuts"]
+
+    def wp(key: str) -> int:
+        return int(w.get(key, DEFAULT_WEIGHTS[key]))
+
     price = an.price
     atr = an.atr if an.atr and an.atr > 0 else price * 0.02
     near = max(atr * 0.45, price * 0.008)
@@ -108,44 +183,59 @@ def recommend(
         score_rows.append({"항목": item, "내용": detail, "점수": label})
         reasons.append(f"{item}: {detail} ({label})")
 
-    add("기본", "중립 시작점", SCORE_BASE)
+    base = wp("base")
+    add("기본", "중립 시작점", base)
 
     # 1·2개월은 추세 추종(상승 +, 하락 −). 3개월 이상은 눌림 매수(하락 +, 상승 −).
     follow_trend = lookback_days is not None and lookback_days <= 60
+    trend_pts = abs(wp("trend"))
     if follow_trend:
         if an.trend == "up":
-            add("추세", f"상승 · 추세 추종 가점. {an.price_label} {_fmt(price)}", 2)
+            add("추세", f"상승 · 추세 추종 가점. {an.price_label} {_fmt(price)}", trend_pts)
         elif an.trend == "down":
-            add("추세", f"하락 · 추세 추종 감점. {an.price_label} {_fmt(price)}", -2)
+            add("추세", f"하락 · 추세 추종 감점. {an.price_label} {_fmt(price)}", -trend_pts)
         else:
             add("추세", f"횡보. {an.price_label} {_fmt(price)}", 0)
     else:
         if an.trend == "up":
-            add("추세", f"상승 · 고점 추격 매수 감점. {an.price_label} {_fmt(price)}", -2)
+            add("추세", f"상승 · 고점 추격 매수 감점. {an.price_label} {_fmt(price)}", -trend_pts)
         elif an.trend == "down":
-            add("추세", f"하락 · 눌림 매수 가점. {an.price_label} {_fmt(price)}", 2)
+            add("추세", f"하락 · 눌림 매수 가점. {an.price_label} {_fmt(price)}", trend_pts)
         else:
             add("추세", f"횡보. {an.price_label} {_fmt(price)}", 0)
 
     if lookback_days is not None and lookback_days >= 90:
+        t1 = abs(wp("trend_1m"))
         if trend_1m == "up":
-            add("1개월 추세", "1개월 조회 기준 상승", 1)
+            add("1개월 추세", "1개월 조회 기준 상승", t1)
         elif trend_1m == "down":
-            add("1개월 추세", "1개월 조회 기준 하락", -1)
+            add("1개월 추세", "1개월 조회 기준 하락", -t1)
         elif trend_1m == "sideways":
             add("1개월 추세", "1개월 조회 기준 횡보", 0)
         else:
             add("1개월 추세", "1개월 조회 추세를 계산하지 못함", 0)
 
+    chg6 = six_month_chg
+    if chg6 is None:
+        chg6 = period_return(an.df, an.as_of, price, 180)
+    if chg6 is None:
+        add("6개월 상승률", "6개월 전 가격 없음", 0)
+    elif chg6 >= 0.20:
+        add("6개월 상승률", f"{chg6 * 100:.1f}% (20% 이상)", wp("chg6_20"))
+    elif chg6 >= 0.10:
+        add("6개월 상승률", f"{chg6 * 100:.1f}% (10% 이상)", wp("chg6_10"))
+    else:
+        add("6개월 상승률", f"{chg6 * 100:.1f}%", 0)
+
     if nsup:
         dist_s = price - nsup.price
         pct_s = dist_s / price * 100
         if dist_s <= near:
-            add("지지", f"근접 {_fmt(nsup.price)} ({nsup.note}, 이격 {pct_s:.2f}%)", 2)
+            add("지지", f"근접 {_fmt(nsup.price)} ({nsup.note}, 이격 {pct_s:.2f}%)", wp("support_near"))
         else:
             add("지지", f"{_fmt(nsup.price)} 까지 {pct_s:.2f}%", 0)
         if price < nsup.price - atr * 0.15:
-            add("지지 이탈", f"현재가 < {_fmt(nsup.price)}", -2)
+            add("지지 이탈", f"현재가 < {_fmt(nsup.price)}", wp("support_break"))
     else:
         add("지지", "없음", 0)
 
@@ -153,17 +243,19 @@ def recommend(
         dist_r = nres.price - price
         pct_r = dist_r / price * 100
         if dist_r <= near:
-            add("저항", f"근접 {_fmt(nres.price)} ({nres.note}, 이격 {pct_r:.2f}%)", -2)
+            add("저항", f"근접 {_fmt(nres.price)} ({nres.note}, 이격 {pct_r:.2f}%)", wp("resist_near"))
         else:
             add("저항", f"{_fmt(nres.price)} 까지 {pct_r:.2f}%", 0)
     else:
         add("저항", "없음", 0)
 
+    poc_pts = abs(wp("poc"))
+    val_pts = abs(wp("val"))
     if abs(price - an.poc) <= near:
         if an.trend == "up":
-            add("POC", f"최대 매물 {_fmt(an.poc)} 부근 · 상승 추세", 1)
+            add("POC", f"최대 매물 {_fmt(an.poc)} 부근 · 상승 추세", poc_pts)
         elif an.trend == "down":
-            add("POC", f"최대 매물 {_fmt(an.poc)} 부근 · 하락 추세", -1)
+            add("POC", f"최대 매물 {_fmt(an.poc)} 부근 · 하락 추세", -poc_pts)
         else:
             add("POC", f"최대 매물 {_fmt(an.poc)} 부근 · 횡보", 0)
         add("VAL", f"하단 {_fmt(an.val)} (POC가 우선이라 미적용)", 0)
@@ -175,9 +267,9 @@ def recommend(
     elif price < an.val:
         add("POC", f"최대 매물 {_fmt(an.poc)} · 현재가가 멀리 있음", 0)
         if an.trend == "down":
-            add("VAL", f"하단 {_fmt(an.val)} 아래 · 하락 추세", -1)
+            add("VAL", f"하단 {_fmt(an.val)} 아래 · 하락 추세", -val_pts)
         elif an.trend == "up":
-            add("VAL", f"하단 {_fmt(an.val)} 아래 · 상승 추세", 1)
+            add("VAL", f"하단 {_fmt(an.val)} 아래 · 상승 추세", val_pts)
         else:
             add("VAL", f"하단 {_fmt(an.val)} 아래 · 횡보", 0)
         add("VAH", f"상단 {_fmt(an.vah)} (감점 없음)", 0)
@@ -186,10 +278,11 @@ def recommend(
         add("VAL", f"하단 {_fmt(an.val)} ~ 현재가 사이", 0)
         add("VAH", f"상단 {_fmt(an.vah)} (감점 없음)", 0)
 
+    rsi_pts = abs(wp("rsi"))
     if an.rsi >= 70:
-        add("RSI", f"{an.rsi:.1f} 과매수", -1)
+        add("RSI", f"{an.rsi:.1f} 과매수", -rsi_pts)
     elif an.rsi <= 30:
-        add("RSI", f"{an.rsi:.1f} 과매도", 1)
+        add("RSI", f"{an.rsi:.1f} 과매도", rsi_pts)
     else:
         add("RSI", f"{an.rsi:.1f} 중립", 0)
 
@@ -198,7 +291,7 @@ def recommend(
     elif price > an.ma20:
         add("MA20", f"{an.price_label} > MA20 ({_fmt(an.ma20)})", 0)
     elif an.trend != "up":
-        add("MA20", f"{an.price_label} < MA20 ({_fmt(an.ma20)})", -1)
+        add("MA20", f"{an.price_label} < MA20 ({_fmt(an.ma20)})", wp("ma20"))
     else:
         add("MA20", f"{an.price_label} < MA20 ({_fmt(an.ma20)}) · 상승 추세라 감점 없음", 0)
 
@@ -206,9 +299,9 @@ def recommend(
     if chg is None:
         add("1개월 상승률", "계산 불가", 0)
     elif chg >= 1.0:
-        add("1개월 상승률", f"{chg * 100:.1f}% (100% 이상)", -4)
+        add("1개월 상승률", f"{chg * 100:.1f}% (100% 이상)", wp("chg1_100"))
     elif chg >= 0.5:
-        add("1개월 상승률", f"{chg * 100:.1f}% (50% 이상)", -3)
+        add("1개월 상승률", f"{chg * 100:.1f}% (50% 이상)", wp("chg1_50"))
     else:
         add("1개월 상승률", f"{chg * 100:.1f}%", 0)
 
@@ -216,9 +309,9 @@ def recommend(
     if chg3 is None:
         add("3개월 상승률", "계산 불가", 0)
     elif chg3 >= 1.0:
-        add("3개월 상승률", f"{chg3 * 100:.1f}% (100% 이상)", -4)
+        add("3개월 상승률", f"{chg3 * 100:.1f}% (100% 이상)", wp("chg3_100"))
     elif chg3 >= 0.5:
-        add("3개월 상승률", f"{chg3 * 100:.1f}% (50% 이상)", -3)
+        add("3개월 상승률", f"{chg3 * 100:.1f}% (50% 이상)", wp("chg3_50"))
     else:
         add("3개월 상승률", f"{chg3 * 100:.1f}%", 0)
 
@@ -236,16 +329,20 @@ def recommend(
         if risk > 0:
             rr = reward / risk
 
-    if rr is not None and rr < 1.2 and score >= SCORE_BASE + 2:
-        add("손익비", f"{rr:.2f} · 저항까지 여유 부족", -1)
+    if rr is not None and rr < 1.2 and score >= base + 2:
+        add("손익비", f"{rr:.2f} · 저항까지 여유 부족", wp("rr_penalty"))
     elif rr is not None:
         add("손익비", f"{rr:.2f} (목표 {_fmt(target)} / 손절 {_fmt(stop)})", 0)
     else:
         add("손익비", "목표·손절을 잡지 못함", 0)
 
     bar_count = 0 if an.df is None else len(an.df)
-    buy_weak, buy_mid, buy_strong = 65, 70, 75
-    sell_weak, sell_mid, sell_strong = 27, 24, 21
+    buy_weak = int(cuts["buy_weak"])
+    buy_mid = int(cuts["buy_mid"])
+    buy_strong = int(cuts["buy_strong"])
+    sell_weak = int(cuts["sell_weak"])
+    sell_mid = int(cuts["sell_mid"])
+    sell_strong = int(cuts["sell_strong"])
     if bar_count < 50:
         reasons.append(
             f"표본 {bar_count}봉으로 짧음 — 약한 매수 {buy_weak}%↑ / 강한 매도 {sell_strong}%↓"
@@ -295,7 +392,7 @@ def recommend(
         else:
             summary = "상승·고가 쪽에서 저항·상단 조건이 맞습니다. " + summary
 
-    tilt = abs(score - SCORE_BASE)
+    tilt = abs(score - base)
     confidence = int(max(35, min(90, 50 + tilt * 12)))
     if action == "홀딩":
         confidence = int(max(30, 55 - tilt * 4))

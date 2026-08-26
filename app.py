@@ -11,22 +11,59 @@ import streamlit as st
 from src.analysis import analyze
 from src.chart import build_chart
 from src.data import fetch_ohlcv, fetch_spot_price, search_kr
-from src.signals import recommend, period_return, _fmt
+from src.signals import (
+    CUT_FIELDS,
+    DEFAULT_CUTS,
+    DEFAULT_WEIGHTS,
+    WEIGHT_FIELDS,
+    period_return,
+    recommend,
+    _fmt,
+)
 
 
-def _make_signal(an, six_month_chg=None, lookback_days=None, trend_1m=None):
+def _make_signal(an, six_month_chg=None, lookback_days=None, trend_1m=None, rule=None):
     try:
         return recommend(
             an,
             six_month_chg=six_month_chg,
             lookback_days=lookback_days,
             trend_1m=trend_1m,
+            rule=rule,
         )
     except TypeError:
         try:
-            return recommend(an, six_month_chg=six_month_chg)
+            return recommend(
+                an,
+                six_month_chg=six_month_chg,
+                lookback_days=lookback_days,
+                trend_1m=trend_1m,
+            )
         except TypeError:
-            return recommend(an)
+            try:
+                return recommend(an, six_month_chg=six_month_chg)
+            except TypeError:
+                return recommend(an)
+
+
+def _init_rule_widgets() -> None:
+    for key, default in DEFAULT_WEIGHTS.items():
+        st.session_state.setdefault(f"w_{key}", int(default))
+    for key, default in DEFAULT_CUTS.items():
+        st.session_state.setdefault(f"c_{key}", int(default))
+
+
+def _read_rule_from_sidebar() -> dict:
+    weights = {key: int(st.session_state.get(f"w_{key}", default)) for key, default in DEFAULT_WEIGHTS.items()}
+    cuts = {key: int(st.session_state.get(f"c_{key}", default)) for key, default in DEFAULT_CUTS.items()}
+    return {"weights": weights, "cuts": cuts}
+
+
+def _reset_rule_widgets() -> None:
+    for key, default in DEFAULT_WEIGHTS.items():
+        st.session_state[f"w_{key}"] = int(default)
+    for key, default in DEFAULT_CUTS.items():
+        st.session_state[f"c_{key}"] = int(default)
 
 
 @st.cache_data(ttl=60, show_spinner=False)
@@ -170,6 +207,40 @@ with st.sidebar:
     lookback_spec = resolve_lookback(lookback_label)
     lookback_days = int(lookback_spec["days"])
     timeframe = str(lookback_spec["timeframe"])
+
+    _init_rule_widgets()
+    with st.expander("평가 배점·기준", expanded=False):
+        st.caption("합산 % 눈금(-5~19점)은 그대로 두고, 항목 점수와 매수/매도 컷만 바꿉니다.")
+        st.markdown("**매수 / 매도 기준**")
+        cut_cols = st.columns(2)
+        for i, (key, label, suffix) in enumerate(CUT_FIELDS):
+            with cut_cols[i % 2]:
+                st.number_input(
+                    f"{label} ({suffix})",
+                    min_value=0,
+                    max_value=100,
+                    step=1,
+                    key=f"c_{key}",
+                )
+        st.markdown("**항목 배점**")
+        w_cols = st.columns(2)
+        for i, (key, label, hint) in enumerate(WEIGHT_FIELDS):
+            with w_cols[i % 2]:
+                lo, hi = (0, 30) if key == "base" else (-10, 10)
+                st.number_input(
+                    label,
+                    min_value=lo,
+                    max_value=hi,
+                    step=1,
+                    key=f"w_{key}",
+                    help=hint,
+                )
+        st.button(
+            "기본값으로 되돌리기",
+            use_container_width=True,
+            on_click=_reset_rule_widgets,
+        )
+    rule = _read_rule_from_sidebar()
     run = st.button("분석하기", type="primary", use_container_width=True)
 
     st.markdown("---")
@@ -178,12 +249,12 @@ with st.sidebar:
 **계산 방식**
 - 지정일까지 시세만 사용 (이후 봉 제외)
 - **1개월 → 1시간봉**, **2·3개월 → 4시간봉**, **6개월·1년 → 일봉**
-- 1·2개월 추세: 상승 +2 / 하락 −2. 3개월 이상은 하락 +2 / 상승 −2
-- 3개월·6개월·1년: 같은 시점 1개월 조회 추세 상승 +1 / 하락 −1 / 횡보 0
+- 6개월 전 대비 10% / 20% 상승 배점은 위에서 조정
+- 1·2개월 추세: 상승 +, 하락 −. 3개월 이상은 하락 +, 상승 −
+- 3개월·6개월·1년: 같은 시점 1개월 조회 추세 항목
 - 추세선: 최근 스윙 고점/저점 연결
 - 지지·저항: 스윙 군집 + 매물대
-- 매물대: 각 봉의 고가~저가에 거래량 분배
-- 신호: 약한 매수 65%↑ / 매수 70%↑ / 강한 매수 75%↑ · 약한 매도 27%↓ / 매도 24%↓ / 강한 매도 21%↓
+- 매수/매도 기준과 항목 배점은 **평가 배점·기준**에서 바꿉니다
         """
     )
 
@@ -309,7 +380,7 @@ try:
                 trend_1m = an_1m.trend
         except Exception:
             trend_1m = None
-    signal = _make_signal(analysis, six_month_chg, lookback_days, trend_1m)
+    signal = _make_signal(analysis, six_month_chg, lookback_days, trend_1m, rule)
 except Exception as exc:
     st.error(f"분석 실패: {exc}")
     st.stop()
