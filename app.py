@@ -154,6 +154,7 @@ with st.sidebar:
 **계산 방식**
 - 지정일까지 시세만 사용 (이후 봉 제외)
 - **1·2·3개월 → 4시간봉**, **6개월·1년 → 일봉**
+- 1~3개월은 6개월 일봉 평가를 더함 (매수 +1 / 매도 −1 / 홀딩 0)
 - 추세선: 최근 스윙 고점/저점 연결
 - 지지·저항: 스윙 군집 + 매물대
 - 매물대: 각 봉의 고가~저가에 거래량 분배
@@ -246,7 +247,31 @@ try:
         price_source=spot_source,
         live=(as_of == date.today()),
     )
-    signal = recommend(analysis)
+    htf_6m_action = None
+    if lookback_days <= 90:
+        try:
+            df_6m, _meta_6m = _cached_ohlcv(
+                market, ticker, as_of.isoformat(), 180, "1d"
+            )
+            df_6m = df_6m.copy()
+            if (
+                as_of == date.today()
+                and len(df_6m) > 1
+                and pd.Timestamp(df_6m.index[-1]).date() == date.today()
+            ):
+                df_6m = df_6m.iloc[:-1].copy()
+            if not df_6m.empty:
+                an_6m = analyze(
+                    df_6m,
+                    as_of=as_of,
+                    spot_price=spot_price,
+                    price_source=spot_source,
+                    live=(as_of == date.today()),
+                )
+                htf_6m_action = recommend(an_6m).action
+        except Exception:
+            htf_6m_action = None
+    signal = recommend(analysis, htf_6m_action=htf_6m_action)
 except Exception as exc:
     st.error(f"분석 실패: {exc}")
     st.stop()

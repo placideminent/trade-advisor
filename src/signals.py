@@ -29,7 +29,7 @@ def _fmt(price: float) -> str:
     return f"{price:.6f}"
 
 
-def recommend(an: Analysis) -> Signal:
+def recommend(an: Analysis, htf_6m_action: str | None = None) -> Signal:
     price = an.price
     atr = an.atr if an.atr and an.atr > 0 else price * 0.02
     near = max(atr * 0.45, price * 0.008)
@@ -49,6 +49,15 @@ def recommend(an: Analysis) -> Signal:
         reasons.append(f"추세: 하락. {an.price_label} {_fmt(price)}")
     else:
         reasons.append(f"추세: 횡보. {an.price_label} {_fmt(price)}")
+
+    if htf_6m_action == "매수":
+        score += 1
+        reasons.append("6개월 일봉 평가: 매수 (+1)")
+    elif htf_6m_action == "매도":
+        score -= 1
+        reasons.append("6개월 일봉 평가: 매도 (-1)")
+    elif htf_6m_action == "홀딩":
+        reasons.append("6개월 일봉 평가: 홀딩 (0)")
 
     if nsup:
         dist_s = price - nsup.price
