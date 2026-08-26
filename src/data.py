@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -143,12 +143,20 @@ def _fetch_yf(symbol: str, start: date, end: date, interval: str = "1d") -> pd.D
     return _normalize_ohlcv(raw)
 
 
+def _market_tz(market: str):
+    name = MARKET_TZ.get(market, "UTC")
+    try:
+        return ZoneInfo(name)
+    except Exception:
+        return timezone.utc
+
+
 def resample_4h(df: pd.DataFrame, market: str) -> pd.DataFrame:
     """1시간봉을 시장 시간대 기준 4시간봉으로 합친다."""
     if df.empty:
         return df
     work = df.copy()
-    tz = ZoneInfo(MARKET_TZ.get(market, "UTC"))
+    tz = _market_tz(market)
     idx = pd.DatetimeIndex(pd.to_datetime(work.index))
     if idx.tz is None:
         idx = idx.tz_localize("UTC")
@@ -163,6 +171,70 @@ def resample_4h(df: pd.DataFrame, market: str) -> pd.DataFrame:
     out = out.dropna(subset=["open", "high", "low", "close"])
     out.index = _index_naive_wall(out.index)
     return out
+
+
+def _fetch_yahoo_chart(symbol: str, start: date, end: date, interval: str = "60m") -> pd.DataFrame:
+    """yfinance가 막힐 때를 위한 Yahoo chart API. Streamlit Cloud에서 더 잘 되는 경우가 많다."""
+    import requests
+
+    p1 = int(datetime(start.year, start.month, start.day, tzinfo=timezone.utc).timestamp())
+    p2 = int(datetime(end.year, end.month, end.day, 23, 59, tzinfo=timezone.utc).timestamp())
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Accept": "application/json",
+    }
+    params = {
+        "period1": p1,
+        "period2": p2,
+        "interval": interval,
+        "includePrePost": "false",
+        "events": "div,splits",
+    }
+    last_err = None
+    for host in ("query1.finance.yahoo.com", "query2.finance.yahoo.com"):
+        try:
+            resp = requests.get(
+                f"https://{host}/v8/finance/chart/{symbol}",
+                params=params,
+                headers=headers,
+                timeout=20,
+            )
+            resp.raise_for_status()
+            result = (resp.json().get("chart") or {}).get("result") or []
+            if not result:
+                continue
+            node = result[0]
+            ts = node.get("timestamp") or []
+            quote = ((node.get("indicators") or {}).get("quote") or [{}])[0]
+            if not ts:
+                continue
+            raw = pd.DataFrame(
+                {
+                    "open": quote.get("open"),
+                    "high": quote.get("high"),
+                    "low": quote.get("low"),
+                    "close": quote.get("close"),
+                    "volume": quote.get("volume"),
+                },
+                index=pd.to_datetime(ts, unit="s", utc=True),
+            )
+            return _normalize_ohlcv(raw)
+        except Exception as exc:
+            last_err = exc
+            continue
+    if last_err:
+        return pd.DataFrame()
+    return pd.DataFrame()
+
+
+def _fetch_intraday(symbol: str, start: date, end: date) -> pd.DataFrame:
+    df = _fetch_yf(symbol, start, end, interval="1h")
+    if not df.empty:
+        return df
+    df = _fetch_yahoo_chart(symbol, start, end, interval="60m")
+    if not df.empty:
+        return df
+    return _fetch_yahoo_chart(symbol, start, end, interval="30m")
 
 
 def _kr_yahoo_symbols(code: str) -> list[str]:
@@ -221,10 +293,24 @@ def fetch_ohlcv(
             last_err = None
             for symbol in _kr_yahoo_symbols(code):
                 try:
-                    df = _fetch_yf(symbol, start, as_of, interval=interval)
+                    if timeframe == "4h":
+                        df = _fetch_intraday(symbol, start, as_of)
+                    else:
+                        df = _fetch_yf(symbol, start, as_of, interval="1d")
                     if not df.empty:
                         meta["source"] = f"Yahoo Finance ({symbol})"
                         break
+                except Exception as exc:
+                    last_err = exc
+                    df = pd.DataFrame()
+            if df.empty and timeframe == "4h":
+                try:
+                    df = _fetch_fdr(code, start, as_of)
+                    if not df.empty:
+                        timeframe = "1d"
+                        interval = "1d"
+                        meta["source"] = "FinanceDataReader"
+                        meta["note"] = "한국 주식 4시간봉을 받지 못해 일봉으로 계산합니다."
                 except Exception as exc:
                     last_err = exc
                     df = pd.DataFrame()
@@ -235,20 +321,27 @@ def fetch_ohlcv(
         meta["ticker"] = symbol
         meta["name"] = symbol
         try:
-            df = _fetch_yf(symbol, start, as_of, interval=interval)
+            df = _fetch_intraday(symbol, start, as_of) if timeframe == "4h" else _fetch_yf(symbol, start, as_of)
             meta["source"] = "Yahoo Finance"
         except Exception:
             if timeframe == "4h":
-                raise
-            df = _fetch_fdr(symbol, start, as_of)
-            meta["source"] = "FinanceDataReader"
+                df = _fetch_yahoo_chart(symbol, start, as_of, interval="60m")
+                meta["source"] = "Yahoo Finance"
+                if df.empty:
+                    raise
+            else:
+                df = _fetch_fdr(symbol, start, as_of)
+                meta["source"] = "FinanceDataReader"
     elif market == "CRYPTO":
         key = ticker.strip().upper().replace("-USD", "").replace("USDT", "").replace("/", "")
         info = CRYPTO.get(key)
         symbol = info["symbol"] if info else f"{key}-USD"
         meta["ticker"] = key
         meta["name"] = info["name"] if info else key
-        df = _fetch_yf(symbol, start, as_of, interval=interval)
+        if timeframe == "4h":
+            df = _fetch_intraday(symbol, start, as_of)
+        else:
+            df = _fetch_yf(symbol, start, as_of)
         meta["source"] = "Yahoo Finance"
     else:
         raise ValueError(f"지원하지 않는 시장: {market}")
@@ -256,6 +349,7 @@ def fetch_ohlcv(
     if df.empty:
         return df, meta
 
+    meta["timeframe"] = timeframe
     if timeframe == "4h":
         df = resample_4h(df, market)
         meta["bar"] = "4시간봉"

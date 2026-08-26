@@ -181,7 +181,7 @@ if not ticker:
     st.stop()
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _cached_ohlcv(market: str, ticker: str, as_of_iso: str, lookback_days: int, timeframe: str):
+def _cached_ohlcv(market: str, ticker: str, as_of_iso: str, lookback_days: int, timeframe: str, _ver: str = "kr4h2"):
     return fetch_ohlcv(
         market,
         ticker,
@@ -199,13 +199,21 @@ with st.spinner(f"{display_name or ticker} / {as_of} {bar_name} 수집 중..."):
         )
         df = df.copy()
         meta = dict(meta)
+        timeframe = str(meta.get("timeframe") or timeframe)
+        bar_name = str(meta.get("bar") or bar_name)
     except Exception as extra:
         st.error(f"시세 수집 실패: {extra}")
         st.stop()
 
 if df.empty:
-    st.error("해당 기간에 봉이 없습니다. 종목 코드나 날짜를 확인하세요.")
+    st.error(
+        "해당 기간에 봉이 없습니다. 종목 코드나 날짜를 확인하세요. "
+        "한국 주식 1~3개월은 4시간봉을 외부 시세에서 받는데, 서버에서 막히면 비어 보일 수 있습니다."
+    )
     st.stop()
+
+if meta.get("note"):
+    st.warning(meta["note"])
 
 # 오늘 봉은 장중·코인 24시간에 계속 변하므로, 당일 조회는 직전 완성 봉까지만 쓴다.
 if as_of == date.today() and len(df) > 1:
