@@ -127,7 +127,8 @@ with st.sidebar:
             display_name = choice
 
     as_of = st.date_input("분석 시점", value=date.today(), max_value=date.today())
-    lookback_label = st.selectbox("조회 기간", list(LOOKBACK_OPTIONS.keys()), index=1)
+    lookback_keys = list(LOOKBACK_OPTIONS.keys())
+    lookback_label = st.selectbox("조회 기간", lookback_keys, index=lookback_keys.index("1년"))
     lookback_days = LOOKBACK_OPTIONS[lookback_label]
     run = st.button("분석하기", type="primary", use_container_width=True)
 
