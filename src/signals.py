@@ -70,10 +70,23 @@ def _fmt(price: float) -> str:
     return f"{price:.6f}"
 
 
+def period_return(df, as_of, price: float, days: int = 180) -> float | None:
+    """as_of 기준 days일 전 종가 대비 현재가 수익률."""
+    if df is None or getattr(df, "empty", True) or price is None or price <= 0:
+        return None
+    start = pd.Timestamp(as_of) - pd.Timedelta(days=days)
+    past = df.loc[df.index <= start]
+    if past.empty:
+        return None
+    base = float(past["close"].iloc[-1])
+    if base <= 0:
+        return None
+    return float(price) / base - 1.0
+
+
 def recommend(
     an: Analysis,
-    htf_6m_action: str | None = None,
-    htf_6m_pct: int | None = None,
+    six_month_chg: float | None = None,
 ) -> Signal:
     price = an.price
     atr = an.atr if an.atr and an.atr > 0 else price * 0.02
@@ -102,20 +115,17 @@ def recommend(
     else:
         add("추세", f"횡보. {an.price_label} {_fmt(price)}", 0)
 
-    if htf_6m_action == "매수":
-        add("6개월 평가", "매수", 1)
-    elif htf_6m_action == "매도":
-        add("6개월 평가", "매도", -1)
-    elif htf_6m_action == "홀딩":
-        add("6개월 평가", "홀딩", 0)
-
-    if htf_6m_pct is not None:
-        if htf_6m_pct >= 70:
-            add("6개월 상방/하단", f"합산 {htf_6m_pct}% · 과열", -3)
-        elif htf_6m_pct < 40:
-            add("6개월 상방/하단", f"합산 {htf_6m_pct}% · 하락 하단 근접", 3)
-        else:
-            add("6개월 상방/하단", f"합산 {htf_6m_pct}% · 중간", 0)
+    chg6 = six_month_chg
+    if chg6 is None:
+        chg6 = period_return(an.df, an.as_of, price, 180)
+    if chg6 is None:
+        add("6개월 상승률", "6개월 전 가격 없음", 0)
+    elif chg6 >= 0.20:
+        add("6개월 상승률", f"{chg6 * 100:.1f}% (20% 이상)", 2)
+    elif chg6 >= 0.10:
+        add("6개월 상승률", f"{chg6 * 100:.1f}% (10% 이상)", 1)
+    else:
+        add("6개월 상승률", f"{chg6 * 100:.1f}%", 0)
 
     if nsup:
         dist_s = price - nsup.price

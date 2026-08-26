@@ -11,17 +11,14 @@ import streamlit as st
 from src.analysis import analyze
 from src.chart import build_chart
 from src.data import fetch_ohlcv, fetch_spot_price, search_kr
-from src.signals import recommend, score_to_pct, _fmt
+from src.signals import recommend, period_return, _fmt
 
 
-def _make_signal(an, htf_6m_action=None, htf_6m_pct=None):
+def _make_signal(an, six_month_chg=None):
     try:
-        return recommend(an, htf_6m_action=htf_6m_action, htf_6m_pct=htf_6m_pct)
+        return recommend(an, six_month_chg=six_month_chg)
     except TypeError:
-        try:
-            return recommend(an, htf_6m_action=htf_6m_action)
-        except TypeError:
-            return recommend(an)
+        return recommend(an)
 
 
 @st.cache_data(ttl=60, show_spinner=False)
@@ -169,8 +166,7 @@ with st.sidebar:
 **계산 방식**
 - 지정일까지 시세만 사용 (이후 봉 제외)
 - **1개월 → 1시간봉**, **2·3개월 → 4시간봉**, **6개월·1년 → 일봉**
-- 1~3개월은 6개월 일봉 평가를 더함 (매수 +1 / 매도 −1 / 홀딩 0)
-- 6개월 합산 70% 이상(과열) −3, 40% 미만(하단) +3
+- 6개월 전 대비 현재가 10% 이상 +1, 20% 이상 +2
 - 추세선: 최근 스윙 고점/저점 연결
 - 지지·저항: 스윙 군집 + 매물대
 - 매물대: 각 봉의 고가~저가에 거래량 분배
@@ -263,42 +259,28 @@ try:
         price_source=spot_source,
         live=(as_of == date.today()),
     )
-    htf_6m_action = None
-    htf_6m_pct = None
-    if lookback_days <= 90:
-        try:
-            df_6m, _meta_6m = _cached_ohlcv(
+    six_month_chg = None
+    try:
+        src_6m = df
+        if lookback_days < 180:
+            src_6m, _meta_6m = _cached_ohlcv(
                 market, ticker, as_of.isoformat(), 180, "1d"
             )
-            df_6m = df_6m.copy()
-            if (
-                as_of == date.today()
-                and len(df_6m) > 1
-                and pd.Timestamp(df_6m.index[-1]).date() == date.today()
-            ):
-                df_6m = df_6m.iloc[:-1].copy()
-            if not df_6m.empty:
-                an_6m = analyze(
-                    df_6m,
-                    as_of=as_of,
-                    spot_price=spot_price,
-                    price_source=spot_source,
-                    live=(as_of == date.today()),
-                )
-                sig_6m = _make_signal(an_6m)
-                htf_6m_action = sig_6m.action
-                # 6개월 화면과 같은 눈금으로 %를 다시 계산한다.
-                htf_6m_pct = score_to_pct(sig_6m.score)
-        except Exception:
-            htf_6m_action = None
-            htf_6m_pct = None
-    signal = _make_signal(analysis, htf_6m_action, htf_6m_pct)
+            src_6m = src_6m.copy()
+        six_month_chg = period_return(src_6m, as_of, spot_price, 180)
+    except Exception:
+        six_month_chg = None
+    signal = _make_signal(analysis, six_month_chg)
 except Exception as exc:
     st.error(f"분석 실패: {exc}")
     st.stop()
 
 action_class = {"매수": "action-buy", "매도": "action-sell", "홀딩": "action-hold"}[signal.action]
-six_txt = f" · 6개월 {htf_6m_pct}%" if htf_6m_pct is not None else ""
+six_txt = (
+    f" · 6개월 가격 {six_month_chg * 100:+.1f}%"
+    if six_month_chg is not None
+    else ""
+)
 st.markdown(
     f"""
     <div class="{action_class}">
