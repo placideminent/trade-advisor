@@ -15,7 +15,7 @@ from src.signals import recommend, _fmt
 from src.universe import CRYPTO, KR_PRESETS, LOOKBACK_OPTIONS, MARKETS, US_PRESETS, crypto_choices
 
 st.set_page_config(
-    page_title="시점 매매 제안",
+    page_title="매매시점 제안",
     page_icon="📈",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -37,7 +37,7 @@ def require_login() -> None:
     password = _app_password()
     if not password or st.session_state.get("auth_ok"):
         return
-    st.title("시점 매매 제안")
+    st.title("매매시점 제안")
     st.caption("외부 접속용 비밀번호가 설정되어 있습니다.")
     pw = st.text_input("비밀번호", type="password")
     if st.button("입장", type="primary"):
