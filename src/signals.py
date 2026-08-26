@@ -186,25 +186,25 @@ def recommend(
         reasons.append(f"예상 손익비 {rr:.2f} (목표 {_fmt(target)} / 손절 {_fmt(stop)})")
 
     bar_count = 0 if an.df is None else len(an.df)
-    buy_cut = SCORE_BASE + 5 if bar_count < 50 else SCORE_BASE + 4
-    sell_cut = SCORE_BASE - 5 if bar_count < 50 else SCORE_BASE - 4
+    buy_pct_cut = 70 if bar_count < 50 else 60
+    sell_pct_cut = 30 if bar_count < 50 else 40
     if bar_count < 50:
-        reasons.append(f"표본 {bar_count}봉으로 짧음 — 매수 {buy_cut}점 이상 / 매도 {sell_cut}점 이하")
+        reasons.append(
+            f"표본 {bar_count}봉으로 짧음 — 매수 {buy_pct_cut}% 이상 / 매도 {sell_pct_cut}% 이하"
+        )
 
     score = max(0, score)
     has_6m = htf_6m_action is not None or htf_6m_pct is not None
     lo, hi = score_bounds(has_6m)
     score_pct = score_to_pct(score, has_6m)
-    buy_pct = score_to_pct(buy_cut, has_6m)
-    sell_pct = score_to_pct(sell_cut, has_6m)
     reasons.append(
-        f"합산 {score_pct}% ({score}점, 범위 {lo}~{hi}) · 매수 {buy_pct}%↑ / 매도 {sell_pct}%↓"
+        f"합산 {score_pct}% ({score}점, 범위 {lo}~{hi}) · 매수 {buy_pct_cut}%↑ / 매도 {sell_pct_cut}%↓"
     )
 
-    if score >= buy_cut:
+    if score_pct >= buy_pct_cut:
         action = "매수"
         summary = "상승 구조에서 지지·매물대 부근이라 매수 쪽으로 기울었습니다."
-    elif score <= sell_cut:
+    elif score_pct <= sell_pct_cut:
         action = "매도"
         summary = "하락 구조이거나 저항·상단 매물대에 붙어 매도/관망 쪽으로 기울었습니다."
     else:
