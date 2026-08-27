@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
-SIGNAL_RULE_VERSION = 36
+SIGNAL_RULE_VERSION = 37
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 10
 # 합산 %는 조회 기간과 상관없이 같은 눈금(이론상 최저~최고)을 쓴다.
@@ -19,6 +19,7 @@ DEFAULT_WEIGHTS = {
     "down_line_break": 1,
     "up_line_break": -1,
     "trendline_dir_down": -2,
+    "trendline_dir_up": 1,
     "trendline_dir_split": 1,
     "drop_from_high": 1,
     "support_near": 1,
@@ -50,6 +51,7 @@ WEIGHT_FIELDS = [
     ("down_line_break", "하락 추세선 이탈", "종가가 하락 추세선 위를 4봉 이상 지키면 +1"),
     ("up_line_break", "상승 추세선 이탈", "종가가 상승 추세선 아래를 4봉 이상 지키면 −1"),
     ("trendline_dir_down", "추세선 둘 다 하락", "상승선·하락선이 동시에 하락이면 −2"),
+    ("trendline_dir_up", "추세선 둘 다 상승", "상승선·하락선이 동시에 상승이면 +1"),
     ("trendline_dir_split", "추세선 상승+하락", "상승선은 상승, 하락선은 하락이면 +1"),
     ("drop_from_high", "전고점 하락 30%", "조회 기간 최고가 대비 현재가가 30% 이상 하락하면 +1"),
     ("support_near", "지지 근접", "근접하고 강도 1 초과일 때만 +1"),
@@ -303,7 +305,7 @@ def recommend(
     elif up_dir == "down" and down_dir == "up":
         add("추세선 방향성", "상승선 하락 · 하락선 상승", 0)
     elif up_dir == "up" and down_dir == "up":
-        add("추세선 방향성", "상승선·하락선 둘 다 상승", 0)
+        add("추세선 방향성", "상승선·하락선 둘 다 상승", wp("trendline_dir_up"))
     else:
         add("추세선 방향성", f"상승선 {up_dir} · 하락선 {down_dir}", 0)
 
