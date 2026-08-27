@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
-SIGNAL_RULE_VERSION = 37
+SIGNAL_RULE_VERSION = 38
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 10
 # 합산 %는 조회 기간과 상관없이 같은 눈금(이론상 최저~최고)을 쓴다.
@@ -21,7 +21,6 @@ DEFAULT_WEIGHTS = {
     "trendline_dir_down": -2,
     "trendline_dir_up": 1,
     "trendline_dir_split": 1,
-    "drop_from_high": 1,
     "support_near": 1,
     "support_break": -2,
     "resist_near": -1,
@@ -33,6 +32,8 @@ DEFAULT_WEIGHTS = {
     "ma20": -1,
     "chg1_50": -3,
     "chg1_100": -4,
+    "chg1_down": 1,
+    "chg1_down20": 2,
     "rr_penalty": -1,
 }
 
@@ -53,7 +54,6 @@ WEIGHT_FIELDS = [
     ("trendline_dir_down", "추세선 둘 다 하락", "상승선·하락선이 동시에 하락이면 −2"),
     ("trendline_dir_up", "추세선 둘 다 상승", "상승선·하락선이 동시에 상승이면 +1"),
     ("trendline_dir_split", "추세선 상승+하락", "상승선은 상승, 하락선은 하락이면 +1"),
-    ("drop_from_high", "전고점 하락 30%", "조회 기간 최고가 대비 현재가가 30% 이상 하락하면 +1"),
     ("support_near", "지지 근접", "근접하고 강도 1 초과일 때만 +1"),
     ("support_break", "지지 이탈", "지지 아래로 이탈"),
     ("resist_near", "저항 근접", "근접하고 강도 2 이상일 때만 −1"),
@@ -63,8 +63,10 @@ WEIGHT_FIELDS = [
     ("val", "VAL", "밸류 하단 아래. 상승 +, 하락 −"),
     ("rsi", "RSI", "40 이하 +, 60 이상 −"),
     ("ma20", "MA20 아래", "현재가 < MA20 (상승 추세면 0)"),
-    ("chg1_50", "1개월 상승 50%", "1개월 상승 50% 이상"),
-    ("chg1_100", "1개월 상승 100%", "1개월 상승 100% 이상"),
+    ("chg1_50", "1개월 상승 50%", "30일 전 대비 50% 이상 100% 미만 −3"),
+    ("chg1_100", "1개월 상승 100%", "30일 전 대비 100% 이상 −4"),
+    ("chg1_down", "1개월 하락 0~20%", "30일 전 대비 0% 미만 ~ −20% 미만 +1"),
+    ("chg1_down20", "1개월 하락 20%", "30일 전 대비 −20% 이하 +2"),
     ("rr_penalty", "손익비 부족", "손익비 1.2 미만이고 점수가 높을 때"),
 ]
 
@@ -309,23 +311,6 @@ def recommend(
     else:
         add("추세선 방향성", f"상승선 {up_dir} · 하락선 {down_dir}", 0)
 
-    peak = None
-    df_an = an.df
-    if df_an is not None and not getattr(df_an, "empty", True) and "high" in df_an.columns:
-        try:
-            peak = float(df_an["high"].max())
-        except (TypeError, ValueError):
-            peak = None
-    if peak is None or peak <= 0:
-        add("전고점 하락 30%", "조회 기간 최고가 없음", 0)
-    else:
-        drop = 1.0 - float(price) / peak
-        drop_txt = f"조회기간 전고점 {_fmt(peak)} 대비 {drop * 100:.1f}% 하락"
-        if drop >= 0.30:
-            add("전고점 하락 30%", drop_txt, wp("drop_from_high"))
-        else:
-            add("전고점 하락 30%", drop_txt, 0)
-
     if nsup:
         dist_s = price - nsup.price
         pct_s = dist_s / price * 100
@@ -456,9 +441,13 @@ def recommend(
     elif chg >= 1.0:
         add("1개월 상승률", f"{chg * 100:.1f}% (100% 이상)", wp("chg1_100"))
     elif chg >= 0.5:
-        add("1개월 상승률", f"{chg * 100:.1f}% (50% 이상)", wp("chg1_50"))
+        add("1개월 상승률", f"{chg * 100:.1f}% (50% 이상 100% 미만)", wp("chg1_50"))
+    elif chg >= 0:
+        add("1개월 상승률", f"{chg * 100:.1f}% (0~49%)", 0)
+    elif chg > -0.20:
+        add("1개월 상승률", f"{chg * 100:.1f}% (0% 미만 ~ −20% 미만)", wp("chg1_down"))
     else:
-        add("1개월 상승률", f"{chg * 100:.1f}%", 0)
+        add("1개월 상승률", f"{chg * 100:.1f}% (−20% 이하)", wp("chg1_down20"))
 
     stop = None
     target = None
