@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
-SIGNAL_RULE_VERSION = 19
+SIGNAL_RULE_VERSION = 20
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 10
 # 합산 %는 조회 기간과 상관없이 같은 눈금(이론상 최저~최고)을 쓴다.
@@ -17,6 +17,7 @@ DEFAULT_WEIGHTS = {
     "base": 10,
     "trend": 2,
     "trend_1m": 1,
+    "trendline_cross": 1,
     "chg6_10": 1,
     "chg6_50": -1,
     "chg6_100": -2,
@@ -50,6 +51,7 @@ WEIGHT_FIELDS = [
     ("base", "기본", "중립 시작점"),
     ("trend", "추세", "가점/감점 크기. 1·2개월은 상승 +, 3개월 이상은 하락 +"),
     ("trend_1m", "1개월 추세", "3개월 이상 조회 시. 1개월 조회 추세 상승 +, 하락 −"),
+    ("trendline_cross", "추세선 돌파", "상승 추세선이 하락 추세선 위에 있을 때"),
     ("chg6_10", "6개월 10~30%", "6개월 전 대비 10% 이상 30% 미만"),
     ("chg6_50", "6개월 50%+", "6개월 전 대비 50% 이상 100% 미만"),
     ("chg6_100", "6개월 100%+", "6개월 전 대비 100% 이상"),
@@ -223,6 +225,22 @@ def recommend(
             add("1개월 추세", "1개월 조회 기준 횡보", 0)
         else:
             add("1개월 추세", "1개월 조회 추세를 계산하지 못함", 0)
+
+    up_line = an.up_line
+    down_line = an.down_line
+    if up_line and down_line:
+        y_up = float(up_line[3])
+        y_down = float(down_line[3])
+        if y_up > y_down:
+            add(
+                "추세선 돌파",
+                f"상승선 {_fmt(y_up)} > 하락선 {_fmt(y_down)}",
+                wp("trendline_cross"),
+            )
+        else:
+            add("추세선 돌파", f"상승선 {_fmt(y_up)} ≤ 하락선 {_fmt(y_down)}", 0)
+    else:
+        add("추세선 돌파", "상승선 또는 하락선 없음", 0)
 
     chg6 = six_month_chg
     if chg6 is None:
