@@ -10,7 +10,7 @@ import streamlit as st
 
 from src.analysis import analyze
 from src.chart import build_chart
-from src.data import fetch_ohlcv, fetch_spot_price, search_kr
+from src.data import drop_incomplete_session, fetch_ohlcv, fetch_spot_price, market_today, search_kr
 from src.signals import (
     CUT_FIELDS,
     DEFAULT_CUTS,
@@ -66,9 +66,6 @@ def _reset_rule_widgets() -> None:
         st.session_state[f"c_{key}"] = int(default)
 
 
-@st.cache_data(ttl=60, show_spinner=False)
-def _cached_spot(market: str, ticker: str):
-    return fetch_spot_price(market, ticker)
 from src.universe import (
     CRYPTO,
     KR_PRESETS,
@@ -196,7 +193,13 @@ with st.sidebar:
             ticker = cmap[choice]
             display_name = choice
 
-    as_of = st.date_input("분석 시점", value=date.today(), max_value=date.today())
+    today_m = market_today(market)
+    as_of = st.date_input(
+        "분석 시점",
+        value=today_m,
+        max_value=today_m,
+        key=f"as_of_{market}",
+    )
     lookback_keys = list(LOOKBACK_OPTIONS.keys())
     lookback_label = st.selectbox(
         "조회 기간",
@@ -315,17 +318,17 @@ if meta.get("note"):
 last_bar_price = float(df["close"].iloc[-1])
 spot_price = None
 spot_source = ""
-if as_of == date.today():
+is_live = as_of == market_today(market)
+if is_live:
     try:
-        spot_price, spot_source = _cached_spot(market, ticker)
+        spot_price, spot_source = fetch_spot_price(market, ticker)
     except Exception:
         spot_price, spot_source = None, ""
     if spot_price is None:
         spot_price = last_bar_price
-        spot_source = "최근 봉 마지막 가격"
-    # 추세·매물대는 완성 봉만 쓰고, 제안 가격만 현재가를 쓴다.
-    if len(df) > 1 and pd.Timestamp(df.index[-1]).date() == date.today():
-        df = df.iloc[:-1].copy()
+        spot_source = "실시간 시세를 못 받아 최근 봉 가격 사용"
+        st.warning("실시간 현재가를 받지 못해 마지막 봉 가격으로 계산합니다.")
+    df = drop_incomplete_session(df, as_of)
 else:
     spot_price = last_bar_price
     spot_source = "해당일 종가"
@@ -341,7 +344,7 @@ try:
         as_of=as_of,
         spot_price=spot_price,
         price_source=spot_source,
-        live=(as_of == date.today()),
+        live=is_live,
     )
     six_month_chg = None
     try:
@@ -362,20 +365,17 @@ try:
             )
             df_1m = df_1m.copy()
             if not df_1m.empty:
-                px_1m = float(df_1m["close"].iloc[-1])
-                if as_of == date.today() and spot_price:
-                    px_1m = spot_price
-                    if (
-                        len(df_1m) > 1
-                        and pd.Timestamp(df_1m.index[-1]).date() == date.today()
-                    ):
-                        df_1m = df_1m.iloc[:-1].copy()
+                if is_live:
+                    df_1m = drop_incomplete_session(df_1m, as_of)
+                    px_1m = spot_price if spot_price else float(df_1m["close"].iloc[-1])
+                else:
+                    px_1m = float(df_1m["close"].iloc[-1])
                 an_1m = analyze(
                     df_1m,
                     as_of=as_of,
                     spot_price=px_1m,
                     price_source="1개월 조회",
-                    live=(as_of == date.today()),
+                    live=is_live,
                 )
                 trend_1m = an_1m.trend
         except Exception:
@@ -414,7 +414,15 @@ st.markdown(
 )
 
 c1, c2, c3, c4, c5, c6 = st.columns(6)
-c1.metric(analysis.price_label, _fmt(analysis.price))
+if is_live and last_bar_price and abs(float(analysis.price) - last_bar_price) > 1e-9:
+    c1.metric(
+        analysis.price_label,
+        _fmt(analysis.price),
+        delta=f"최근 봉 {_fmt(last_bar_price)}",
+        delta_color="off",
+    )
+else:
+    c1.metric(analysis.price_label, _fmt(analysis.price))
 c2.metric("지지", _fmt(signal.nearest_support.price) if signal.nearest_support else "-")
 c3.metric("저항", _fmt(signal.nearest_resistance.price) if signal.nearest_resistance else "-")
 c4.metric("POC", _fmt(analysis.poc))

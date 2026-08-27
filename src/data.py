@@ -151,6 +151,24 @@ def _market_tz(market: str):
         return timezone.utc
 
 
+def market_today(market: str) -> date:
+    """그 시장 달력의 오늘. Streamlit Cloud UTC와 한국 날짜가 어긋나지 않게 쓴다."""
+    return datetime.now(_market_tz(market)).date()
+
+
+def drop_incomplete_session(df: pd.DataFrame, as_of: date) -> pd.DataFrame:
+    """당일 미완성 봉을 빼고, 직전 완성 세션까지만 구조·지표에 쓴다."""
+    if df is None or df.empty:
+        return df
+    idx = pd.DatetimeIndex(pd.to_datetime(df.index))
+    keep = df.loc[idx.normalize() < pd.Timestamp(as_of)]
+    if len(keep) >= 20:
+        return keep.copy()
+    if len(df) > 1:
+        return df.iloc[:-1].copy()
+    return df
+
+
 def resample_4h(df: pd.DataFrame, market: str) -> pd.DataFrame:
     """1시간봉을 시장 시간대 기준 4시간봉으로 합친다."""
     if df.empty:
