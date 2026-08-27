@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
-SIGNAL_RULE_VERSION = 23
+SIGNAL_RULE_VERSION = 24
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 10
 # 합산 %는 조회 기간과 상관없이 같은 눈금(이론상 최저~최고)을 쓴다.
@@ -19,6 +19,7 @@ DEFAULT_WEIGHTS = {
     "trend_1m": 1,
     "trendline_cross": 1,
     "short_up_line": 1,
+    "drop_from_high": 1,
     "chg6_10": 1,
     "chg6_50": -1,
     "chg6_100": -2,
@@ -52,6 +53,7 @@ WEIGHT_FIELDS = [
     ("trend_1m", "1개월 추세", "3개월 이상 조회 시. 1개월 조회 추세 상승 +, 하락 −"),
     ("trendline_cross", "추세선 돌파", "상승선이 하락선 위이거나, 상승선은 상향·하락선은 하향일 때"),
     ("short_up_line", "단기 추세선 돌파", "같은 시점 1개월 조회에서 상승 추세선이 있으면 +1"),
+    ("drop_from_high", "전고점 하락", "조회 기간 최고가 대비 현재가가 30% 이상 하락하면 +1"),
     ("chg6_10", "6개월 10~30%", "6개월 전 대비 10% 이상 30% 미만"),
     ("chg6_50", "6개월 50%+", "6개월 전 대비 50% 이상 100% 미만"),
     ("chg6_100", "6개월 100%+", "6개월 전 대비 100% 이상"),
@@ -256,6 +258,26 @@ def recommend(
         add("단기 추세선 돌파", "1개월 조회 상승 추세선 없음", 0)
     else:
         add("단기 추세선 돌파", "1개월 조회 추세선을 계산하지 못함", 0)
+
+    peak = None
+    df_an = an.df
+    if df_an is not None and not getattr(df_an, "empty", True) and "high" in df_an.columns:
+        try:
+            peak = float(df_an["high"].max())
+        except (TypeError, ValueError):
+            peak = None
+    if peak is None or peak <= 0:
+        add("전고점 하락", "조회 기간 최고가 없음", 0)
+    else:
+        drop = 1.0 - float(price) / peak
+        if drop >= 0.30:
+            add(
+                "전고점 하락",
+                f"전고점 {_fmt(peak)} 대비 {drop * 100:.1f}% 하락",
+                wp("drop_from_high"),
+            )
+        else:
+            add("전고점 하락", f"전고점 {_fmt(peak)} 대비 {drop * 100:.1f}% 하락", 0)
 
     chg6 = six_month_chg
     if chg6 is None:
