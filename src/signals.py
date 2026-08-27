@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
-SIGNAL_RULE_VERSION = 18
+SIGNAL_RULE_VERSION = 19
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 10
 # 합산 %는 조회 기간과 상관없이 같은 눈금(이론상 최저~최고)을 쓴다.
@@ -24,6 +24,8 @@ DEFAULT_WEIGHTS = {
     "support_break": -2,
     "resist_near": -2,
     "resist_strong": -1,
+    "vol_sup_air": -1,
+    "vol_sup_room": 1,
     "poc": 1,
     "val": 1,
     "rsi": 1,
@@ -55,6 +57,8 @@ WEIGHT_FIELDS = [
     ("support_break", "지지 이탈", "지지 아래로 이탈"),
     ("resist_near", "저항 근접", "저항 바로 아래/근처"),
     ("resist_strong", "강한 저항", "근접 저항 강도 2 이상이고 근접 감점이 없을 때"),
+    ("vol_sup_air", "약한 매물대·아래 공백", "지지 매물대 강도 1 미만이고 다음 지지가 10% 이상 아래"),
+    ("vol_sup_room", "약한 매물대·위 여유", "지지 매물대 강도 1 미만이고 다음 저항이 10% 이상 위"),
     ("poc", "POC", "최대 매물 부근. 상승 +, 하락 −"),
     ("val", "VAL", "밸류 하단 아래. 상승 +, 하락 −"),
     ("rsi", "RSI", "과매도 +, 과매수 −"),
@@ -280,6 +284,38 @@ def recommend(
             add("저항", f"{_fmt(nres.price)} 까지 {pct_r:.2f}% (강도 {res_str:.1f})", 0)
     else:
         add("저항", "없음", 0)
+
+    vol_sups = [s for s in (an.supports or []) if "매물대" in (s.note or "")]
+    if not vol_sups:
+        add("지지 매물대", "매물대 지지 없음", 0)
+    else:
+        vs = min(vol_sups, key=lambda s: abs(price - s.price))
+        vs_str = float(vs.strength)
+        if vs_str >= 1:
+            add("지지 매물대", f"{_fmt(vs.price)} 강도 {vs_str:.2f} (1 이상)", 0)
+        else:
+            lower = [s for s in (an.supports or []) if s.price < vs.price]
+            next_sup = min(lower, key=lambda s: vs.price - s.price) if lower else None
+            gap_sup = ((vs.price - next_sup.price) / price) if next_sup and price else None
+            gap_res = ((nres.price - price) / price) if nres and price else None
+            if next_sup and gap_sup is not None and gap_sup >= 0.10:
+                add(
+                    "지지 매물대",
+                    f"강도 {vs_str:.2f} · 다음 지지 {_fmt(next_sup.price)} 까지 {gap_sup * 100:.1f}%",
+                    wp("vol_sup_air"),
+                )
+            elif nres and gap_res is not None and gap_res >= 0.10:
+                add(
+                    "지지 매물대",
+                    f"강도 {vs_str:.2f} · 다음 저항 {_fmt(nres.price)} 까지 {gap_res * 100:.1f}%",
+                    wp("vol_sup_room"),
+                )
+            else:
+                add(
+                    "지지 매물대",
+                    f"강도 {vs_str:.2f} · 다음 지지/저항 이격 10% 미만이거나 저항 없음",
+                    0,
+                )
 
     poc_pts = abs(wp("poc"))
     val_pts = abs(wp("val"))
