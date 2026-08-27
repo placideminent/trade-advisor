@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
-SIGNAL_RULE_VERSION = 29
+SIGNAL_RULE_VERSION = 30
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 10
 # 합산 %는 조회 기간과 상관없이 같은 눈금(이론상 최저~최고)을 쓴다.
@@ -176,6 +176,37 @@ def _trendline_intersect_x(up_line, down_line) -> float | None:
     return (y0d - y0u + su * x0u - sd * x0d) / (su - sd)
 
 
+def _trendline_bars_since_cross(df, up_line, down_line) -> float | None:
+    """차트와 같이 시간 축에서 교차한 뒤 지난 봉 수. 마지막 봉이면 0."""
+    if df is None or getattr(df, "empty", True) or up_line is None or down_line is None:
+        return None
+    n = len(df)
+    if n < 2:
+        return None
+
+    def _clip(i) -> int:
+        return int(max(0, min(n - 1, float(i))))
+
+    i0u, i1u = _clip(up_line[0]), _clip(up_line[2])
+    i0d, i1d = _clip(down_line[0]), _clip(down_line[2])
+    idx = pd.DatetimeIndex(pd.to_datetime(df.index))
+    t0u = int(idx.asi8[i0u])
+    t1u = int(idx.asi8[i1u])
+    t0d = int(idx.asi8[i0d])
+    t1d = int(idx.asi8[i1d])
+    y0u, y1u = float(up_line[1]), float(up_line[3])
+    y0d, y1d = float(down_line[1]), float(down_line[3])
+    if t1u == t0u or t1d == t0d:
+        return None
+    su = (y1u - y0u) / (t1u - t0u)
+    sd = (y1d - y0d) / (t1d - t0d)
+    if abs(su - sd) < 1e-24:
+        return None
+    t_c = (y0d - y0u + su * t0u - sd * t0d) / (su - sd)
+    i_c = int(idx.asi8.searchsorted(int(t_c)))
+    return float((n - 1) - i_c)
+
+
 def period_high(df) -> float | None:
     if df is None or getattr(df, "empty", True) or "high" not in getattr(df, "columns", []):
         return None
@@ -260,23 +291,25 @@ def recommend(
         y_down = float(down_line[3])
         x_end = float(up_line[2])
         x_c = _trendline_intersect_x(up_line, down_line)
-        bars_ago = (x_end - x_c) if x_c is not None else None
-        if x_c is None:
+        bars_ago = _trendline_bars_since_cross(an.df, up_line, down_line)
+        if bars_ago is None and x_c is not None:
+            bars_ago = x_end - x_c
+        if x_c is None or bars_ago is None:
             add("추세선 돌파", "상승선과 하락선이 평행해 교차 없음", 0)
         elif y_up <= y_down:
             add("추세선 돌파", f"상승선이 하락선 아래 · 교차 {bars_ago:.1f}봉 전", 0)
-        elif x_c > x_end:
+        elif x_c > x_end or bars_ago < 0:
             add("추세선 돌파", "교차가 아직 마지막 봉 이후", 0)
         elif bars_ago >= 4:
             add(
                 "추세선 돌파",
-                f"교차 후 {bars_ago:.1f}봉 지나 가점 종료 (4봉 이상)",
+                f"교차 후 {bars_ago:.0f}봉 지나 가점 종료 (4봉 이상)",
                 0,
             )
         else:
             add(
                 "추세선 돌파",
-                f"상승선이 하락선을 상향 돌파 · {bars_ago:.1f}봉 전 (4봉 안)",
+                f"상승선이 하락선을 상향 돌파 · {bars_ago:.0f}봉 전 (4봉 안)",
                 wp("trendline_cross"),
             )
     else:
