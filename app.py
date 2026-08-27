@@ -63,7 +63,12 @@ def _make_signal(
 
 def _init_rule_widgets() -> None:
     for key, default in DEFAULT_WEIGHTS.items():
-        st.session_state.setdefault(f"w_{key}", int(default))
+        sk = f"w_{key}"
+        if sk not in st.session_state:
+            st.session_state[sk] = int(default)
+        # 새로 추가된 +배점 칸이 number_input 최솟값 -10으로 잡히는 경우 바로잡는다.
+        elif int(default) >= 0 and int(st.session_state[sk]) == -10:
+            st.session_state[sk] = int(default)
     for key, default in DEFAULT_CUTS.items():
         st.session_state.setdefault(f"c_{key}", int(default))
     for key, default in DEFAULT_SIM.items():
@@ -606,7 +611,13 @@ with st.sidebar:
         w_cols = st.columns(2)
         for i, (key, label, hint) in enumerate(WEIGHT_FIELDS):
             with w_cols[i % 2]:
-                lo, hi = (0, 30) if key == "base" else (-10, 10)
+                default = int(DEFAULT_WEIGHTS[key])
+                if key == "base":
+                    lo, hi = 0, 30
+                elif default >= 0:
+                    lo, hi = 0, 10
+                else:
+                    lo, hi = -10, 10
                 st.number_input(
                     label,
                     min_value=lo,
