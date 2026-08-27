@@ -291,9 +291,12 @@ def recommend(
         y_down = float(down_line[3])
         x_end = float(up_line[2])
         x_c = _trendline_intersect_x(up_line, down_line)
-        bars_ago = _trendline_bars_since_cross(an.df, up_line, down_line)
-        if bars_ago is None and x_c is not None:
-            bars_ago = x_end - x_c
+        bars_ago_t = _trendline_bars_since_cross(an.df, up_line, down_line)
+        bars_ago_i = (x_end - x_c) if x_c is not None else None
+        if bars_ago_t is not None and bars_ago_i is not None:
+            bars_ago = max(float(bars_ago_t), float(bars_ago_i))
+        else:
+            bars_ago = bars_ago_t if bars_ago_t is not None else bars_ago_i
         if x_c is None or bars_ago is None:
             add("추세선 돌파", "상승선과 하락선이 평행해 교차 없음", 0)
         elif y_up <= y_down:
@@ -543,6 +546,7 @@ def recommend(
         f"합산 {score_pct}% ({score}점, 범위 {lo}~{hi}) · "
         f"약한매수 {buy_weak}%↑ / 매수 {buy_mid}%↑ / 강한매수 {buy_strong}%↑ · "
         f"약한매도 {sell_weak}%↓ / 매도 {sell_mid}%↓ / 강한매도 {sell_strong}%↓"
+        f" · 규칙 v{SIGNAL_RULE_VERSION}"
     )
 
     if score_pct >= buy_strong:
