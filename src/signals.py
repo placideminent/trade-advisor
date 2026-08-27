@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
-SIGNAL_RULE_VERSION = 22
+SIGNAL_RULE_VERSION = 23
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 10
 # 합산 %는 조회 기간과 상관없이 같은 눈금(이론상 최저~최고)을 쓴다.
@@ -18,6 +18,7 @@ DEFAULT_WEIGHTS = {
     "trend": 2,
     "trend_1m": 1,
     "trendline_cross": 1,
+    "short_up_line": 1,
     "chg6_10": 1,
     "chg6_50": -1,
     "chg6_100": -2,
@@ -50,6 +51,7 @@ WEIGHT_FIELDS = [
     ("trend", "추세", "가점/감점 크기. 1·2개월은 상승 +, 3개월 이상은 하락 +"),
     ("trend_1m", "1개월 추세", "3개월 이상 조회 시. 1개월 조회 추세 상승 +, 하락 −"),
     ("trendline_cross", "추세선 돌파", "상승선이 하락선 위이거나, 상승선은 상향·하락선은 하향일 때"),
+    ("short_up_line", "단기 추세선 돌파", "같은 시점 1개월 조회에서 상승 추세선이 있으면 +1"),
     ("chg6_10", "6개월 10~30%", "6개월 전 대비 10% 이상 30% 미만"),
     ("chg6_50", "6개월 50%+", "6개월 전 대비 50% 이상 100% 미만"),
     ("chg6_100", "6개월 100%+", "6개월 전 대비 100% 이상"),
@@ -163,6 +165,7 @@ def recommend(
     lookback_days: int | None = None,
     trend_1m: str | None = None,
     action_1m: str | None = None,
+    up_line_1m: bool | None = None,
     rule: dict | None = None,
 ) -> Signal:
     cfg = merge_rule(rule)
@@ -242,6 +245,17 @@ def recommend(
             add("추세선 돌파", f"상승선 {_fmt(y1u)} ≤ 하락선 {_fmt(y1d)} · 기울기 미충족", 0)
     else:
         add("추세선 돌파", "상승선 또는 하락선 없음", 0)
+
+    if lookback_days is None or lookback_days <= 30:
+        has_short_up = an.up_line is not None
+    else:
+        has_short_up = up_line_1m
+    if has_short_up:
+        add("단기 추세선 돌파", "1개월 조회 상승 추세선 있음", wp("short_up_line"))
+    elif has_short_up is False:
+        add("단기 추세선 돌파", "1개월 조회 상승 추세선 없음", 0)
+    else:
+        add("단기 추세선 돌파", "1개월 조회 추세선을 계산하지 못함", 0)
 
     chg6 = six_month_chg
     if chg6 is None:

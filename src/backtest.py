@@ -186,7 +186,8 @@ def run_backtest(
         chg6 = period_return(src_6m, as_of, px, 180)
 
         trend_1m = None
-        if lookback_days >= 90 and not df_1h_wall.empty:
+        up_line_1m = None
+        if lookback_days > 30 and not df_1h_wall.empty:
             w1 = _window(df_1h_wall, as_of, 30)
             if not w1.empty:
                 try:
@@ -196,9 +197,12 @@ def run_backtest(
                         spot_price=float(w1["close"].iloc[-1]),
                         price_source="1개월 조회",
                     )
-                    trend_1m = an_1m.trend
+                    up_line_1m = an_1m.up_line is not None
+                    if lookback_days >= 90:
+                        trend_1m = an_1m.trend
                 except Exception:
                     trend_1m = None
+                    up_line_1m = None
 
         try:
             sig = recommend(
@@ -206,6 +210,7 @@ def run_backtest(
                 six_month_chg=chg6,
                 lookback_days=lookback_days,
                 trend_1m=trend_1m,
+                up_line_1m=up_line_1m,
                 rule=rule,
             )
         except TypeError:
