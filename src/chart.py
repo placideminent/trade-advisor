@@ -190,3 +190,157 @@ def build_chart(an: Analysis, sig: Signal, title: str) -> go.Figure:
     fig.update_xaxes(title_text="거래량 합", row=1, col=2)
     fig.update_yaxes(title_text="거래량", row=2, col=1)
     return fig
+
+
+def _day_bars(df: pd.DataFrame) -> dict:
+    out = {}
+    if df is None or getattr(df, "empty", True):
+        return out
+    for ts, row in df.iterrows():
+        d = ts.date() if hasattr(ts, "date") else ts
+        out[d] = (ts, row)
+    return out
+
+
+def build_sim_chart(df: pd.DataFrame, marks: list[dict], title: str) -> go.Figure:
+    """시뮬레이션 기간 일봉 + 매수/매도 신호 표시."""
+    fig = make_subplots(
+        rows=2,
+        cols=1,
+        shared_xaxes=True,
+        row_heights=[0.76, 0.24],
+        vertical_spacing=0.04,
+        subplot_titles=(title, ""),
+    )
+    if df is None or getattr(df, "empty", True):
+        fig.update_layout(title="데이터 없음")
+        return fig
+
+    fig.add_trace(
+        go.Candlestick(
+            x=df.index,
+            open=df["open"],
+            high=df["high"],
+            low=df["low"],
+            close=df["close"],
+            name="일봉",
+            increasing_line_color="#16a34a",
+            decreasing_line_color="#dc2626",
+        ),
+        row=1,
+        col=1,
+    )
+
+    buy_x, buy_y, buy_text, buy_size = [], [], [], []
+    sell_x, sell_y, sell_text, sell_size = [], [], [], []
+    buy_sizes = {"약한 매수": 11, "매수": 14, "강한 매수": 17}
+    sell_sizes = {"약한 매도": 11, "매도": 14, "강한 매도": 17}
+    by_day = _day_bars(df)
+
+    for mark in marks or []:
+        action = str(mark.get("신호") or "")
+        day = str(mark.get("날짜") or "")
+        px = mark.get("가격")
+        try:
+            px = float(px) if px is not None else None
+        except (TypeError, ValueError):
+            px = None
+        try:
+            key = pd.Timestamp(day).date()
+        except (TypeError, ValueError):
+            continue
+        found = by_day.get(key)
+        if found is not None:
+            ts, row = found
+            low = float(row["low"]) if "low" in row and pd.notna(row["low"]) else px
+            high = float(row["high"]) if "high" in row and pd.notna(row["high"]) else px
+        else:
+            ts = pd.Timestamp(day)
+            low = px
+            high = px
+        pct = mark.get("합산%")
+        label = f"{action}" + (f" · {pct}%" if pct is not None else "")
+        if action in ("약한 매수", "매수", "강한 매수"):
+            if low is None:
+                continue
+            buy_x.append(ts)
+            buy_y.append(low)
+            buy_text.append(label)
+            buy_size.append(buy_sizes.get(action, 13))
+        elif action in ("약한 매도", "매도", "강한 매도"):
+            if high is None:
+                continue
+            sell_x.append(ts)
+            sell_y.append(high)
+            sell_text.append(label)
+            sell_size.append(sell_sizes.get(action, 13))
+
+    if buy_x:
+        fig.add_trace(
+            go.Scatter(
+                x=buy_x,
+                y=buy_y,
+                mode="markers",
+                name="매수 신호",
+                text=buy_text,
+                marker=dict(
+                    symbol="triangle-up",
+                    size=buy_size,
+                    color="#16a34a",
+                    line=dict(width=1, color="#14532d"),
+                ),
+                hovertemplate="%{x|%Y-%m-%d}<br>%{text}<br>%{y:,.0f}<extra></extra>",
+            ),
+            row=1,
+            col=1,
+        )
+    if sell_x:
+        fig.add_trace(
+            go.Scatter(
+                x=sell_x,
+                y=sell_y,
+                mode="markers",
+                name="매도 신호",
+                text=sell_text,
+                marker=dict(
+                    symbol="triangle-down",
+                    size=sell_size,
+                    color="#dc2626",
+                    line=dict(width=1, color="#7f1d1d"),
+                ),
+                hovertemplate="%{x|%Y-%m-%d}<br>%{text}<br>%{y:,.0f}<extra></extra>",
+            ),
+            row=1,
+            col=1,
+        )
+
+    if "volume" in df.columns:
+        colors = [
+            "#16a34a" if c >= o else "#dc2626"
+            for o, c in zip(df["open"], df["close"])
+        ]
+        fig.add_trace(
+            go.Bar(
+                x=df.index,
+                y=df["volume"],
+                name="거래량",
+                marker_color=colors,
+                opacity=0.7,
+                showlegend=False,
+            ),
+            row=2,
+            col=1,
+        )
+
+    fig.update_layout(
+        template="plotly_white",
+        font=dict(family="Malgun Gothic, Apple SD Gothic Neo, sans-serif", size=13),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
+        margin=dict(l=40, r=20, t=56, b=36),
+        height=560,
+        xaxis_rangeslider_visible=False,
+        hovermode="x unified",
+    )
+    fig.update_yaxes(title_text="가격", row=1, col=1)
+    fig.update_yaxes(title_text="거래량", row=2, col=1)
+    return fig

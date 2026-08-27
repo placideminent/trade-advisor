@@ -12,7 +12,7 @@ import streamlit as st
 
 from src.analysis import analyze
 from src.backtest import DEFAULT_SIM, run_backtest
-from src.chart import build_chart
+from src.chart import build_chart, build_sim_chart
 from src.data import drop_incomplete_session, fetch_ohlcv, fetch_spot_price, market_today, search_kr
 from src.prefs import (
     COOKIE_NAME,
@@ -447,6 +447,26 @@ def _render_simulation(
         + " · ".join(f"{k} {v}" for k, v in counts.items())
     )
     trades = result.trades or []
+    marks = list(getattr(result, "signals", None) or [])
+    if not marks:
+        marks = [
+            t
+            for t in trades
+            if str(t.get("체결")) in ("매수", "매도", "잔량0")
+        ]
+    chart_df = getattr(result, "chart_df", None)
+    if chart_df is not None and not getattr(chart_df, "empty", True):
+        st.plotly_chart(
+            build_sim_chart(
+                chart_df,
+                marks,
+                f"{result.name} · {result.start} ~ {result.end}",
+            ),
+            use_container_width=True,
+        )
+        st.caption("초록 ▲ 매수 신호 · 빨강 ▼ 매도 신호. 약한/보통/강할수록 마커가 큽니다.")
+    else:
+        st.info("기간 차트를 그릴 일봉이 없습니다. 시뮬레이션을 다시 실행하세요.")
     buys = [t for t in trades if str(t.get("체결")) == "매수"]
     sells = [t for t in trades if str(t.get("체결")) in ("매도", "잔량0")]
 

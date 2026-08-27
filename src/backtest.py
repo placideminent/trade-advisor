@@ -49,6 +49,8 @@ class BacktestResult:
     days: int = 0
     counts: dict = field(default_factory=dict)
     trades: list = field(default_factory=list)
+    signals: list = field(default_factory=list)
+    chart_df: pd.DataFrame | None = None
     error: str | None = None
 
 
@@ -164,12 +166,24 @@ def run_backtest(
         result.error = "거래일이 없습니다."
         return result
 
+    chart_df = None
+    if df_1d is not None and not df_1d.empty:
+        mask = [
+            start <= (ts.date() if hasattr(ts, "date") else ts) <= end
+            for ts in df_1d.index
+        ]
+        sliced = df_1d.loc[mask].copy()
+        if not sliced.empty:
+            chart_df = sliced
+    result.chart_df = chart_df
+
     shares = 0
     avg = 0.0
     realized = 0.0
     last_px = 0.0
     counts: dict[str, int] = {}
     trades: list[dict] = []
+    signals: list[dict] = []
 
     for i, as_of in enumerate(days, 1):
         if progress:
@@ -205,6 +219,15 @@ def run_backtest(
             "평단": avg,
             "체결": "",
         }
+        if action in BUY_ACTIONS or action in SELL_ACTIONS:
+            signals.append(
+                {
+                    "날짜": as_of.isoformat(),
+                    "신호": action,
+                    "합산%": sig.score_pct,
+                    "가격": px,
+                }
+            )
 
         if action in buy_map:
             qty = buy_map[action]
@@ -239,4 +262,5 @@ def run_backtest(
     result.days = len(days)
     result.counts = counts
     result.trades = trades
+    result.signals = signals
     return result
