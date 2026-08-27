@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
-SIGNAL_RULE_VERSION = 47
+SIGNAL_RULE_VERSION = 48
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 10
 # 합산 %는 조회 기간과 상관없이 같은 눈금(이론상 최저~최고)을 쓴다.
@@ -20,6 +20,7 @@ DEFAULT_WEIGHTS = {
     "up_line_break": -1,
     "trendline_dir_down": -2,
     "trendline_dir_up": 1,
+    "trendline_up_near": 1,
     "support_near": 1,
     "support_break": -2,
     "resist_near": -1,
@@ -55,6 +56,7 @@ WEIGHT_FIELDS = [
     ("up_line_break", "상승 추세선 이탈", "상승선 아래를 4~5봉 지키면 −1, 6봉부터 0"),
     ("trendline_dir_down", "추세선 둘 다 하락", "상승선·하락선이 동시에 하락이면 −2. 하락선 이탈 가점이 있으면 0"),
     ("trendline_dir_up", "추세선 둘 다 상승", "둘 다 상승이면서 벌어질 때만 +1, 모이면 0. 하락선 이탈 가점이 있으면 0"),
+    ("trendline_up_near", "상승선 근접", "둘 다 상승이고 현재가가 상승 추세선 근처이면 +1"),
     ("support_near", "지지 근접", "근접하고 강도 1 초과일 때만 +1"),
     ("support_break", "지지 이탈", "지지 아래로 이탈"),
     ("resist_near", "저항 근접", "근접하고 강도 2 이상일 때만 −1"),
@@ -355,6 +357,25 @@ def recommend(
             add("추세선 방향성", "둘 다 상승 · 평행", 0)
     else:
         add("추세선 방향성", f"상승선 {up_dir} · 하락선 {down_dir}", 0)
+
+    if up_dir == "up" and down_dir == "up" and up_line:
+        y_up = _line_y_at(up_line, float(up_line[2]))
+        if y_up is None:
+            add("상승선 근접", "상승선 위치를 계산하지 못함", 0)
+        elif abs(price - y_up) <= near:
+            add(
+                "상승선 근접",
+                f"둘 다 상승 · 상승선 {_fmt(y_up)} 근처 (이격 {_fmt(abs(price - y_up))})",
+                wp("trendline_up_near"),
+            )
+        else:
+            add(
+                "상승선 근접",
+                f"둘 다 상승 · 상승선 {_fmt(y_up)} 과 이격 {_fmt(abs(price - y_up))}",
+                0,
+            )
+    else:
+        add("상승선 근접", "둘 다 상승이 아니거나 상승선 없음", 0)
 
     if nsup:
         dist_s = price - nsup.price
