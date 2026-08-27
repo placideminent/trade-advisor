@@ -38,7 +38,6 @@ def _make_signal(
     six_month_chg=None,
     lookback_days=None,
     rule=None,
-    up_line_1m=None,
     peak_1m=None,
 ):
     try:
@@ -46,7 +45,6 @@ def _make_signal(
             an,
             six_month_chg=six_month_chg,
             lookback_days=lookback_days,
-            up_line_1m=up_line_1m,
             peak_1m=peak_1m,
             rule=rule,
         )
@@ -300,7 +298,6 @@ def _quick_signal(market: str, ticker: str, as_of, lookback_days: int, timeframe
             six_month_chg = period_return(src_6m, as_of, spot_price, 180)
         except Exception:
             six_month_chg = None
-        up_line_1m = None
         peak_1m = None
         if lookback_days > 30:
             try:
@@ -309,25 +306,14 @@ def _quick_signal(market: str, ticker: str, as_of, lookback_days: int, timeframe
                 if not df_1m.empty:
                     if is_live:
                         df_1m = drop_incomplete_session(df_1m, as_of)
-                    px_1m = spot_price if is_live and spot_price else float(df_1m["close"].iloc[-1])
-                    an_1m = analyze(
-                        df_1m,
-                        as_of=as_of,
-                        spot_price=px_1m,
-                        price_source="1개월 조회",
-                        live=is_live,
-                    )
-                    up_line_1m = an_1m.up_line is not None
-                    peak_1m = period_high(an_1m.df)
+                    peak_1m = period_high(df_1m)
             except Exception:
-                up_line_1m = None
                 peak_1m = None
         signal = _make_signal(
             analysis,
             six_month_chg,
             lookback_days,
             rule,
-            up_line_1m=up_line_1m,
             peak_1m=peak_1m,
         )
     except Exception as exc:
@@ -678,7 +664,6 @@ with st.sidebar:
 - 지정일까지 시세만 사용 (이후 봉 제외)
 - **1개월 → 1시간봉**, **2·3개월 → 4시간봉**, **6개월·1년 → 일봉**
 - 1·2개월 추세: 상승 +, 하락 −. 3개월 이상은 하락 +, 상승 −
-- 단기 추세선 돌파: 1개월 조회에서 상승 추세선이 있으면 +1
 - 추세선: 최근 스윙 고점/저점 연결
 - 지지·저항: 스윙 군집 + 매물대
 - 매수/매도 기준과 항목 배점은 **평가 배점·기준**에서 바꿉니다
@@ -793,7 +778,6 @@ try:
         six_month_chg = period_return(src_6m, as_of, spot_price, 180)
     except Exception:
         six_month_chg = None
-    up_line_1m = None
     peak_1m = None
     if lookback_days > 30:
         try:
@@ -804,27 +788,14 @@ try:
             if not df_1m.empty:
                 if is_live:
                     df_1m = drop_incomplete_session(df_1m, as_of)
-                    px_1m = spot_price if spot_price else float(df_1m["close"].iloc[-1])
-                else:
-                    px_1m = float(df_1m["close"].iloc[-1])
-                an_1m = analyze(
-                    df_1m,
-                    as_of=as_of,
-                    spot_price=px_1m,
-                    price_source="1개월 조회",
-                    live=is_live,
-                )
-                up_line_1m = an_1m.up_line is not None
-                peak_1m = period_high(an_1m.df)
+                peak_1m = period_high(df_1m)
         except Exception:
-            up_line_1m = None
             peak_1m = None
     signal = _make_signal(
         analysis,
         six_month_chg,
         lookback_days,
         rule,
-        up_line_1m=up_line_1m,
         peak_1m=peak_1m,
     )
 except Exception as exc:
