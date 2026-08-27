@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
-SIGNAL_RULE_VERSION = 33
+SIGNAL_RULE_VERSION = 34
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 10
 # 합산 %는 조회 기간과 상관없이 같은 눈금(이론상 최저~최고)을 쓴다.
@@ -16,10 +16,9 @@ SCORE_HI = SCORE_BASE + 9  # 19
 DEFAULT_WEIGHTS = {
     "base": 10,
     "trend": 2,
-    "trendline_cross": 1,
+    "down_line_break": 1,
     "up_line_break": -1,
     "drop_from_high": 1,
-    "drop_from_high_10": -1,
     "support_near": 2,
     "support_break": -2,
     "resist_near": -2,
@@ -47,10 +46,9 @@ DEFAULT_CUTS = {
 WEIGHT_FIELDS = [
     ("base", "기본", "중립 시작점"),
     ("trend", "추세", "가점/감점 크기. 1·2개월은 상승 +, 3개월 이상은 하락 +"),
-    ("trendline_cross", "추세선 돌파", "상승선이 하락선을 상향 돌파한 뒤 4봉 안에만 +1, 그 이후 0"),
+    ("down_line_break", "하락 추세선 이탈", "종가가 하락 추세선 위를 4봉 이상 지키면 +1"),
     ("up_line_break", "상승 추세선 이탈", "종가가 상승 추세선 아래를 4봉 이상 지키면 −1"),
     ("drop_from_high", "전고점 하락 30%", "조회 기간 최고가 대비 현재가가 30% 이상 하락하면 +1"),
-    ("drop_from_high_10", "전고점 하락 10%", "1개월 차트 전고점 대비 10% 이상 하락하면 −1 (모든 조회)"),
     ("support_near", "지지 근접", "근접 지지. 강도 1 이하면 가점 없음"),
     ("support_break", "지지 이탈", "지지 아래로 이탈"),
     ("resist_near", "저항 근접", "저항 바로 아래/근처"),
@@ -59,7 +57,7 @@ WEIGHT_FIELDS = [
     ("vol_sup_room", "약한 매물대·위 여유", "지지 매물대 강도 1 미만이고 다음 저항이 10% 이상 위"),
     ("poc", "POC", "최대 매물 부근. 상승 +, 하락 −"),
     ("val", "VAL", "밸류 하단 아래. 상승 +, 하락 −"),
-    ("rsi", "RSI", "과매도 +, 과매수 −"),
+    ("rsi", "RSI", "40 이하 +, 60 이상 −"),
     ("ma20", "MA20 아래", "현재가 < MA20 (상승 추세면 0)"),
     ("chg1_50", "1개월 상승 50%", "1개월 상승 50% 이상"),
     ("chg1_100", "1개월 상승 100%", "1개월 상승 100% 이상"),
@@ -155,50 +153,6 @@ def period_return(df, as_of, price: float, days: int = 180) -> float | None:
     return float(price) / base - 1.0
 
 
-def _trendline_intersect_x(up_line, down_line) -> float | None:
-    """두 추세선의 교차 x(봉 인덱스). 평행이면 None."""
-    x0u, y0u, x1u, y1u = (float(v) for v in up_line)
-    x0d, y0d, x1d, y1d = (float(v) for v in down_line)
-    if x1u == x0u or x1d == x0d:
-        return None
-    su = (y1u - y0u) / (x1u - x0u)
-    sd = (y1d - y0d) / (x1d - x0d)
-    if abs(su - sd) < 1e-12:
-        return None
-    return (y0d - y0u + su * x0u - sd * x0d) / (su - sd)
-
-
-def _trendline_bars_since_cross(df, up_line, down_line) -> float | None:
-    """차트와 같이 시간 축에서 교차한 뒤 지난 봉 수. 마지막 봉이면 0."""
-    if df is None or getattr(df, "empty", True) or up_line is None or down_line is None:
-        return None
-    n = len(df)
-    if n < 2:
-        return None
-
-    def _clip(i) -> int:
-        return int(max(0, min(n - 1, float(i))))
-
-    i0u, i1u = _clip(up_line[0]), _clip(up_line[2])
-    i0d, i1d = _clip(down_line[0]), _clip(down_line[2])
-    idx = pd.DatetimeIndex(pd.to_datetime(df.index))
-    t0u = int(idx.asi8[i0u])
-    t1u = int(idx.asi8[i1u])
-    t0d = int(idx.asi8[i0d])
-    t1d = int(idx.asi8[i1d])
-    y0u, y1u = float(up_line[1]), float(up_line[3])
-    y0d, y1d = float(down_line[1]), float(down_line[3])
-    if t1u == t0u or t1d == t0d:
-        return None
-    su = (y1u - y0u) / (t1u - t0u)
-    sd = (y1d - y0d) / (t1d - t0d)
-    if abs(su - sd) < 1e-24:
-        return None
-    t_c = (y0d - y0u + su * t0u - sd * t0d) / (su - sd)
-    i_c = int(idx.asi8.searchsorted(int(t_c)))
-    return float((n - 1) - i_c)
-
-
 def _line_y_at(line, x: float) -> float | None:
     x0, y0, x1, y1 = (float(v) for v in line)
     if x1 == x0:
@@ -206,9 +160,9 @@ def _line_y_at(line, x: float) -> float | None:
     return y0 + (y1 - y0) / (x1 - x0) * (x - x0)
 
 
-def _bars_below_up_line(df, up_line, last_price: float) -> int | None:
-    """마지막 봉부터 종가(현재가)가 상승선 아래인 연속 봉 수."""
-    if df is None or getattr(df, "empty", True) or up_line is None:
+def _bars_aside_line(df, line, last_price: float, *, below: bool) -> int | None:
+    """마지막 봉부터 종가(현재가)가 선 아래(또는 위)인 연속 봉 수."""
+    if df is None or getattr(df, "empty", True) or line is None:
         return None
     if "close" not in getattr(df, "columns", []):
         return None
@@ -218,32 +172,25 @@ def _bars_below_up_line(df, up_line, last_price: float) -> int | None:
     closes = df["close"].to_numpy()
     count = 0
     for i in range(n - 1, -1, -1):
-        line_y = _line_y_at(up_line, float(i))
+        line_y = _line_y_at(line, float(i))
         if line_y is None:
             return None
         px = float(last_price) if i == n - 1 else float(closes[i])
-        if px < line_y:
+        if below:
+            hit = px < line_y
+        else:
+            hit = px > line_y
+        if hit:
             count += 1
         else:
             break
     return count
 
 
-def period_high(df) -> float | None:
-    if df is None or getattr(df, "empty", True) or "high" not in getattr(df, "columns", []):
-        return None
-    try:
-        peak = float(df["high"].max())
-    except (TypeError, ValueError):
-        return None
-    return peak if peak > 0 else None
-
-
 def recommend(
     an: Analysis,
     six_month_chg: float | None = None,
     lookback_days: int | None = None,
-    peak_1m: float | None = None,
     rule: dict | None = None,
     **_unused,
 ) -> Signal:
@@ -295,42 +242,27 @@ def recommend(
 
     up_line = an.up_line
     down_line = an.down_line
-    if up_line and down_line:
-        y_up = float(up_line[3])
-        y_down = float(down_line[3])
-        x_end = float(up_line[2])
-        x_c = _trendline_intersect_x(up_line, down_line)
-        bars_ago_t = _trendline_bars_since_cross(an.df, up_line, down_line)
-        bars_ago_i = (x_end - x_c) if x_c is not None else None
-        if bars_ago_t is not None and bars_ago_i is not None:
-            bars_ago = max(float(bars_ago_t), float(bars_ago_i))
-        else:
-            bars_ago = bars_ago_t if bars_ago_t is not None else bars_ago_i
-        if x_c is None or bars_ago is None:
-            add("추세선 돌파", "상승선과 하락선이 평행해 교차 없음", 0)
-        elif y_up <= y_down:
-            add("추세선 돌파", f"상승선이 하락선 아래 · 교차 {bars_ago:.1f}봉 전", 0)
-        elif x_c > x_end or bars_ago < 0:
-            add("추세선 돌파", "교차가 아직 마지막 봉 이후", 0)
-        elif bars_ago >= 4:
-            add(
-                "추세선 돌파",
-                f"교차 후 {bars_ago:.0f}봉 지나 가점 종료 (4봉 이상)",
-                0,
-            )
-        else:
-            add(
-                "추세선 돌파",
-                f"상승선이 하락선을 상향 돌파 · {bars_ago:.0f}봉 전 (4봉 안)",
-                wp("trendline_cross"),
-            )
+    if not down_line:
+        add("하락 추세선 이탈", "하락선 없음", 0)
     else:
-        add("추세선 돌파", "상승선 또는 하락선 없음", 0)
+        above = _bars_aside_line(an.df, down_line, price, below=False)
+        if above is None:
+            add("하락 추세선 이탈", "이탈 봉 수를 계산하지 못함", 0)
+        elif above >= 4:
+            add(
+                "하락 추세선 이탈",
+                f"하락선 위 {above}봉 연속 (4봉 이상)",
+                wp("down_line_break"),
+            )
+        elif above > 0:
+            add("하락 추세선 이탈", f"하락선 위 {above}봉 연속 (4봉 미만)", 0)
+        else:
+            add("하락 추세선 이탈", "하락선 아래", 0)
 
     if not up_line:
         add("상승 추세선 이탈", "상승선 없음", 0)
     else:
-        below = _bars_below_up_line(an.df, up_line, price)
+        below = _bars_aside_line(an.df, up_line, price, below=True)
         if below is None:
             add("상승 추세선 이탈", "이탈 봉 수를 계산하지 못함", 0)
         elif below >= 4:
@@ -360,17 +292,6 @@ def recommend(
             add("전고점 하락 30%", drop_txt, wp("drop_from_high"))
         else:
             add("전고점 하락 30%", drop_txt, 0)
-
-    peak_m = peak if lookback_days is None or lookback_days <= 30 else peak_1m
-    if peak_m is None or peak_m <= 0:
-        add("전고점 하락 10%", "1개월 전고점 없음", 0)
-    else:
-        drop_m = 1.0 - float(price) / peak_m
-        drop_m_txt = f"1개월 전고점 {_fmt(peak_m)} 대비 {drop_m * 100:.1f}% 하락"
-        if drop_m >= 0.10:
-            add("전고점 하락 10%", drop_m_txt, wp("drop_from_high_10"))
-        else:
-            add("전고점 하락 10%", drop_m_txt, 0)
 
     if nsup:
         dist_s = price - nsup.price
@@ -479,10 +400,10 @@ def recommend(
         add("VAH", f"상단 {_fmt(an.vah)} (감점 없음)", 0)
 
     rsi_pts = abs(wp("rsi"))
-    if an.rsi >= 70:
-        add("RSI", f"{an.rsi:.1f} 과매수", -rsi_pts)
-    elif an.rsi <= 30:
-        add("RSI", f"{an.rsi:.1f} 과매도", rsi_pts)
+    if an.rsi >= 60:
+        add("RSI", f"{an.rsi:.1f} (60 이상)", -rsi_pts)
+    elif an.rsi <= 40:
+        add("RSI", f"{an.rsi:.1f} (40 이하)", rsi_pts)
     else:
         add("RSI", f"{an.rsi:.1f} 중립", 0)
 

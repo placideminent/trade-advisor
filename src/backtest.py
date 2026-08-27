@@ -14,7 +14,7 @@ from .data import (
     resample_4h,
     to_market_wall,
 )
-from .signals import period_high, period_return, recommend
+from .signals import period_return, recommend
 
 DEFAULT_SIM = {
     "buy_weak": 5,
@@ -116,7 +116,7 @@ def run_backtest(
         return result
 
     h1_start = start - timedelta(days=int(lookback_days * 1.2) + 10)
-    need_1h = timeframe in ("1h", "4h") or lookback_days >= 90
+    need_1h = timeframe in ("1h", "4h")
     df_1h = pd.DataFrame()
     if need_1h:
         df_1h = fetch_intraday_range(market, ticker, h1_start, end)
@@ -164,8 +164,6 @@ def run_backtest(
         result.error = "거래일이 없습니다."
         return result
 
-    df_1h_wall = to_market_wall(df_1h, market) if not df_1h.empty else pd.DataFrame()
-
     shares = 0
     avg = 0.0
     realized = 0.0
@@ -185,18 +183,11 @@ def run_backtest(
         src_6m = _window(df_1d, as_of, 200) if df_1d is not None and not df_1d.empty else w
         chg6 = period_return(src_6m, as_of, px, 180)
 
-        peak_1m = None
-        if lookback_days > 30 and not df_1h_wall.empty:
-            w1 = _window(df_1h_wall, as_of, 30)
-            if not w1.empty:
-                peak_1m = period_high(w1)
-
         try:
             sig = recommend(
                 an,
                 six_month_chg=chg6,
                 lookback_days=lookback_days,
-                peak_1m=peak_1m,
                 rule=rule,
             )
         except TypeError:
