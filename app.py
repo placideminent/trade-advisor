@@ -27,6 +27,7 @@ from src.signals import (
     DEFAULT_WEIGHTS,
     WEIGHT_FIELDS,
     period_return,
+    period_high,
     recommend,
     _fmt,
 )
@@ -40,6 +41,7 @@ def _make_signal(
     rule=None,
     action_1m=None,
     up_line_1m=None,
+    peak_1m=None,
 ):
     try:
         return recommend(
@@ -49,6 +51,7 @@ def _make_signal(
             trend_1m=trend_1m,
             action_1m=action_1m,
             up_line_1m=up_line_1m,
+            peak_1m=peak_1m,
             rule=rule,
         )
     except TypeError:
@@ -303,6 +306,7 @@ def _quick_signal(market: str, ticker: str, as_of, lookback_days: int, timeframe
             six_month_chg = None
         trend_1m = None
         up_line_1m = None
+        peak_1m = None
         if lookback_days > 30:
             try:
                 df_1m, _ = _cached_ohlcv(market, ticker, as_of.isoformat(), 30, "1h")
@@ -319,13 +323,21 @@ def _quick_signal(market: str, ticker: str, as_of, lookback_days: int, timeframe
                         live=is_live,
                     )
                     up_line_1m = an_1m.up_line is not None
+                    peak_1m = period_high(an_1m.df)
                     if lookback_days >= 90:
                         trend_1m = an_1m.trend
             except Exception:
                 trend_1m = None
                 up_line_1m = None
+                peak_1m = None
         signal = _make_signal(
-            analysis, six_month_chg, lookback_days, trend_1m, rule, up_line_1m=up_line_1m
+            analysis,
+            six_month_chg,
+            lookback_days,
+            trend_1m,
+            rule,
+            up_line_1m=up_line_1m,
+            peak_1m=peak_1m,
         )
     except Exception as exc:
         return {
@@ -794,6 +806,7 @@ try:
         six_month_chg = None
     trend_1m = None
     up_line_1m = None
+    peak_1m = None
     if lookback_days > 30:
         try:
             df_1m, _meta_1m = _cached_ohlcv(
@@ -814,13 +827,21 @@ try:
                     live=is_live,
                 )
                 up_line_1m = an_1m.up_line is not None
+                peak_1m = period_high(an_1m.df)
                 if lookback_days >= 90:
                     trend_1m = an_1m.trend
         except Exception:
             trend_1m = None
             up_line_1m = None
+            peak_1m = None
     signal = _make_signal(
-        analysis, six_month_chg, lookback_days, trend_1m, rule, up_line_1m=up_line_1m
+        analysis,
+        six_month_chg,
+        lookback_days,
+        trend_1m,
+        rule,
+        up_line_1m=up_line_1m,
+        peak_1m=peak_1m,
     )
 except Exception as exc:
     st.error(f"분석 실패: {exc}")

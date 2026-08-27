@@ -14,7 +14,7 @@ from .data import (
     resample_4h,
     to_market_wall,
 )
-from .signals import period_return, recommend
+from .signals import period_high, period_return, recommend
 
 DEFAULT_SIM = {
     "buy_weak": 5,
@@ -187,6 +187,7 @@ def run_backtest(
 
         trend_1m = None
         up_line_1m = None
+        peak_1m = None
         if lookback_days > 30 and not df_1h_wall.empty:
             w1 = _window(df_1h_wall, as_of, 30)
             if not w1.empty:
@@ -198,11 +199,13 @@ def run_backtest(
                         price_source="1개월 조회",
                     )
                     up_line_1m = an_1m.up_line is not None
+                    peak_1m = period_high(an_1m.df)
                     if lookback_days >= 90:
                         trend_1m = an_1m.trend
                 except Exception:
                     trend_1m = None
                     up_line_1m = None
+                    peak_1m = None
 
         try:
             sig = recommend(
@@ -211,6 +214,7 @@ def run_backtest(
                 lookback_days=lookback_days,
                 trend_1m=trend_1m,
                 up_line_1m=up_line_1m,
+                peak_1m=peak_1m,
                 rule=rule,
             )
         except TypeError:

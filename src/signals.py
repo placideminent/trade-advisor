@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
-SIGNAL_RULE_VERSION = 26
+SIGNAL_RULE_VERSION = 27
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 10
 # 합산 %는 조회 기간과 상관없이 같은 눈금(이론상 최저~최고)을 쓴다.
@@ -55,7 +55,7 @@ WEIGHT_FIELDS = [
     ("trendline_cross", "추세선 돌파", "상승선이 하락선 위이거나, 상승선은 상향·하락선은 하향일 때"),
     ("short_up_line", "단기 추세선 돌파", "같은 시점 1개월 조회에서 상승 추세선이 있으면 +1"),
     ("drop_from_high", "전고점 하락 30%", "조회 기간 최고가 대비 현재가가 30% 이상 하락하면 +1"),
-    ("drop_from_high_10", "전고점 하락 10%", "1개월 조회에서 전고점 대비 10% 이상 하락하면 −1"),
+    ("drop_from_high_10", "전고점 하락 10%", "1개월 차트 전고점 대비 10% 이상 하락하면 −1 (모든 조회)"),
     ("chg6_10", "6개월 10~30%", "6개월 전 대비 10% 이상 30% 미만"),
     ("chg6_50", "6개월 50%+", "6개월 전 대비 50% 이상 100% 미만"),
     ("chg6_100", "6개월 100%+", "6개월 전 대비 100% 이상"),
@@ -163,6 +163,16 @@ def period_return(df, as_of, price: float, days: int = 180) -> float | None:
     return float(price) / base - 1.0
 
 
+def period_high(df) -> float | None:
+    if df is None or getattr(df, "empty", True) or "high" not in getattr(df, "columns", []):
+        return None
+    try:
+        peak = float(df["high"].max())
+    except (TypeError, ValueError):
+        return None
+    return peak if peak > 0 else None
+
+
 def recommend(
     an: Analysis,
     six_month_chg: float | None = None,
@@ -170,6 +180,7 @@ def recommend(
     trend_1m: str | None = None,
     action_1m: str | None = None,
     up_line_1m: bool | None = None,
+    peak_1m: float | None = None,
     rule: dict | None = None,
 ) -> Signal:
     cfg = merge_rule(rule)
@@ -268,26 +279,26 @@ def recommend(
             peak = float(df_an["high"].max())
         except (TypeError, ValueError):
             peak = None
-    one_month = lookback_days is not None and lookback_days <= 30
     if peak is None or peak <= 0:
         add("전고점 하락 30%", "조회 기간 최고가 없음", 0)
-        if one_month:
-            add("전고점 하락 10%", "조회 기간 최고가 없음", 0)
-        else:
-            add("전고점 하락 10%", "1개월 조회에서만 적용", 0)
     else:
         drop = 1.0 - float(price) / peak
-        drop_txt = f"전고점 {_fmt(peak)} 대비 {drop * 100:.1f}% 하락"
+        drop_txt = f"조회기간 전고점 {_fmt(peak)} 대비 {drop * 100:.1f}% 하락"
         if drop >= 0.30:
             add("전고점 하락 30%", drop_txt, wp("drop_from_high"))
         else:
             add("전고점 하락 30%", drop_txt, 0)
-        if not one_month:
-            add("전고점 하락 10%", "1개월 조회에서만 적용", 0)
-        elif drop >= 0.10:
-            add("전고점 하락 10%", drop_txt, wp("drop_from_high_10"))
+
+    peak_m = peak if lookback_days is None or lookback_days <= 30 else peak_1m
+    if peak_m is None or peak_m <= 0:
+        add("전고점 하락 10%", "1개월 전고점 없음", 0)
+    else:
+        drop_m = 1.0 - float(price) / peak_m
+        drop_m_txt = f"1개월 전고점 {_fmt(peak_m)} 대비 {drop_m * 100:.1f}% 하락"
+        if drop_m >= 0.10:
+            add("전고점 하락 10%", drop_m_txt, wp("drop_from_high_10"))
         else:
-            add("전고점 하락 10%", drop_txt, 0)
+            add("전고점 하락 10%", drop_m_txt, 0)
 
     chg6 = six_month_chg
     if chg6 is None:
