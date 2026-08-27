@@ -269,6 +269,41 @@ def _fetch_intraday(symbol: str, start: date, end: date) -> pd.DataFrame:
     return _fetch_yahoo_chart(symbol, start, end, interval="30m")
 
 
+def fetch_intraday_range(market: str, ticker: str, start: date, end: date) -> pd.DataFrame:
+    """1시간봉을 구간별로 나눠 받아 이어 붙인다. Yahoo가 긴 구간을 줄이지 않게 한다."""
+    frames: list[pd.DataFrame] = []
+    cur = start
+    while cur <= end:
+        nxt = min(cur + timedelta(days=55), end)
+        chunk = pd.DataFrame()
+        try:
+            if market == "KR":
+                code = ticker.strip().zfill(6)
+                for symbol in _kr_yahoo_symbols(code):
+                    try:
+                        chunk = _fetch_intraday(symbol, cur - timedelta(days=1), nxt)
+                    except Exception:
+                        chunk = pd.DataFrame()
+                    if not chunk.empty:
+                        break
+            elif market == "US":
+                chunk = _fetch_intraday(ticker.strip().upper(), cur - timedelta(days=1), nxt)
+            else:
+                key = ticker.strip().upper().replace("-USD", "").replace("USDT", "").replace("/", "")
+                info = CRYPTO.get(key)
+                symbol = info["symbol"] if info else f"{key}-USD"
+                chunk = _fetch_intraday(symbol, cur - timedelta(days=1), nxt)
+        except Exception:
+            chunk = pd.DataFrame()
+        if not chunk.empty:
+            frames.append(chunk)
+        cur = nxt + timedelta(days=1)
+    if not frames:
+        return pd.DataFrame()
+    out = pd.concat(frames).sort_index()
+    return out[~out.index.duplicated(keep="last")]
+
+
 def _kr_yahoo_symbols(code: str) -> list[str]:
     suffixes = [".KS", ".KQ"]
     try:

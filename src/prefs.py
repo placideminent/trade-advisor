@@ -6,6 +6,7 @@ import base64
 import json
 from pathlib import Path
 
+from .backtest import DEFAULT_SIM
 from .signals import DEFAULT_CUTS, DEFAULT_WEIGHTS
 
 COOKIE_NAME = "ta_prefs"
@@ -18,6 +19,7 @@ def _empty() -> dict:
         "v": PREFS_VERSION,
         "weights": dict(DEFAULT_WEIGHTS),
         "cuts": dict(DEFAULT_CUTS),
+        "sim": dict(DEFAULT_SIM),
         "favorites": [],
     }
 
@@ -28,6 +30,7 @@ def _normalize(raw: dict | None) -> dict:
         return data
     weights = raw.get("weights") or {}
     cuts = raw.get("cuts") or {}
+    sim = raw.get("sim") or {}
     favs = raw.get("favorites") or []
     for key, default in DEFAULT_WEIGHTS.items():
         if key in weights:
@@ -41,6 +44,12 @@ def _normalize(raw: dict | None) -> dict:
                 data["cuts"][key] = int(cuts[key])
             except (TypeError, ValueError):
                 data["cuts"][key] = default
+    for key, default in DEFAULT_SIM.items():
+        if key in sim:
+            try:
+                data["sim"][key] = int(sim[key])
+            except (TypeError, ValueError):
+                data["sim"][key] = default
     out_favs = []
     for item in favs:
         if not isinstance(item, dict):

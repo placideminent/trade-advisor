@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import date
+from datetime import date, timedelta
 from functools import partial
 
 import pandas as pd
 import streamlit as st
 
 from src.analysis import analyze
+from src.backtest import DEFAULT_SIM, run_backtest
 from src.chart import build_chart
 from src.data import drop_incomplete_session, fetch_ohlcv, fetch_spot_price, market_today, search_kr
 from src.prefs import (
@@ -56,6 +57,8 @@ def _init_rule_widgets() -> None:
         st.session_state.setdefault(f"w_{key}", int(default))
     for key, default in DEFAULT_CUTS.items():
         st.session_state.setdefault(f"c_{key}", int(default))
+    for key, default in DEFAULT_SIM.items():
+        st.session_state.setdefault(f"s_{key}", int(default))
 
 
 def _read_rule_from_sidebar() -> dict:
@@ -69,6 +72,15 @@ def _reset_rule_widgets() -> None:
         st.session_state[f"w_{key}"] = int(default)
     for key, default in DEFAULT_CUTS.items():
         st.session_state[f"c_{key}"] = int(default)
+
+
+def _read_sim_from_sidebar() -> dict:
+    return {key: int(st.session_state.get(f"s_{key}", default)) for key, default in DEFAULT_SIM.items()}
+
+
+def _reset_sim_widgets() -> None:
+    for key, default in DEFAULT_SIM.items():
+        st.session_state[f"s_{key}"] = int(default)
 
 
 ACTION_CLASS = {
@@ -99,6 +111,9 @@ def _bootstrap_prefs() -> None:
         st.session_state[f"w_{key}"] = int(loaded["weights"].get(key, default))
     for key, default in DEFAULT_CUTS.items():
         st.session_state[f"c_{key}"] = int(loaded["cuts"].get(key, default))
+    sim = loaded.get("sim") or {}
+    for key, default in DEFAULT_SIM.items():
+        st.session_state[f"s_{key}"] = int(sim.get(key, default))
     st.session_state.favorites = list(loaded.get("favorites") or [])
     st.session_state._prefs_boot = True
 
@@ -107,6 +122,7 @@ def _persist_prefs(rule: dict) -> None:
     payload = {
         "weights": rule["weights"],
         "cuts": rule["cuts"],
+        "sim": {key: int(st.session_state.get(f"s_{key}", default)) for key, default in DEFAULT_SIM.items()},
         "favorites": list(st.session_state.get("favorites") or []),
     }
     snap = json.dumps(payload, sort_keys=True, ensure_ascii=False)
@@ -363,8 +379,93 @@ def _render_favorites(as_of, lookback_days: int, timeframe: str, lookback_label:
             )
 
 
+def _render_simulation(
+    market: str,
+    ticker: str,
+    display_name: str,
+    start: date,
+    end: date,
+    lookback_days: int,
+    timeframe: str,
+    lookback_label: str,
+    rule: dict,
+    sim: dict,
+    run: bool,
+) -> None:
+    st.subheader("시뮬레이션")
+    st.caption(
+        "매일 조회 기간만큼만 보고 신호를 낸 뒤, 설정한 수량으로 사고팝니다. "
+        "평가 배점·매수/매도 컷은 왼쪽 값을 그대로 씁니다."
+    )
+    if not ticker:
+        st.info("왼쪽에서 종목을 고르세요.")
+        return
+    st.write(
+        f"**{display_name or ticker}** · {start} ~ {end} · 조회 {lookback_label} · "
+        f"매수 {sim['buy_weak']}/{sim['buy_mid']}/{sim['buy_strong']}주 · "
+        f"잔량 {sim['share_cut']}주 이상 "
+        f"{sim['sell_weak_pct']}/{sim['sell_mid_pct']}/{sim['sell_strong_pct']}% · "
+        f"미만 {sim['sell_weak_qty']}/{sim['sell_mid_qty']}/{sim['sell_strong_qty']}주"
+    )
+    if run:
+        bar = st.progress(0, text="시세 수집 및 일별 계산 중...")
+
+        def _prog(i, n, as_of):
+            bar.progress(min(i / max(n, 1), 1.0), text=f"{as_of} ({i}/{n})")
+
+        with st.spinner("시뮬레이션 실행 중..."):
+            st.session_state.sim_result = run_backtest(
+                market,
+                ticker,
+                start,
+                end,
+                lookback_days,
+                timeframe,
+                lookback_label,
+                rule,
+                sim,
+                progress=_prog,
+            )
+        bar.empty()
+
+    result = st.session_state.get("sim_result")
+    if not result:
+        st.info("왼쪽에서 기간·수량을 정한 뒤 **시뮬레이션 실행**을 누르세요.")
+        return
+    if result.error:
+        st.error(result.error)
+        return
+
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric("잔량", f"{result.shares:,}주")
+    c2.metric("평단", _fmt(result.avg) if result.shares else "-")
+    c3.metric("종료가", _fmt(result.last_px))
+    c4.metric("평가손익", f"{result.m2m:+,.0f}", f"{result.m2m_pct:+.2f}%")
+    c5.metric("실현손익", f"{result.realized:+,.0f}")
+    counts = result.counts or {}
+    st.caption(
+        f"{result.name} ({result.ticker}) · 거래일 {result.days}일 · "
+        + " · ".join(f"{k} {v}" for k, v in counts.items())
+    )
+    trades = result.trades or []
+    if trades:
+        df_t = pd.DataFrame(trades)
+        if "가격" in df_t.columns:
+            df_t["가격"] = df_t["가격"].map(lambda x: f"{x:,.0f}")
+        if "평단" in df_t.columns:
+            df_t["평단"] = df_t["평단"].map(lambda x: f"{x:,.0f}")
+        st.dataframe(df_t, hide_index=True, use_container_width=True)
+        buys = [t for t in trades if str(t.get("체결")) == "매수"]
+        sells = [t for t in trades if str(t.get("체결")) == "매도"]
+        st.markdown("**매수일:** " + (", ".join(t["날짜"] for t in buys) or "없음"))
+        st.markdown("**매도 체결일:** " + (", ".join(t["날짜"] for t in sells) or "없음"))
+        skips = [t for t in trades if t.get("체결") == "잔량0"]
+        if skips:
+            st.markdown("**매도 신호·잔량 0:** " + ", ".join(t["날짜"] for t in skips))
+
+
 with st.sidebar:
-    page = st.radio("화면", ["종목 분석", "즐겨찾기"], horizontal=True, key="app_page")
+    page = st.radio("화면", ["종목 분석", "즐겨찾기", "시뮬레이션"], horizontal=True, key="app_page")
     st.header("조회 조건")
     market_label = st.radio("시장", list(MARKETS.keys()), horizontal=False)
     market = MARKETS[market_label]
@@ -418,18 +519,38 @@ with st.sidebar:
             display_name = choice
 
     today_m = market_today(market)
-    as_of = st.date_input(
-        "분석 시점",
-        value=today_m,
-        max_value=today_m,
-        key=f"as_of_{market}",
-    )
+    as_of = today_m
+    sim_start = today_m - timedelta(days=150)
+    sim_end = today_m
+    if page == "시뮬레이션":
+        d1, d2 = st.columns(2)
+        with d1:
+            sim_start = st.date_input(
+                "시작일",
+                value=sim_start,
+                max_value=today_m,
+                key=f"sim_start_{market}",
+            )
+        with d2:
+            sim_end = st.date_input(
+                "종료일",
+                value=today_m,
+                max_value=today_m,
+                key=f"sim_end_{market}",
+            )
+    else:
+        as_of = st.date_input(
+            "분석 시점",
+            value=today_m,
+            max_value=today_m,
+            key=f"as_of_{market}",
+        )
     lookback_keys = list(LOOKBACK_OPTIONS.keys())
     lookback_label = st.selectbox(
         "조회 기간",
         lookback_keys,
-        index=lookback_keys.index("1년"),
-        key="lookback_v2",
+        index=lookback_keys.index("3개월" if page == "시뮬레이션" else "1년"),
+        key="lookback_sim" if page == "시뮬레이션" else "lookback_v2",
     )
     lookback_spec = resolve_lookback(lookback_label)
     lookback_days = int(lookback_spec["days"])
@@ -467,11 +588,42 @@ with st.sidebar:
             use_container_width=True,
             on_click=_reset_rule_widgets,
         )
+    sim = dict(DEFAULT_SIM)
+    if page == "시뮬레이션":
+        with st.expander("매매 수량", expanded=True):
+            st.caption("약한 매수 / 매수 / 강한 매수 주 수, 잔량 기준 이상이면 % 매도, 미만이면 주 수.")
+            q1, q2, q3 = st.columns(3)
+            with q1:
+                st.number_input("약한 매수 주", min_value=0, max_value=1000, step=1, key="s_buy_weak")
+            with q2:
+                st.number_input("매수 주", min_value=0, max_value=1000, step=1, key="s_buy_mid")
+            with q3:
+                st.number_input("강한 매수 주", min_value=0, max_value=1000, step=1, key="s_buy_strong")
+            st.number_input("이 수량 이상이면 % 매도", min_value=1, max_value=10000, step=1, key="s_share_cut")
+            p1, p2, p3 = st.columns(3)
+            with p1:
+                st.number_input("약한 매도 %", min_value=1, max_value=100, step=1, key="s_sell_weak_pct")
+            with p2:
+                st.number_input("매도 %", min_value=1, max_value=100, step=1, key="s_sell_mid_pct")
+            with p3:
+                st.number_input("강한 매도 %", min_value=1, max_value=100, step=1, key="s_sell_strong_pct")
+            f1, f2, f3 = st.columns(3)
+            with f1:
+                st.number_input("약한 매도 주(미만)", min_value=1, max_value=1000, step=1, key="s_sell_weak_qty")
+            with f2:
+                st.number_input("매도 주(미만)", min_value=1, max_value=1000, step=1, key="s_sell_mid_qty")
+            with f3:
+                st.number_input("강한 매도 주(미만)", min_value=1, max_value=1000, step=1, key="s_sell_strong_qty")
+            st.button("수량 기본값", use_container_width=True, on_click=_reset_sim_widgets)
+        sim = _read_sim_from_sidebar()
     rule = _read_rule_from_sidebar()
     _persist_prefs(rule)
     run = False
+    run_sim = False
     if page == "종목 분석":
         run = st.button("분석하기", type="primary", use_container_width=True)
+    elif page == "시뮬레이션":
+        run_sim = st.button("시뮬레이션 실행", type="primary", use_container_width=True)
 
     st.markdown("---")
     st.markdown(
@@ -493,6 +645,22 @@ if page == "즐겨찾기":
     _render_favorites(as_of, lookback_days, timeframe, lookback_label, rule)
     st.stop()
 
+if page == "시뮬레이션":
+    _render_simulation(
+        market,
+        ticker,
+        display_name,
+        sim_start,
+        sim_end,
+        lookback_days,
+        timeframe,
+        lookback_label,
+        rule,
+        sim,
+        run_sim,
+    )
+    st.stop()
+
 if not run:
     st.info("왼쪽에서 시장·종목·시점을 고른 뒤 **분석하기**를 누르세요.")
     st.markdown(
@@ -502,6 +670,7 @@ if not run:
         2. **과거 특정 날짜**를 시점으로 넣으면 그 날 이후 시세는 보지 않습니다.
         3. 그 시점의 추세선, 지지/저항, 주요 매물대를 그린 뒤 매수·매도·홀딩을 제안합니다.
         4. 종목을 즐겨찾기에 넣으면 한 화면에서 제안만 모아 볼 수 있습니다.
+        5. 시뮬레이션 화면에서 기간·수량을 넣고 매일 신호대로 사고판 결과를 볼 수 있습니다.
 
         1개월은 1시간봉, 2·3개월은 4시간봉, 6개월·1년은 일봉으로 계산합니다.
         평가 배점은 이 브라우저에 저장되어 다음에 들어와도 그대로 쓰입니다.
