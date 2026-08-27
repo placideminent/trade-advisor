@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
-SIGNAL_RULE_VERSION = 20
+SIGNAL_RULE_VERSION = 21
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 10
 # 합산 %는 조회 기간과 상관없이 같은 눈금(이론상 최저~최고)을 쓴다.
@@ -33,8 +33,6 @@ DEFAULT_WEIGHTS = {
     "ma20": -1,
     "chg1_50": -3,
     "chg1_100": -4,
-    "chg3_50": -3,
-    "chg3_100": -4,
     "rr_penalty": -1,
 }
 
@@ -67,8 +65,6 @@ WEIGHT_FIELDS = [
     ("ma20", "MA20 아래", "현재가 < MA20 (상승 추세면 0)"),
     ("chg1_50", "1개월 상승 50%", "1개월 상승 50% 이상"),
     ("chg1_100", "1개월 상승 100%", "1개월 상승 100% 이상"),
-    ("chg3_50", "3개월 상승 50%", "3개월 상승 50% 이상"),
-    ("chg3_100", "3개월 상승 100%", "3개월 상승 100% 이상"),
     ("rr_penalty", "손익비 부족", "손익비 1.2 미만이고 점수가 높을 때"),
 ]
 
@@ -390,16 +386,6 @@ def recommend(
         add("1개월 상승률", f"{chg * 100:.1f}% (50% 이상)", wp("chg1_50"))
     else:
         add("1개월 상승률", f"{chg * 100:.1f}%", 0)
-
-    chg3 = _n_day_change(an, price, 90)
-    if chg3 is None:
-        add("3개월 상승률", "계산 불가", 0)
-    elif chg3 >= 1.0:
-        add("3개월 상승률", f"{chg3 * 100:.1f}% (100% 이상)", wp("chg3_100"))
-    elif chg3 >= 0.5:
-        add("3개월 상승률", f"{chg3 * 100:.1f}% (50% 이상)", wp("chg3_50"))
-    else:
-        add("3개월 상승률", f"{chg3 * 100:.1f}%", 0)
 
     stop = None
     target = None
