@@ -37,9 +37,7 @@ def _make_signal(
     an,
     six_month_chg=None,
     lookback_days=None,
-    trend_1m=None,
     rule=None,
-    action_1m=None,
     up_line_1m=None,
     peak_1m=None,
 ):
@@ -48,8 +46,6 @@ def _make_signal(
             an,
             six_month_chg=six_month_chg,
             lookback_days=lookback_days,
-            trend_1m=trend_1m,
-            action_1m=action_1m,
             up_line_1m=up_line_1m,
             peak_1m=peak_1m,
             rule=rule,
@@ -304,7 +300,6 @@ def _quick_signal(market: str, ticker: str, as_of, lookback_days: int, timeframe
             six_month_chg = period_return(src_6m, as_of, spot_price, 180)
         except Exception:
             six_month_chg = None
-        trend_1m = None
         up_line_1m = None
         peak_1m = None
         if lookback_days > 30:
@@ -324,17 +319,13 @@ def _quick_signal(market: str, ticker: str, as_of, lookback_days: int, timeframe
                     )
                     up_line_1m = an_1m.up_line is not None
                     peak_1m = period_high(an_1m.df)
-                    if lookback_days >= 90:
-                        trend_1m = an_1m.trend
             except Exception:
-                trend_1m = None
                 up_line_1m = None
                 peak_1m = None
         signal = _make_signal(
             analysis,
             six_month_chg,
             lookback_days,
-            trend_1m,
             rule,
             up_line_1m=up_line_1m,
             peak_1m=peak_1m,
@@ -686,9 +677,7 @@ with st.sidebar:
 **계산 방식**
 - 지정일까지 시세만 사용 (이후 봉 제외)
 - **1개월 → 1시간봉**, **2·3개월 → 4시간봉**, **6개월·1년 → 일봉**
-- 6개월 전 대비 10~30% +1, 30~50% 0, 50% 이상 −1, 100% 이상 −2
 - 1·2개월 추세: 상승 +, 하락 −. 3개월 이상은 하락 +, 상승 −
-- 3개월·6개월·1년: 같은 시점 1개월 조회 추세 상승 +1 / 하락 −1 / 횡보 0
 - 단기 추세선 돌파: 1개월 조회에서 상승 추세선이 있으면 +1
 - 추세선: 최근 스윙 고점/저점 연결
 - 지지·저항: 스윙 군집 + 매물대
@@ -804,7 +793,6 @@ try:
         six_month_chg = period_return(src_6m, as_of, spot_price, 180)
     except Exception:
         six_month_chg = None
-    trend_1m = None
     up_line_1m = None
     peak_1m = None
     if lookback_days > 30:
@@ -828,17 +816,13 @@ try:
                 )
                 up_line_1m = an_1m.up_line is not None
                 peak_1m = period_high(an_1m.df)
-                if lookback_days >= 90:
-                    trend_1m = an_1m.trend
         except Exception:
-            trend_1m = None
             up_line_1m = None
             peak_1m = None
     signal = _make_signal(
         analysis,
         six_month_chg,
         lookback_days,
-        trend_1m,
         rule,
         up_line_1m=up_line_1m,
         peak_1m=peak_1m,

@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
-SIGNAL_RULE_VERSION = 30
+SIGNAL_RULE_VERSION = 31
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 10
 # 합산 %는 조회 기간과 상관없이 같은 눈금(이론상 최저~최고)을 쓴다.
@@ -16,14 +16,10 @@ SCORE_HI = SCORE_BASE + 9  # 19
 DEFAULT_WEIGHTS = {
     "base": 10,
     "trend": 2,
-    "trend_1m": 1,
     "trendline_cross": 1,
     "short_up_line": 1,
     "drop_from_high": 1,
     "drop_from_high_10": -1,
-    "chg6_10": 1,
-    "chg6_50": -1,
-    "chg6_100": -2,
     "support_near": 2,
     "support_break": -2,
     "resist_near": -2,
@@ -51,14 +47,10 @@ DEFAULT_CUTS = {
 WEIGHT_FIELDS = [
     ("base", "기본", "중립 시작점"),
     ("trend", "추세", "가점/감점 크기. 1·2개월은 상승 +, 3개월 이상은 하락 +"),
-    ("trend_1m", "1개월 추세", "3개월 이상 조회 시. 1개월 조회 추세 상승 +, 하락 −"),
     ("trendline_cross", "추세선 돌파", "상승선이 하락선을 상향 돌파한 뒤 4봉 안에만 +1, 그 이후 0"),
     ("short_up_line", "단기 추세선 돌파", "같은 시점 1개월 조회에서 상승 추세선이 있으면 +1"),
     ("drop_from_high", "전고점 하락 30%", "조회 기간 최고가 대비 현재가가 30% 이상 하락하면 +1"),
     ("drop_from_high_10", "전고점 하락 10%", "1개월 차트 전고점 대비 10% 이상 하락하면 −1 (모든 조회)"),
-    ("chg6_10", "6개월 10~30%", "6개월 전 대비 10% 이상 30% 미만"),
-    ("chg6_50", "6개월 50%+", "6개월 전 대비 50% 이상 100% 미만"),
-    ("chg6_100", "6개월 100%+", "6개월 전 대비 100% 이상"),
     ("support_near", "지지 근접", "근접 지지. 강도 1 이하면 가점 없음"),
     ("support_break", "지지 이탈", "지지 아래로 이탈"),
     ("resist_near", "저항 근접", "저항 바로 아래/근처"),
@@ -221,11 +213,10 @@ def recommend(
     an: Analysis,
     six_month_chg: float | None = None,
     lookback_days: int | None = None,
-    trend_1m: str | None = None,
-    action_1m: str | None = None,
     up_line_1m: bool | None = None,
     peak_1m: float | None = None,
     rule: dict | None = None,
+    **_unused,
 ) -> Signal:
     cfg = merge_rule(rule)
     w = cfg["weights"]
@@ -272,17 +263,6 @@ def recommend(
             add("추세", f"하락 · 눌림 매수 가점. {an.price_label} {_fmt(price)}", trend_pts)
         else:
             add("추세", f"횡보. {an.price_label} {_fmt(price)}", 0)
-
-    if lookback_days is not None and lookback_days >= 90:
-        t1 = abs(wp("trend_1m"))
-        if trend_1m == "up":
-            add("1개월 추세", "1개월 조회 기준 상승", t1)
-        elif trend_1m == "down":
-            add("1개월 추세", "1개월 조회 기준 하락", -t1)
-        elif trend_1m == "sideways":
-            add("1개월 추세", "1개월 조회 기준 횡보", 0)
-        else:
-            add("1개월 추세", "1개월 조회 추세를 계산하지 못함", 0)
 
     up_line = an.up_line
     down_line = an.down_line
@@ -356,22 +336,6 @@ def recommend(
             add("전고점 하락 10%", drop_m_txt, wp("drop_from_high_10"))
         else:
             add("전고점 하락 10%", drop_m_txt, 0)
-
-    chg6 = six_month_chg
-    if chg6 is None:
-        chg6 = period_return(an.df, an.as_of, price, 180)
-    if chg6 is None:
-        add("6개월 상승률", "6개월 전 가격 없음", 0)
-    elif chg6 >= 1.0:
-        add("6개월 상승률", f"{chg6 * 100:.1f}% (100% 이상)", wp("chg6_100"))
-    elif chg6 >= 0.50:
-        add("6개월 상승률", f"{chg6 * 100:.1f}% (50% 이상 100% 미만)", wp("chg6_50"))
-    elif chg6 >= 0.30:
-        add("6개월 상승률", f"{chg6 * 100:.1f}% (30% 이상 50% 미만)", 0)
-    elif chg6 >= 0.10:
-        add("6개월 상승률", f"{chg6 * 100:.1f}% (10% 이상 30% 미만)", wp("chg6_10"))
-    else:
-        add("6개월 상승률", f"{chg6 * 100:.1f}%", 0)
 
     if nsup:
         dist_s = price - nsup.price

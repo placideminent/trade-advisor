@@ -185,7 +185,6 @@ def run_backtest(
         src_6m = _window(df_1d, as_of, 200) if df_1d is not None and not df_1d.empty else w
         chg6 = period_return(src_6m, as_of, px, 180)
 
-        trend_1m = None
         up_line_1m = None
         peak_1m = None
         if lookback_days > 30 and not df_1h_wall.empty:
@@ -200,10 +199,7 @@ def run_backtest(
                     )
                     up_line_1m = an_1m.up_line is not None
                     peak_1m = period_high(an_1m.df)
-                    if lookback_days >= 90:
-                        trend_1m = an_1m.trend
                 except Exception:
-                    trend_1m = None
                     up_line_1m = None
                     peak_1m = None
 
@@ -212,7 +208,6 @@ def run_backtest(
                 an,
                 six_month_chg=chg6,
                 lookback_days=lookback_days,
-                trend_1m=trend_1m,
                 up_line_1m=up_line_1m,
                 peak_1m=peak_1m,
                 rule=rule,
@@ -231,7 +226,6 @@ def run_backtest(
             "잔량": shares,
             "평단": avg,
             "체결": "",
-            "1개월추세": trend_1m or "",
         }
 
         if action in buy_map:
