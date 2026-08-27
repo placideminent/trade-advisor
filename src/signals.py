@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
-SIGNAL_RULE_VERSION = 34
+SIGNAL_RULE_VERSION = 35
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 10
 # 합산 %는 조회 기간과 상관없이 같은 눈금(이론상 최저~최고)을 쓴다.
@@ -19,10 +19,9 @@ DEFAULT_WEIGHTS = {
     "down_line_break": 1,
     "up_line_break": -1,
     "drop_from_high": 1,
-    "support_near": 2,
+    "support_near": 1,
     "support_break": -2,
-    "resist_near": -2,
-    "resist_strong": -1,
+    "resist_near": -1,
     "vol_sup_air": -1,
     "vol_sup_room": 1,
     "poc": 1,
@@ -49,10 +48,9 @@ WEIGHT_FIELDS = [
     ("down_line_break", "하락 추세선 이탈", "종가가 하락 추세선 위를 4봉 이상 지키면 +1"),
     ("up_line_break", "상승 추세선 이탈", "종가가 상승 추세선 아래를 4봉 이상 지키면 −1"),
     ("drop_from_high", "전고점 하락 30%", "조회 기간 최고가 대비 현재가가 30% 이상 하락하면 +1"),
-    ("support_near", "지지 근접", "근접 지지. 강도 1 이하면 가점 없음"),
+    ("support_near", "지지 근접", "근접하고 강도 1 초과일 때만 +1"),
     ("support_break", "지지 이탈", "지지 아래로 이탈"),
-    ("resist_near", "저항 근접", "저항 바로 아래/근처"),
-    ("resist_strong", "강한 저항", "근접 저항 강도 2 이상이고 근접 감점이 없을 때"),
+    ("resist_near", "저항 근접", "근접하고 강도 2 이상일 때만 −1"),
     ("vol_sup_air", "약한 매물대·아래 공백", "지지 매물대 강도 1 미만이고 다음 지지가 10% 이상 아래"),
     ("vol_sup_room", "약한 매물대·위 여유", "지지 매물대 강도 1 미만이고 다음 저항이 10% 이상 위"),
     ("poc", "POC", "최대 매물 부근. 상승 +, 하락 −"),
@@ -322,17 +320,18 @@ def recommend(
         pct_r = dist_r / price * 100
         res_str = float(nres.strength)
         if dist_r <= near:
-            add(
-                "저항",
-                f"근접 {_fmt(nres.price)} ({nres.note}, 강도 {res_str:.1f}, 이격 {pct_r:.2f}%)",
-                wp("resist_near"),
-            )
-        elif res_str >= 2:
-            add(
-                "저항",
-                f"{_fmt(nres.price)} 까지 {pct_r:.2f}% · 강도 {res_str:.1f} (2 이상, 근접 감점 없어도 적용)",
-                wp("resist_strong"),
-            )
+            if res_str >= 2:
+                add(
+                    "저항",
+                    f"근접 {_fmt(nres.price)} ({nres.note}, 강도 {res_str:.1f}, 이격 {pct_r:.2f}%)",
+                    wp("resist_near"),
+                )
+            else:
+                add(
+                    "저항",
+                    f"근접 {_fmt(nres.price)} ({nres.note}, 강도 {res_str:.1f} · 약해 감점 없음, 이격 {pct_r:.2f}%)",
+                    0,
+                )
         else:
             add("저항", f"{_fmt(nres.price)} 까지 {pct_r:.2f}% (강도 {res_str:.1f})", 0)
     else:
