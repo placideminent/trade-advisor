@@ -448,20 +448,37 @@ def _render_simulation(
         + " · ".join(f"{k} {v}" for k, v in counts.items())
     )
     trades = result.trades or []
-    if trades:
-        df_t = pd.DataFrame(trades)
+    buys = [t for t in trades if str(t.get("체결")) == "매수"]
+    sells = [t for t in trades if str(t.get("체결")) in ("매도", "잔량0")]
+
+    def _trade_table(rows: list) -> pd.DataFrame:
+        df_t = pd.DataFrame(rows)
+        if df_t.empty:
+            return df_t
         if "가격" in df_t.columns:
             df_t["가격"] = df_t["가격"].map(lambda x: f"{x:,.0f}")
         if "평단" in df_t.columns:
             df_t["평단"] = df_t["평단"].map(lambda x: f"{x:,.0f}")
-        st.dataframe(df_t, hide_index=True, use_container_width=True)
-        buys = [t for t in trades if str(t.get("체결")) == "매수"]
-        sells = [t for t in trades if str(t.get("체결")) == "매도"]
-        st.markdown("**매수일:** " + (", ".join(t["날짜"] for t in buys) or "없음"))
-        st.markdown("**매도 체결일:** " + (", ".join(t["날짜"] for t in sells) or "없음"))
-        skips = [t for t in trades if t.get("체결") == "잔량0"]
-        if skips:
-            st.markdown("**매도 신호·잔량 0:** " + ", ".join(t["날짜"] for t in skips))
+        return df_t
+
+    st.subheader(f"매수 신호 ({len(buys)})")
+    if buys:
+        st.dataframe(_trade_table(buys), hide_index=True, use_container_width=True)
+        st.caption(" · ".join(t["날짜"] for t in buys))
+    else:
+        st.info("매수 신호가 없습니다.")
+
+    st.subheader(f"매도 신호 ({len(sells)})")
+    if sells:
+        st.dataframe(_trade_table(sells), hide_index=True, use_container_width=True)
+        filled = [t for t in sells if t.get("체결") == "매도"]
+        skipped = [t for t in sells if t.get("체결") == "잔량0"]
+        if filled:
+            st.caption("체결: " + " · ".join(t["날짜"] for t in filled))
+        if skipped:
+            st.caption("잔량 0: " + " · ".join(t["날짜"] for t in skipped))
+    else:
+        st.info("매도 신호가 없습니다.")
 
 
 with st.sidebar:
