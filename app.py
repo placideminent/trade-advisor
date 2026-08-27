@@ -121,6 +121,12 @@ def _bootstrap_prefs() -> None:
             val = 1
         if key == "resist_near" and val == -2:
             val = -1
+        if key == "chg1_50" and val == -3:
+            val = -1
+        if key == "chg1_100" and val == -4:
+            val = -2
+        if key == "chg1_down20" and val == 2:
+            val = 1
         st.session_state[f"w_{key}"] = val
     for key, default in DEFAULT_CUTS.items():
         st.session_state[f"c_{key}"] = int(loaded["cuts"].get(key, default))
@@ -681,7 +687,7 @@ with st.sidebar:
 - RSI: 40 이하 +1, 60 이상 −1
 - 지지: 근접하고 강도 1 초과일 때만 +1
 - 저항: 근접하고 강도 2 이상일 때만 −1
-- 1개월 상승률: 100%↑ −4, 50%↑ −3, 0~49% 0, 0~−20% +1, −20%↓ +2
+- 1개월 상승률: 100%↑ −2, 50%↑ −1, −20%↓ +1, −30%↓ +2
 - 지지·저항: 스윙 군집 + 매물대
 - 매수/매도 기준과 항목 배점은 **평가 배점·기준**에서 바꿉니다
         """
