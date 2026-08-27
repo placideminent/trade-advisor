@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
-SIGNAL_RULE_VERSION = 35
+SIGNAL_RULE_VERSION = 36
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 10
 # 합산 %는 조회 기간과 상관없이 같은 눈금(이론상 최저~최고)을 쓴다.
@@ -18,6 +18,8 @@ DEFAULT_WEIGHTS = {
     "trend": 2,
     "down_line_break": 1,
     "up_line_break": -1,
+    "trendline_dir_down": -2,
+    "trendline_dir_split": 1,
     "drop_from_high": 1,
     "support_near": 1,
     "support_break": -2,
@@ -47,6 +49,8 @@ WEIGHT_FIELDS = [
     ("trend", "추세", "가점/감점 크기. 1·2개월은 상승 +, 3개월 이상은 하락 +"),
     ("down_line_break", "하락 추세선 이탈", "종가가 하락 추세선 위를 4봉 이상 지키면 +1"),
     ("up_line_break", "상승 추세선 이탈", "종가가 상승 추세선 아래를 4봉 이상 지키면 −1"),
+    ("trendline_dir_down", "추세선 둘 다 하락", "상승선·하락선이 동시에 하락이면 −2"),
+    ("trendline_dir_split", "추세선 상승+하락", "상승선은 상승, 하락선은 하락이면 +1"),
     ("drop_from_high", "전고점 하락 30%", "조회 기간 최고가 대비 현재가가 30% 이상 하락하면 +1"),
     ("support_near", "지지 근접", "근접하고 강도 1 초과일 때만 +1"),
     ("support_break", "지지 이탈", "지지 아래로 이탈"),
@@ -149,6 +153,20 @@ def period_return(df, as_of, price: float, days: int = 180) -> float | None:
     if base <= 0:
         return None
     return float(price) / base - 1.0
+
+
+def _line_dir(line) -> str | None:
+    """선의 기울기. up / down / flat. 없으면 None."""
+    if line is None:
+        return None
+    x0, y0, x1, y1 = (float(v) for v in line)
+    if x1 == x0:
+        return None
+    dy = y1 - y0
+    scale = max(abs(y0), abs(y1), 1.0)
+    if abs(dy) / scale < 1e-6:
+        return "flat"
+    return "up" if dy > 0 else "down"
 
 
 def _line_y_at(line, x: float) -> float | None:
@@ -273,6 +291,21 @@ def recommend(
             add("상승 추세선 이탈", f"상승선 아래 {below}봉 연속 (4봉 미만)", 0)
         else:
             add("상승 추세선 이탈", "상승선 위", 0)
+
+    up_dir = _line_dir(up_line)
+    down_dir = _line_dir(down_line)
+    if up_dir is None or down_dir is None:
+        add("추세선 방향성", "상승선 또는 하락선 없음", 0)
+    elif up_dir == "down" and down_dir == "down":
+        add("추세선 방향성", "상승선·하락선 둘 다 하락", wp("trendline_dir_down"))
+    elif up_dir == "up" and down_dir == "down":
+        add("추세선 방향성", "상승선 상승 · 하락선 하락", wp("trendline_dir_split"))
+    elif up_dir == "down" and down_dir == "up":
+        add("추세선 방향성", "상승선 하락 · 하락선 상승", 0)
+    elif up_dir == "up" and down_dir == "up":
+        add("추세선 방향성", "상승선·하락선 둘 다 상승", 0)
+    else:
+        add("추세선 방향성", f"상승선 {up_dir} · 하락선 {down_dir}", 0)
 
     peak = None
     df_an = an.df
