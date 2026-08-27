@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
-SIGNAL_RULE_VERSION = 32
+SIGNAL_RULE_VERSION = 33
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 10
 # 합산 %는 조회 기간과 상관없이 같은 눈금(이론상 최저~최고)을 쓴다.
@@ -17,6 +17,7 @@ DEFAULT_WEIGHTS = {
     "base": 10,
     "trend": 2,
     "trendline_cross": 1,
+    "up_line_break": -1,
     "drop_from_high": 1,
     "drop_from_high_10": -1,
     "support_near": 2,
@@ -47,6 +48,7 @@ WEIGHT_FIELDS = [
     ("base", "기본", "중립 시작점"),
     ("trend", "추세", "가점/감점 크기. 1·2개월은 상승 +, 3개월 이상은 하락 +"),
     ("trendline_cross", "추세선 돌파", "상승선이 하락선을 상향 돌파한 뒤 4봉 안에만 +1, 그 이후 0"),
+    ("up_line_break", "상승 추세선 이탈", "종가가 상승 추세선 아래를 4봉 이상 지키면 −1"),
     ("drop_from_high", "전고점 하락 30%", "조회 기간 최고가 대비 현재가가 30% 이상 하락하면 +1"),
     ("drop_from_high_10", "전고점 하락 10%", "1개월 차트 전고점 대비 10% 이상 하락하면 −1 (모든 조회)"),
     ("support_near", "지지 근접", "근접 지지. 강도 1 이하면 가점 없음"),
@@ -197,6 +199,36 @@ def _trendline_bars_since_cross(df, up_line, down_line) -> float | None:
     return float((n - 1) - i_c)
 
 
+def _line_y_at(line, x: float) -> float | None:
+    x0, y0, x1, y1 = (float(v) for v in line)
+    if x1 == x0:
+        return None
+    return y0 + (y1 - y0) / (x1 - x0) * (x - x0)
+
+
+def _bars_below_up_line(df, up_line, last_price: float) -> int | None:
+    """마지막 봉부터 종가(현재가)가 상승선 아래인 연속 봉 수."""
+    if df is None or getattr(df, "empty", True) or up_line is None:
+        return None
+    if "close" not in getattr(df, "columns", []):
+        return None
+    n = len(df)
+    if n < 1:
+        return None
+    closes = df["close"].to_numpy()
+    count = 0
+    for i in range(n - 1, -1, -1):
+        line_y = _line_y_at(up_line, float(i))
+        if line_y is None:
+            return None
+        px = float(last_price) if i == n - 1 else float(closes[i])
+        if px < line_y:
+            count += 1
+        else:
+            break
+    return count
+
+
 def period_high(df) -> float | None:
     if df is None or getattr(df, "empty", True) or "high" not in getattr(df, "columns", []):
         return None
@@ -294,6 +326,23 @@ def recommend(
             )
     else:
         add("추세선 돌파", "상승선 또는 하락선 없음", 0)
+
+    if not up_line:
+        add("상승 추세선 이탈", "상승선 없음", 0)
+    else:
+        below = _bars_below_up_line(an.df, up_line, price)
+        if below is None:
+            add("상승 추세선 이탈", "이탈 봉 수를 계산하지 못함", 0)
+        elif below >= 4:
+            add(
+                "상승 추세선 이탈",
+                f"상승선 아래 {below}봉 연속 (4봉 이상)",
+                wp("up_line_break"),
+            )
+        elif below > 0:
+            add("상승 추세선 이탈", f"상승선 아래 {below}봉 연속 (4봉 미만)", 0)
+        else:
+            add("상승 추세선 이탈", "상승선 위", 0)
 
     peak = None
     df_an = an.df
