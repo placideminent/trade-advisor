@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
-SIGNAL_RULE_VERSION = 17
+SIGNAL_RULE_VERSION = 18
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 10
 # 합산 %는 조회 기간과 상관없이 같은 눈금(이론상 최저~최고)을 쓴다.
@@ -23,6 +23,7 @@ DEFAULT_WEIGHTS = {
     "support_near": 2,
     "support_break": -2,
     "resist_near": -2,
+    "resist_strong": -1,
     "poc": 1,
     "val": 1,
     "rsi": 1,
@@ -50,9 +51,10 @@ WEIGHT_FIELDS = [
     ("chg6_10", "6개월 10~30%", "6개월 전 대비 10% 이상 30% 미만"),
     ("chg6_50", "6개월 50%+", "6개월 전 대비 50% 이상 100% 미만"),
     ("chg6_100", "6개월 100%+", "6개월 전 대비 100% 이상"),
-    ("support_near", "지지 근접", "지지 바로 아래/근처"),
+    ("support_near", "지지 근접", "근접 지지. 강도 1 이하면 가점 없음"),
     ("support_break", "지지 이탈", "지지 아래로 이탈"),
     ("resist_near", "저항 근접", "저항 바로 아래/근처"),
+    ("resist_strong", "강한 저항", "근접 저항 강도 2 이상이고 근접 감점이 없을 때"),
     ("poc", "POC", "최대 매물 부근. 상승 +, 하락 −"),
     ("val", "VAL", "밸류 하단 아래. 상승 +, 하락 −"),
     ("rsi", "RSI", "과매도 +, 과매수 −"),
@@ -237,10 +239,22 @@ def recommend(
     if nsup:
         dist_s = price - nsup.price
         pct_s = dist_s / price * 100
+        sup_str = float(nsup.strength)
         if dist_s <= near:
-            add("지지", f"근접 {_fmt(nsup.price)} ({nsup.note}, 이격 {pct_s:.2f}%)", wp("support_near"))
+            if sup_str <= 1:
+                add(
+                    "지지",
+                    f"근접 {_fmt(nsup.price)} ({nsup.note}, 강도 {sup_str:.1f} · 약해 가점 없음, 이격 {pct_s:.2f}%)",
+                    0,
+                )
+            else:
+                add(
+                    "지지",
+                    f"근접 {_fmt(nsup.price)} ({nsup.note}, 강도 {sup_str:.1f}, 이격 {pct_s:.2f}%)",
+                    wp("support_near"),
+                )
         else:
-            add("지지", f"{_fmt(nsup.price)} 까지 {pct_s:.2f}%", 0)
+            add("지지", f"{_fmt(nsup.price)} 까지 {pct_s:.2f}% (강도 {sup_str:.1f})", 0)
         if price < nsup.price - atr * 0.15:
             add("지지 이탈", f"현재가 < {_fmt(nsup.price)}", wp("support_break"))
     else:
@@ -249,10 +263,21 @@ def recommend(
     if nres:
         dist_r = nres.price - price
         pct_r = dist_r / price * 100
+        res_str = float(nres.strength)
         if dist_r <= near:
-            add("저항", f"근접 {_fmt(nres.price)} ({nres.note}, 이격 {pct_r:.2f}%)", wp("resist_near"))
+            add(
+                "저항",
+                f"근접 {_fmt(nres.price)} ({nres.note}, 강도 {res_str:.1f}, 이격 {pct_r:.2f}%)",
+                wp("resist_near"),
+            )
+        elif res_str >= 2:
+            add(
+                "저항",
+                f"{_fmt(nres.price)} 까지 {pct_r:.2f}% · 강도 {res_str:.1f} (2 이상, 근접 감점 없어도 적용)",
+                wp("resist_strong"),
+            )
         else:
-            add("저항", f"{_fmt(nres.price)} 까지 {pct_r:.2f}%", 0)
+            add("저항", f"{_fmt(nres.price)} 까지 {pct_r:.2f}% (강도 {res_str:.1f})", 0)
     else:
         add("저항", "없음", 0)
 
