@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
-SIGNAL_RULE_VERSION = 28
+SIGNAL_RULE_VERSION = 29
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 10
 # 합산 %는 조회 기간과 상관없이 같은 눈금(이론상 최저~최고)을 쓴다.
@@ -52,7 +52,7 @@ WEIGHT_FIELDS = [
     ("base", "기본", "중립 시작점"),
     ("trend", "추세", "가점/감점 크기. 1·2개월은 상승 +, 3개월 이상은 하락 +"),
     ("trend_1m", "1개월 추세", "3개월 이상 조회 시. 1개월 조회 추세 상승 +, 하락 −"),
-    ("trendline_cross", "추세선 돌파", "상승선이 하락선을 상향 돌파한 시점이 3봉 이전일 때만 +1"),
+    ("trendline_cross", "추세선 돌파", "상승선이 하락선을 상향 돌파한 뒤 4봉 안에만 +1, 그 이후 0"),
     ("short_up_line", "단기 추세선 돌파", "같은 시점 1개월 조회에서 상승 추세선이 있으면 +1"),
     ("drop_from_high", "전고점 하락 30%", "조회 기간 최고가 대비 현재가가 30% 이상 하락하면 +1"),
     ("drop_from_high_10", "전고점 하락 10%", "1개월 차트 전고점 대비 10% 이상 하락하면 −1 (모든 조회)"),
@@ -260,22 +260,23 @@ def recommend(
         y_down = float(down_line[3])
         x_end = float(up_line[2])
         x_c = _trendline_intersect_x(up_line, down_line)
+        bars_ago = (x_end - x_c) if x_c is not None else None
         if x_c is None:
             add("추세선 돌파", "상승선과 하락선이 평행해 교차 없음", 0)
         elif y_up <= y_down:
-            add("추세선 돌파", f"상승선이 하락선 아래 · 교차 {x_end - x_c:.1f}봉 전", 0)
+            add("추세선 돌파", f"상승선이 하락선 아래 · 교차 {bars_ago:.1f}봉 전", 0)
         elif x_c > x_end:
             add("추세선 돌파", "교차가 아직 마지막 봉 이후", 0)
-        elif x_c > x_end - 3:
+        elif bars_ago >= 4:
             add(
                 "추세선 돌파",
-                f"교차가 {x_end - x_c:.1f}봉 전이라 너무 가까움 (3봉 이전만 가점)",
+                f"교차 후 {bars_ago:.1f}봉 지나 가점 종료 (4봉 이상)",
                 0,
             )
         else:
             add(
                 "추세선 돌파",
-                f"상승선이 하락선을 상향 돌파 · {x_end - x_c:.1f}봉 전",
+                f"상승선이 하락선을 상향 돌파 · {bars_ago:.1f}봉 전 (4봉 안)",
                 wp("trendline_cross"),
             )
     else:
