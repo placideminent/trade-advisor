@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
-SIGNAL_RULE_VERSION = 27
+SIGNAL_RULE_VERSION = 28
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 10
 # 합산 %는 조회 기간과 상관없이 같은 눈금(이론상 최저~최고)을 쓴다.
@@ -52,7 +52,7 @@ WEIGHT_FIELDS = [
     ("base", "기본", "중립 시작점"),
     ("trend", "추세", "가점/감점 크기. 1·2개월은 상승 +, 3개월 이상은 하락 +"),
     ("trend_1m", "1개월 추세", "3개월 이상 조회 시. 1개월 조회 추세 상승 +, 하락 −"),
-    ("trendline_cross", "추세선 돌파", "상승선이 하락선 위이거나, 상승선은 상향·하락선은 하향일 때"),
+    ("trendline_cross", "추세선 돌파", "상승선이 하락선을 상향 돌파한 시점이 3봉 이전일 때만 +1"),
     ("short_up_line", "단기 추세선 돌파", "같은 시점 1개월 조회에서 상승 추세선이 있으면 +1"),
     ("drop_from_high", "전고점 하락 30%", "조회 기간 최고가 대비 현재가가 30% 이상 하락하면 +1"),
     ("drop_from_high_10", "전고점 하락 10%", "1개월 차트 전고점 대비 10% 이상 하락하면 −1 (모든 조회)"),
@@ -163,6 +163,19 @@ def period_return(df, as_of, price: float, days: int = 180) -> float | None:
     return float(price) / base - 1.0
 
 
+def _trendline_intersect_x(up_line, down_line) -> float | None:
+    """두 추세선의 교차 x(봉 인덱스). 평행이면 None."""
+    x0u, y0u, x1u, y1u = (float(v) for v in up_line)
+    x0d, y0d, x1d, y1d = (float(v) for v in down_line)
+    if x1u == x0u or x1d == x0d:
+        return None
+    su = (y1u - y0u) / (x1u - x0u)
+    sd = (y1d - y0d) / (x1d - x0d)
+    if abs(su - sd) < 1e-12:
+        return None
+    return (y0d - y0u + su * x0u - sd * x0d) / (su - sd)
+
+
 def period_high(df) -> float | None:
     if df is None or getattr(df, "empty", True) or "high" not in getattr(df, "columns", []):
         return None
@@ -243,21 +256,28 @@ def recommend(
     up_line = an.up_line
     down_line = an.down_line
     if up_line and down_line:
-        x0u, y0u, x1u, y1u = (float(v) for v in up_line)
-        x0d, y0d, x1d, y1d = (float(v) for v in down_line)
-        slope_up = (y1u - y0u) / (x1u - x0u) if x1u != x0u else 0.0
-        slope_down = (y1d - y0d) / (x1d - x0d) if x1d != x0d else 0.0
-        above = y1u > y1d
-        aligned = slope_up > 0 and slope_down < 0
-        if above or aligned:
-            why = []
-            if above:
-                why.append(f"상승선 {_fmt(y1u)} > 하락선 {_fmt(y1d)}")
-            if aligned:
-                why.append("상승선 상향 · 하락선 하향")
-            add("추세선 돌파", " · ".join(why), wp("trendline_cross"))
+        y_up = float(up_line[3])
+        y_down = float(down_line[3])
+        x_end = float(up_line[2])
+        x_c = _trendline_intersect_x(up_line, down_line)
+        if x_c is None:
+            add("추세선 돌파", "상승선과 하락선이 평행해 교차 없음", 0)
+        elif y_up <= y_down:
+            add("추세선 돌파", f"상승선이 하락선 아래 · 교차 {x_end - x_c:.1f}봉 전", 0)
+        elif x_c > x_end:
+            add("추세선 돌파", "교차가 아직 마지막 봉 이후", 0)
+        elif x_c > x_end - 3:
+            add(
+                "추세선 돌파",
+                f"교차가 {x_end - x_c:.1f}봉 전이라 너무 가까움 (3봉 이전만 가점)",
+                0,
+            )
         else:
-            add("추세선 돌파", f"상승선 {_fmt(y1u)} ≤ 하락선 {_fmt(y1d)} · 기울기 미충족", 0)
+            add(
+                "추세선 돌파",
+                f"상승선이 하락선을 상향 돌파 · {x_end - x_c:.1f}봉 전",
+                wp("trendline_cross"),
+            )
     else:
         add("추세선 돌파", "상승선 또는 하락선 없음", 0)
 
