@@ -9,7 +9,6 @@ from functools import partial
 
 import pandas as pd
 import streamlit as st
-import streamlit.components.v1 as components
 
 from src.analysis import analyze
 from src.chart import build_chart
@@ -17,7 +16,6 @@ from src.data import drop_incomplete_session, fetch_ohlcv, fetch_spot_price, mar
 from src.prefs import (
     COOKIE_NAME,
     MAX_FAVORITES,
-    cookie_set_html,
     decode_cookie,
     load_prefs_file,
     save_prefs_file,
@@ -120,16 +118,6 @@ def _persist_prefs(rule: dict) -> None:
         return
     st.session_state._prefs_snapshot = snap
     save_prefs_file(payload)
-    st.session_state._prefs_cookie_html = cookie_set_html(payload)
-    st.session_state._prefs_cookie_dirty = True
-
-
-def _emit_prefs_cookie() -> None:
-    if not st.session_state.pop("_prefs_cookie_dirty", False):
-        return
-    html = st.session_state.get("_prefs_cookie_html")
-    if html:
-        components.html(html, height=0, width=0)
 
 
 def _fav_list() -> list[dict]:
@@ -504,8 +492,6 @@ with st.sidebar:
         """
     )
 
-
-_emit_prefs_cookie()
 
 if page == "즐겨찾기":
     _render_favorites(as_of, lookback_days, timeframe, lookback_label, rule)
