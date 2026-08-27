@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
-SIGNAL_RULE_VERSION = 44
+SIGNAL_RULE_VERSION = 45
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 10
 # 합산 %는 조회 기간과 상관없이 같은 눈금(이론상 최저~최고)을 쓴다.
@@ -33,6 +33,9 @@ DEFAULT_WEIGHTS = {
     "chg1_100": -2,
     "chg1_down20": 1,
     "chg1_down30": 2,
+    "chg6_200": -1,
+    "chg6_300": -2,
+    "chg6_400": -3,
     "rr_penalty": -1,
 }
 
@@ -65,6 +68,9 @@ WEIGHT_FIELDS = [
     ("chg1_100", "1개월 상승 100%", "30일 전 대비 100% 이상 −2"),
     ("chg1_down20", "1개월 하락 20%", "30일 전 대비 20% 이상 30% 미만 하락 +1"),
     ("chg1_down30", "1개월 하락 30%", "30일 전 대비 30% 이상 하락 +2"),
+    ("chg6_200", "6개월 상승 200%", "6개월 전 대비 200% 이상 300% 미만 −1 (모든 조회)"),
+    ("chg6_300", "6개월 상승 300%", "6개월 전 대비 300% 이상 400% 미만 −2 (모든 조회)"),
+    ("chg6_400", "6개월 상승 400%", "6개월 전 대비 400% 이상 −3 (모든 조회)"),
     ("rr_penalty", "손익비 부족", "손익비 1.2 미만이고 점수가 높을 때"),
 ]
 
@@ -487,6 +493,20 @@ def recommend(
         add("1개월 상승률", f"{chg * 100:.1f}% (20% 이상 30% 미만 하락)", wp("chg1_down20"))
     else:
         add("1개월 상승률", f"{chg * 100:.1f}%", 0)
+
+    chg6 = six_month_chg
+    if chg6 is None:
+        chg6 = period_return(an.df, an.as_of, price, 180)
+    if chg6 is None:
+        add("6개월 상승률", "6개월 전 가격 없음", 0)
+    elif chg6 >= 4.0:
+        add("6개월 상승률", f"{chg6 * 100:.1f}% (400% 이상)", wp("chg6_400"))
+    elif chg6 >= 3.0:
+        add("6개월 상승률", f"{chg6 * 100:.1f}% (300% 이상 400% 미만)", wp("chg6_300"))
+    elif chg6 >= 2.0:
+        add("6개월 상승률", f"{chg6 * 100:.1f}% (200% 이상 300% 미만)", wp("chg6_200"))
+    else:
+        add("6개월 상승률", f"{chg6 * 100:.1f}%", 0)
 
     stop = None
     target = None
