@@ -2,15 +2,26 @@
 
 from __future__ import annotations
 
+import json
 import os
-from datetime import date, timedelta
+from datetime import date
+from functools import partial
 
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 
 from src.analysis import analyze
 from src.chart import build_chart
 from src.data import drop_incomplete_session, fetch_ohlcv, fetch_spot_price, market_today, search_kr
+from src.prefs import (
+    COOKIE_NAME,
+    MAX_FAVORITES,
+    cookie_set_html,
+    decode_cookie,
+    load_prefs_file,
+    save_prefs_file,
+)
 from src.signals import (
     CUT_FIELDS,
     DEFAULT_CUTS,
@@ -66,6 +77,86 @@ def _reset_rule_widgets() -> None:
         st.session_state[f"c_{key}"] = int(default)
 
 
+ACTION_CLASS = {
+    "강한 매수": "action-buy-strong",
+    "매수": "action-buy",
+    "약한 매수": "action-buy-weak",
+    "강한 매도": "action-sell-strong",
+    "매도": "action-sell",
+    "약한 매도": "action-sell-weak",
+    "홀딩": "action-hold",
+}
+
+
+def _bootstrap_prefs() -> None:
+    if st.session_state.get("_prefs_boot"):
+        return
+    loaded = load_prefs_file()
+    try:
+        ctx = getattr(st, "context", None)
+        cookies = getattr(ctx, "cookies", None) if ctx is not None else None
+        raw = cookies.get(COOKIE_NAME) if cookies is not None else None
+        cookie_data = decode_cookie(raw)
+        if cookie_data:
+            loaded = cookie_data
+    except Exception:
+        pass
+    for key, default in DEFAULT_WEIGHTS.items():
+        st.session_state[f"w_{key}"] = int(loaded["weights"].get(key, default))
+    for key, default in DEFAULT_CUTS.items():
+        st.session_state[f"c_{key}"] = int(loaded["cuts"].get(key, default))
+    st.session_state.favorites = list(loaded.get("favorites") or [])
+    st.session_state._prefs_boot = True
+
+
+def _persist_prefs(rule: dict) -> None:
+    payload = {
+        "weights": rule["weights"],
+        "cuts": rule["cuts"],
+        "favorites": list(st.session_state.get("favorites") or []),
+    }
+    snap = json.dumps(payload, sort_keys=True, ensure_ascii=False)
+    if st.session_state.get("_prefs_snapshot") == snap:
+        return
+    st.session_state._prefs_snapshot = snap
+    save_prefs_file(payload)
+    st.session_state._prefs_cookie_html = cookie_set_html(payload)
+    st.session_state._prefs_cookie_dirty = True
+
+
+def _emit_prefs_cookie() -> None:
+    if not st.session_state.pop("_prefs_cookie_dirty", False):
+        return
+    html = st.session_state.get("_prefs_cookie_html")
+    if html:
+        components.html(html, height=0, width=0)
+
+
+def _fav_list() -> list[dict]:
+    return list(st.session_state.get("favorites") or [])
+
+
+def _is_fav(market: str, ticker: str) -> bool:
+    return any(f.get("market") == market and f.get("ticker") == ticker for f in _fav_list())
+
+
+def _add_fav(market: str, ticker: str, name: str) -> None:
+    if _is_fav(market, ticker):
+        return
+    favs = _fav_list()
+    if len(favs) >= MAX_FAVORITES:
+        st.session_state._fav_full = True
+        return
+    favs.append({"market": market, "ticker": ticker, "name": name or ticker})
+    st.session_state.favorites = favs
+
+
+def _remove_fav(market: str, ticker: str) -> None:
+    st.session_state.favorites = [
+        f for f in _fav_list() if not (f.get("market") == market and f.get("ticker") == ticker)
+    ]
+
+
 from src.universe import (
     CRYPTO,
     KR_PRESETS,
@@ -111,6 +202,7 @@ def require_login() -> None:
 
 
 require_login()
+_bootstrap_prefs()
 
 st.markdown(
     """
@@ -140,7 +232,155 @@ def _preset_label(code: str, name: str) -> str:
     return f"{name} ({code})"
 
 
+@st.cache_data(ttl=600, show_spinner=False)
+def _cached_ohlcv(market: str, ticker: str, as_of_iso: str, lookback_days: int, timeframe: str, _ver: str = "1h1m"):
+    return fetch_ohlcv(
+        market,
+        ticker,
+        date.fromisoformat(as_of_iso),
+        lookback_days,
+        timeframe=timeframe,
+    )
+
+
+def _quick_signal(market: str, ticker: str, as_of, lookback_days: int, timeframe: str, rule: dict) -> dict:
+    as_of = min(as_of, market_today(market))
+    try:
+        df, meta = _cached_ohlcv(
+            market, ticker, as_of.isoformat(), lookback_days, timeframe
+        )
+        df = df.copy()
+        meta = dict(meta)
+        tf = str(meta.get("timeframe") or timeframe)
+    except Exception as exc:
+        return {"market": market, "ticker": ticker, "name": ticker, "error": str(exc)}
+    if df.empty:
+        return {"market": market, "ticker": ticker, "name": ticker, "error": "봉 없음"}
+    last_bar_price = float(df["close"].iloc[-1])
+    is_live = as_of == market_today(market)
+    spot_price = last_bar_price
+    spot_source = "해당일 종가"
+    if is_live:
+        try:
+            live_px, live_src = fetch_spot_price(market, ticker)
+        except Exception:
+            live_px, live_src = None, ""
+        if live_px:
+            spot_price, spot_source = live_px, live_src
+        df = drop_incomplete_session(df, as_of)
+        if df.empty:
+            return {"market": market, "ticker": ticker, "name": ticker, "error": "봉 없음"}
+    try:
+        analysis = analyze(
+            df,
+            as_of=as_of,
+            spot_price=spot_price,
+            price_source=spot_source,
+            live=is_live,
+        )
+        six_month_chg = None
+        try:
+            src_6m = df
+            if lookback_days < 180:
+                src_6m, _ = _cached_ohlcv(market, ticker, as_of.isoformat(), 180, "1d")
+                src_6m = src_6m.copy()
+            six_month_chg = period_return(src_6m, as_of, spot_price, 180)
+        except Exception:
+            six_month_chg = None
+        trend_1m = None
+        if lookback_days >= 90:
+            try:
+                df_1m, _ = _cached_ohlcv(market, ticker, as_of.isoformat(), 30, "1h")
+                df_1m = df_1m.copy()
+                if not df_1m.empty:
+                    if is_live:
+                        df_1m = drop_incomplete_session(df_1m, as_of)
+                    px_1m = spot_price if is_live and spot_price else float(df_1m["close"].iloc[-1])
+                    an_1m = analyze(
+                        df_1m,
+                        as_of=as_of,
+                        spot_price=px_1m,
+                        price_source="1개월 조회",
+                        live=is_live,
+                    )
+                    trend_1m = an_1m.trend
+            except Exception:
+                trend_1m = None
+        signal = _make_signal(analysis, six_month_chg, lookback_days, trend_1m, rule)
+    except Exception as exc:
+        return {
+            "market": market,
+            "ticker": ticker,
+            "name": meta.get("name") or ticker,
+            "error": str(exc),
+        }
+    return {
+        "market": market,
+        "ticker": str(meta.get("ticker") or ticker),
+        "name": str(meta.get("name") or ticker),
+        "action": signal.action,
+        "score_pct": signal.score_pct,
+        "price": analysis.price,
+        "price_label": analysis.price_label,
+        "error": None,
+    }
+
+
+def _render_favorites(as_of, lookback_days: int, timeframe: str, lookback_label: str, rule: dict) -> None:
+    favs = _fav_list()
+    st.subheader("즐겨찾기")
+    st.caption(
+        f"조회 기간 {lookback_label} · 분석일 {as_of} · 저장해 둔 배점·기준으로 계산합니다. "
+        "결과만 모아서 보여 줍니다."
+    )
+    if not favs:
+        st.info("아직 즐겨찾기한 종목이 없습니다. 종목 분석 화면에서 별표로 추가하세요.")
+        return
+    results = []
+    bar = st.progress(0, text="즐겨찾기 계산 중...")
+    for i, item in enumerate(favs, 1):
+        bar.progress(i / len(favs), text=f"{item.get('name') or item.get('ticker')} 계산 중...")
+        row = _quick_signal(
+            item["market"],
+            item["ticker"],
+            as_of,
+            lookback_days,
+            timeframe,
+            rule,
+        )
+        row["name"] = item.get("name") or row.get("name") or item["ticker"]
+        results.append(row)
+    bar.empty()
+    for row in results:
+        cols = st.columns([6, 1])
+        with cols[0]:
+            if row.get("error"):
+                st.markdown(
+                    f"<div class='action-hold'><b>{row['name']}</b> ({row['ticker']}) · "
+                    f"계산 실패: {row['error']}</div>",
+                    unsafe_allow_html=True,
+                )
+            else:
+                cls = ACTION_CLASS.get(row["action"], "action-hold")
+                st.markdown(
+                    f"<div class='{cls}'>"
+                    f"<div style='font-size:0.85rem;opacity:0.8'>{row['name']} ({row['ticker']}) · "
+                    f"{row['price_label']} {_fmt(row['price'])}</div>"
+                    f"<div style='font-size:1.35rem;font-weight:700'>제안: {row['action']} "
+                    f"<span style='font-size:1rem;font-weight:500'>합산 {row['score_pct']}%</span></div>"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+        with cols[1]:
+            st.button(
+                "삭제",
+                key=f"unfav_{row['market']}_{row['ticker']}",
+                on_click=partial(_remove_fav, row["market"], row["ticker"]),
+            )
+
+
 with st.sidebar:
+    page = st.radio("화면", ["종목 분석", "즐겨찾기"], horizontal=True, key="app_page")
     st.header("조회 조건")
     market_label = st.radio("시장", list(MARKETS.keys()), horizontal=False)
     market = MARKETS[market_label]
@@ -213,7 +453,7 @@ with st.sidebar:
 
     _init_rule_widgets()
     with st.expander("평가 배점·기준", expanded=False):
-        st.caption("합산 % 눈금(-5~19점)은 그대로 두고, 항목 점수와 매수/매도 컷만 바꿉니다.")
+        st.caption("합산 % 눈금(-5~19점)은 그대로 두고, 항목 점수와 매수/매도 컷만 바꿉니다. 바꾼 값은 이 브라우저에 저장됩니다.")
         st.markdown("**매수 / 매도 기준**")
         cut_cols = st.columns(2)
         for i, (key, label, suffix) in enumerate(CUT_FIELDS):
@@ -244,7 +484,10 @@ with st.sidebar:
             on_click=_reset_rule_widgets,
         )
     rule = _read_rule_from_sidebar()
-    run = st.button("분석하기", type="primary", use_container_width=True)
+    _persist_prefs(rule)
+    run = False
+    if page == "종목 분석":
+        run = st.button("분석하기", type="primary", use_container_width=True)
 
     st.markdown("---")
     st.markdown(
@@ -262,6 +505,12 @@ with st.sidebar:
     )
 
 
+_emit_prefs_cookie()
+
+if page == "즐겨찾기":
+    _render_favorites(as_of, lookback_days, timeframe, lookback_label, rule)
+    st.stop()
+
 if not run:
     st.info("왼쪽에서 시장·종목·시점을 고른 뒤 **분석하기**를 누르세요.")
     st.markdown(
@@ -270,8 +519,10 @@ if not run:
         1. 한국 주식, 미국 주식, 비트코인·이더리움·솔라나·XRP·온도 등 원하는 종목을 고릅니다.
         2. **과거 특정 날짜**를 시점으로 넣으면 그 날 이후 시세는 보지 않습니다.
         3. 그 시점의 추세선, 지지/저항, 주요 매물대를 그린 뒤 매수·매도·홀딩을 제안합니다.
+        4. 종목을 즐겨찾기에 넣으면 한 화면에서 제안만 모아 볼 수 있습니다.
 
         1개월은 1시간봉, 2·3개월은 4시간봉, 6개월·1년은 일봉으로 계산합니다.
+        평가 배점은 이 브라우저에 저장되어 다음에 들어와도 그대로 쓰입니다.
         """
     )
     st.stop()
@@ -279,17 +530,6 @@ if not run:
 if not ticker:
     st.error("종목을 선택하세요.")
     st.stop()
-
-@st.cache_data(ttl=600, show_spinner=False)
-def _cached_ohlcv(market: str, ticker: str, as_of_iso: str, lookback_days: int, timeframe: str, _ver: str = "1h1m"):
-    return fetch_ohlcv(
-        market,
-        ticker,
-        date.fromisoformat(as_of_iso),
-        lookback_days,
-        timeframe=timeframe,
-    )
-
 
 bar_name = {"1h": "1시간봉", "4h": "4시간봉"}.get(timeframe, "일봉")
 with st.spinner(f"{display_name or ticker} / {as_of} {bar_name} 수집 중..."):
@@ -385,15 +625,7 @@ except Exception as exc:
     st.error(f"분석 실패: {exc}")
     st.stop()
 
-action_class = {
-    "강한 매수": "action-buy-strong",
-    "매수": "action-buy",
-    "약한 매수": "action-buy-weak",
-    "강한 매도": "action-sell-strong",
-    "매도": "action-sell",
-    "약한 매도": "action-sell-weak",
-    "홀딩": "action-hold",
-}.get(signal.action, "action-hold")
+action_class = ACTION_CLASS.get(signal.action, "action-hold")
 six_txt = (
     f" · 6개월 가격 {six_month_chg * 100:+.1f}%"
     if six_month_chg is not None
@@ -412,6 +644,23 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
+
+fav_l, fav_r = st.columns([3, 1])
+with fav_r:
+    if _is_fav(market, ticker):
+        st.button(
+            "즐겨찾기 해제",
+            use_container_width=True,
+            on_click=partial(_remove_fav, market, ticker),
+        )
+    else:
+        st.button(
+            "★ 즐겨찾기 추가",
+            use_container_width=True,
+            on_click=partial(_add_fav, market, ticker, display_name or ticker),
+        )
+if st.session_state.pop("_fav_full", False):
+    st.warning(f"즐겨찾기는 {MAX_FAVORITES}개까지입니다.")
 
 c1, c2, c3, c4, c5, c6 = st.columns(6)
 if is_live and last_bar_price and abs(float(analysis.price) - last_bar_price) > 1e-9:
