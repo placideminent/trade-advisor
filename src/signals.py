@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
-SIGNAL_RULE_VERSION = 42
+SIGNAL_RULE_VERSION = 43
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 10
 # 합산 %는 조회 기간과 상관없이 같은 눈금(이론상 최저~최고)을 쓴다.
@@ -51,7 +51,7 @@ WEIGHT_FIELDS = [
     ("down_line_break", "하락 추세선 이탈", "하락선 위를 4~5봉 지키면 +1, 6봉부터 0"),
     ("up_line_break", "상승 추세선 이탈", "상승선 아래를 4~5봉 지키면 −1, 6봉부터 0"),
     ("trendline_dir_down", "추세선 둘 다 하락", "상승선·하락선이 동시에 하락이면 −2"),
-    ("trendline_dir_up", "추세선 둘 다 상승", "상승선·하락선이 동시에 상승이면 +1"),
+    ("trendline_dir_up", "추세선 둘 다 상승", "둘 다 상승이면서 벌어질 때만 +1, 모이면 0"),
     ("support_near", "지지 근접", "근접하고 강도 1 초과일 때만 +1"),
     ("support_break", "지지 이탈", "지지 아래로 이탈"),
     ("resist_near", "저항 근접", "근접하고 강도 2 이상일 때만 −1"),
@@ -155,6 +155,33 @@ def period_return(df, as_of, price: float, days: int = 180) -> float | None:
     if base <= 0:
         return None
     return float(price) / base - 1.0
+
+
+def _line_slope(line) -> float | None:
+    if line is None:
+        return None
+    x0, y0, x1, y1 = (float(v) for v in line)
+    if x1 == x0:
+        return None
+    return (y1 - y0) / (x1 - x0)
+
+
+def _lines_spreading(up_line, down_line) -> bool | None:
+    """마지막 봉에서 두 선 간격이 앞으로 벌어지면 True, 모이면 False."""
+    su = _line_slope(up_line)
+    sd = _line_slope(down_line)
+    if su is None or sd is None:
+        return None
+    x_end = max(float(up_line[2]), float(down_line[2]))
+    yu = _line_y_at(up_line, x_end)
+    yd = _line_y_at(down_line, x_end)
+    if yu is None or yd is None:
+        return None
+    gap = yd - yu
+    gap_slope = sd - su
+    if abs(gap_slope) < 1e-12:
+        return None
+    return gap * gap_slope > 0
 
 
 def _line_dir(line) -> str | None:
@@ -309,7 +336,13 @@ def recommend(
     elif up_dir == "down" and down_dir == "up":
         add("추세선 방향성", "상승선 하락 · 하락선 상승", 0)
     elif up_dir == "up" and down_dir == "up":
-        add("추세선 방향성", "상승선·하락선 둘 다 상승", wp("trendline_dir_up"))
+        spreading = _lines_spreading(up_line, down_line)
+        if spreading:
+            add("추세선 방향성", "둘 다 상승 · 벌어짐", wp("trendline_dir_up"))
+        elif spreading is False:
+            add("추세선 방향성", "둘 다 상승 · 모임(교차에 가까워짐)", 0)
+        else:
+            add("추세선 방향성", "둘 다 상승 · 평행", 0)
     else:
         add("추세선 방향성", f"상승선 {up_dir} · 하락선 {down_dir}", 0)
 
