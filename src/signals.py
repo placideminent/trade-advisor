@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
-SIGNAL_RULE_VERSION = 43
+SIGNAL_RULE_VERSION = 44
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 10
 # 합산 %는 조회 기간과 상관없이 같은 눈금(이론상 최저~최고)을 쓴다.
@@ -50,8 +50,8 @@ WEIGHT_FIELDS = [
     ("trend", "추세", "가점/감점 크기. 1·2개월은 상승 +, 3개월 이상은 하락 +"),
     ("down_line_break", "하락 추세선 이탈", "하락선 위를 4~5봉 지키면 +1, 6봉부터 0"),
     ("up_line_break", "상승 추세선 이탈", "상승선 아래를 4~5봉 지키면 −1, 6봉부터 0"),
-    ("trendline_dir_down", "추세선 둘 다 하락", "상승선·하락선이 동시에 하락이면 −2"),
-    ("trendline_dir_up", "추세선 둘 다 상승", "둘 다 상승이면서 벌어질 때만 +1, 모이면 0"),
+    ("trendline_dir_down", "추세선 둘 다 하락", "상승선·하락선이 동시에 하락이면 −2. 하락선 이탈 가점이 있으면 0"),
+    ("trendline_dir_up", "추세선 둘 다 상승", "둘 다 상승이면서 벌어질 때만 +1, 모이면 0. 하락선 이탈 가점이 있으면 0"),
     ("support_near", "지지 근접", "근접하고 강도 1 초과일 때만 +1"),
     ("support_break", "지지 이탈", "지지 아래로 이탈"),
     ("resist_near", "저항 근접", "근접하고 강도 2 이상일 때만 −1"),
@@ -287,6 +287,7 @@ def recommend(
 
     up_line = an.up_line
     down_line = an.down_line
+    down_break_pts = 0
     if not down_line:
         add("하락 추세선 이탈", "하락선 없음", 0)
     else:
@@ -296,10 +297,11 @@ def recommend(
         elif above >= 6:
             add("하락 추세선 이탈", f"하락선 위 {above}봉 연속 (6봉 이상 · 가점 종료)", 0)
         elif above >= 4:
+            down_break_pts = wp("down_line_break")
             add(
                 "하락 추세선 이탈",
                 f"하락선 위 {above}봉 연속 (4~5봉)",
-                wp("down_line_break"),
+                down_break_pts,
             )
         elif above > 0:
             add("하락 추세선 이탈", f"하락선 위 {above}봉 연속 (4봉 미만)", 0)
@@ -327,7 +329,9 @@ def recommend(
 
     up_dir = _line_dir(up_line)
     down_dir = _line_dir(down_line)
-    if up_dir is None or down_dir is None:
+    if down_break_pts > 0:
+        add("추세선 방향성", "하락 추세선 이탈 가점이 있어 미적용", 0)
+    elif up_dir is None or down_dir is None:
         add("추세선 방향성", "상승선 또는 하락선 없음", 0)
     elif up_dir == "down" and down_dir == "down":
         add("추세선 방향성", "상승선·하락선 둘 다 하락", wp("trendline_dir_down"))
