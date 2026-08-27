@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
-SIGNAL_RULE_VERSION = 21
+SIGNAL_RULE_VERSION = 22
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 10
 # 합산 %는 조회 기간과 상관없이 같은 눈금(이론상 최저~최고)을 쓴다.
@@ -49,7 +49,7 @@ WEIGHT_FIELDS = [
     ("base", "기본", "중립 시작점"),
     ("trend", "추세", "가점/감점 크기. 1·2개월은 상승 +, 3개월 이상은 하락 +"),
     ("trend_1m", "1개월 추세", "3개월 이상 조회 시. 1개월 조회 추세 상승 +, 하락 −"),
-    ("trendline_cross", "추세선 돌파", "상승 추세선이 하락 추세선 위에 있을 때"),
+    ("trendline_cross", "추세선 돌파", "상승선이 하락선 위이거나, 상승선은 상향·하락선은 하향일 때"),
     ("chg6_10", "6개월 10~30%", "6개월 전 대비 10% 이상 30% 미만"),
     ("chg6_50", "6개월 50%+", "6개월 전 대비 50% 이상 100% 미만"),
     ("chg6_100", "6개월 100%+", "6개월 전 대비 100% 이상"),
@@ -225,16 +225,21 @@ def recommend(
     up_line = an.up_line
     down_line = an.down_line
     if up_line and down_line:
-        y_up = float(up_line[3])
-        y_down = float(down_line[3])
-        if y_up > y_down:
-            add(
-                "추세선 돌파",
-                f"상승선 {_fmt(y_up)} > 하락선 {_fmt(y_down)}",
-                wp("trendline_cross"),
-            )
+        x0u, y0u, x1u, y1u = (float(v) for v in up_line)
+        x0d, y0d, x1d, y1d = (float(v) for v in down_line)
+        slope_up = (y1u - y0u) / (x1u - x0u) if x1u != x0u else 0.0
+        slope_down = (y1d - y0d) / (x1d - x0d) if x1d != x0d else 0.0
+        above = y1u > y1d
+        aligned = slope_up > 0 and slope_down < 0
+        if above or aligned:
+            why = []
+            if above:
+                why.append(f"상승선 {_fmt(y1u)} > 하락선 {_fmt(y1d)}")
+            if aligned:
+                why.append("상승선 상향 · 하락선 하향")
+            add("추세선 돌파", " · ".join(why), wp("trendline_cross"))
         else:
-            add("추세선 돌파", f"상승선 {_fmt(y_up)} ≤ 하락선 {_fmt(y_down)}", 0)
+            add("추세선 돌파", f"상승선 {_fmt(y1u)} ≤ 하락선 {_fmt(y1d)} · 기울기 미충족", 0)
     else:
         add("추세선 돌파", "상승선 또는 하락선 없음", 0)
 
