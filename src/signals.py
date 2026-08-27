@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
-SIGNAL_RULE_VERSION = 14
+SIGNAL_RULE_VERSION = 15
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 10
 # 합산 %는 조회 기간과 상관없이 같은 눈금(이론상 최저~최고)을 쓴다.
@@ -44,7 +44,7 @@ DEFAULT_CUTS = {
 WEIGHT_FIELDS = [
     ("base", "기본", "중립 시작점"),
     ("trend", "추세", "가점/감점 크기. 1·2개월은 상승 +, 3개월 이상은 하락 +"),
-    ("trend_1m", "1개월 추세", "3개월 이상 조회 시. 상승 +, 하락 −"),
+    ("trend_1m", "1개월 신호", "3개월 이상 조회 시. 1개월 조회가 매수/강한 매수면 +, 매도/강한 매도면 −"),
     ("chg6_10", "6개월 상승률", "6개월 전 대비 10% 이상일 때 +1"),
     ("support_near", "지지 근접", "지지 바로 아래/근처"),
     ("support_break", "지지 이탈", "지지 아래로 이탈"),
@@ -154,6 +154,7 @@ def recommend(
     six_month_chg: float | None = None,
     lookback_days: int | None = None,
     trend_1m: str | None = None,
+    action_1m: str | None = None,
     rule: dict | None = None,
 ) -> Signal:
     cfg = merge_rule(rule)
@@ -204,14 +205,14 @@ def recommend(
 
     if lookback_days is not None and lookback_days >= 90:
         t1 = abs(wp("trend_1m"))
-        if trend_1m == "up":
-            add("1개월 추세", "1개월 조회 기준 상승", t1)
-        elif trend_1m == "down":
-            add("1개월 추세", "1개월 조회 기준 하락", -t1)
-        elif trend_1m == "sideways":
-            add("1개월 추세", "1개월 조회 기준 횡보", 0)
+        if action_1m in ("매수", "강한 매수"):
+            add("1개월 신호", f"1개월 조회 {action_1m}", t1)
+        elif action_1m in ("매도", "강한 매도"):
+            add("1개월 신호", f"1개월 조회 {action_1m}", -t1)
+        elif action_1m:
+            add("1개월 신호", f"1개월 조회 {action_1m}", 0)
         else:
-            add("1개월 추세", "1개월 조회 추세를 계산하지 못함", 0)
+            add("1개월 신호", "1개월 조회 신호를 계산하지 못함", 0)
 
     chg6 = six_month_chg
     if chg6 is None:

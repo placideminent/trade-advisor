@@ -31,28 +31,39 @@ from src.signals import (
 )
 
 
-def _make_signal(an, six_month_chg=None, lookback_days=None, trend_1m=None, rule=None):
+def _make_signal(an, six_month_chg=None, lookback_days=None, trend_1m=None, rule=None, action_1m=None):
     try:
         return recommend(
             an,
             six_month_chg=six_month_chg,
             lookback_days=lookback_days,
             trend_1m=trend_1m,
+            action_1m=action_1m,
             rule=rule,
         )
     except TypeError:
         try:
-            return recommend(
-                an,
-                six_month_chg=six_month_chg,
-                lookback_days=lookback_days,
-                trend_1m=trend_1m,
-            )
+            return recommend(an, six_month_chg=six_month_chg, lookback_days=lookback_days, rule=rule)
         except TypeError:
             try:
                 return recommend(an, six_month_chg=six_month_chg)
             except TypeError:
                 return recommend(an)
+
+
+def _one_month_action(an_1m, six_month_chg, rule) -> str | None:
+    """같은 시점 1개월 조회의 매수/매도/홀딩."""
+    try:
+        sig = recommend(an_1m, six_month_chg=six_month_chg, lookback_days=30, rule=rule)
+        return sig.action
+    except TypeError:
+        try:
+            sig = recommend(an_1m, six_month_chg=six_month_chg, lookback_days=30)
+            return sig.action
+        except Exception:
+            return None
+    except Exception:
+        return None
 
 
 def _init_rule_widgets() -> None:
@@ -275,7 +286,7 @@ def _quick_signal(market: str, ticker: str, as_of, lookback_days: int, timeframe
             six_month_chg = period_return(src_6m, as_of, spot_price, 180)
         except Exception:
             six_month_chg = None
-        trend_1m = None
+        action_1m = None
         if lookback_days >= 90:
             try:
                 df_1m, _ = _cached_ohlcv(market, ticker, as_of.isoformat(), 30, "1h")
@@ -291,10 +302,12 @@ def _quick_signal(market: str, ticker: str, as_of, lookback_days: int, timeframe
                         price_source="1개월 조회",
                         live=is_live,
                     )
-                    trend_1m = an_1m.trend
+                    action_1m = _one_month_action(an_1m, six_month_chg, rule)
             except Exception:
-                trend_1m = None
-        signal = _make_signal(analysis, six_month_chg, lookback_days, trend_1m, rule)
+                action_1m = None
+        signal = _make_signal(
+            analysis, six_month_chg, lookback_days, None, rule, action_1m
+        )
     except Exception as exc:
         return {
             "market": market,
@@ -485,7 +498,7 @@ with st.sidebar:
 - **1개월 → 1시간봉**, **2·3개월 → 4시간봉**, **6개월·1년 → 일봉**
 - 6개월 전 대비 10% 이상이면 배점 1회만 가점
 - 1·2개월 추세: 상승 +, 하락 −. 3개월 이상은 하락 +, 상승 −
-- 3개월·6개월·1년: 같은 시점 1개월 조회 추세 항목
+- 3개월·6개월·1년: 같은 시점 1개월 조회 신호가 매수/강한 매수면 +1, 매도/강한 매도면 −1
 - 추세선: 최근 스윙 고점/저점 연결
 - 지지·저항: 스윙 군집 + 매물대
 - 매수/매도 기준과 항목 배점은 **평가 배점·기준**에서 바꿉니다
@@ -583,7 +596,7 @@ try:
         six_month_chg = period_return(src_6m, as_of, spot_price, 180)
     except Exception:
         six_month_chg = None
-    trend_1m = None
+    action_1m = None
     if lookback_days >= 90:
         try:
             df_1m, _meta_1m = _cached_ohlcv(
@@ -603,10 +616,12 @@ try:
                     price_source="1개월 조회",
                     live=is_live,
                 )
-                trend_1m = an_1m.trend
+                action_1m = _one_month_action(an_1m, six_month_chg, rule)
         except Exception:
-            trend_1m = None
-    signal = _make_signal(analysis, six_month_chg, lookback_days, trend_1m, rule)
+            action_1m = None
+    signal = _make_signal(
+        analysis, six_month_chg, lookback_days, None, rule, action_1m
+    )
 except Exception as exc:
     st.error(f"분석 실패: {exc}")
     st.stop()
