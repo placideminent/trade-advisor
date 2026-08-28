@@ -870,6 +870,52 @@ c6.metric(
     f"{signal.reward_risk:.2f}" if signal.reward_risk is not None else "-",
 )
 
+st.subheader("점수 내역")
+if signal.score_rows:
+    st.dataframe(pd.DataFrame(signal.score_rows), hide_index=True, use_container_width=True)
+st.caption(f"VAL {_fmt(analysis.val)} · VAH {_fmt(analysis.vah)} · POC {_fmt(analysis.poc)}")
+
+left, right = st.columns([1.15, 0.85])
+with left:
+    st.subheader("근거")
+    for reason in signal.reasons:
+        st.write(f"- {reason}")
+    if signal.stop:
+        st.write(f"- 무효화(손절 참고): **{_fmt(signal.stop)}**")
+    if signal.target:
+        st.write(f"- 1차 목표(다음 저항): **{_fmt(signal.target)}**")
+
+with right:
+    st.subheader("주요 가격대")
+    rows = []
+    for lv in analysis.supports:
+        rows.append({"구분": "지지", "가격": _fmt(lv.price), "근거": lv.note, "강도": round(lv.strength, 2)})
+    for lv in analysis.resistances:
+        rows.append({"구분": "저항", "가격": _fmt(lv.price), "근거": lv.note, "강도": round(lv.strength, 2)})
+    for lv in analysis.volume_nodes:
+        rows.append(
+            {"구분": "매물대", "가격": _fmt(lv.price), "근거": lv.note, "강도": round(lv.strength, 2)}
+        )
+    st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+
+last_txt = (
+    analysis.last_bar.strftime("%Y-%m-%d %H:%M")
+    if timeframe in ("1h", "4h")
+    else str(analysis.last_bar.date())
+)
+title = f"{meta.get('name', ticker)} ({meta.get('ticker', ticker)})  ·  {bar_name}  ·  {analysis.price_label} {_fmt(analysis.price)}"
+st.plotly_chart(build_chart(analysis, signal, title), use_container_width=True)
+
+st.caption(
+    f"데이터: {meta.get('source')} · {bar_name} · "
+    f"{df.index[0]} ~ {df.index[-1]} ({len(df)}봉) · "
+    f"제안 기준: {analysis.price_label} {_fmt(analysis.price)}"
+    + (f" ({analysis.price_source})" if analysis.price_source else "")
+    + (f" · 봉 종가 {_fmt(analysis.bar_close)}" if analysis.bar_close else "")
+    + " · 지정일 이후 시세는 포함하지 않습니다. "
+    "매물대는 각 봉의 고가~저가에 거래량을 나눠 쌓은 근사치입니다."
+)
+
 st.subheader("펀더멘털")
 try:
     fund = fetch_fundamentals(market, ticker, signal.action)
@@ -920,49 +966,3 @@ if fund is not None:
             f"출처: {fund.source}. 최근 공시·컨센서스 기준이며 지정일 과거 재무를 재구성하지 않습니다. "
             "기술적 점수에는 넣지 않고 경고만 표시합니다."
         )
-
-st.subheader("점수 내역")
-if signal.score_rows:
-    st.dataframe(pd.DataFrame(signal.score_rows), hide_index=True, use_container_width=True)
-st.caption(f"VAL {_fmt(analysis.val)} · VAH {_fmt(analysis.vah)} · POC {_fmt(analysis.poc)}")
-
-left, right = st.columns([1.15, 0.85])
-with left:
-    st.subheader("근거")
-    for reason in signal.reasons:
-        st.write(f"- {reason}")
-    if signal.stop:
-        st.write(f"- 무효화(손절 참고): **{_fmt(signal.stop)}**")
-    if signal.target:
-        st.write(f"- 1차 목표(다음 저항): **{_fmt(signal.target)}**")
-
-with right:
-    st.subheader("주요 가격대")
-    rows = []
-    for lv in analysis.supports:
-        rows.append({"구분": "지지", "가격": _fmt(lv.price), "근거": lv.note, "강도": round(lv.strength, 2)})
-    for lv in analysis.resistances:
-        rows.append({"구분": "저항", "가격": _fmt(lv.price), "근거": lv.note, "강도": round(lv.strength, 2)})
-    for lv in analysis.volume_nodes:
-        rows.append(
-            {"구분": "매물대", "가격": _fmt(lv.price), "근거": lv.note, "강도": round(lv.strength, 2)}
-        )
-    st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
-
-last_txt = (
-    analysis.last_bar.strftime("%Y-%m-%d %H:%M")
-    if timeframe in ("1h", "4h")
-    else str(analysis.last_bar.date())
-)
-title = f"{meta.get('name', ticker)} ({meta.get('ticker', ticker)})  ·  {bar_name}  ·  {analysis.price_label} {_fmt(analysis.price)}"
-st.plotly_chart(build_chart(analysis, signal, title), use_container_width=True)
-
-st.caption(
-    f"데이터: {meta.get('source')} · {bar_name} · "
-    f"{df.index[0]} ~ {df.index[-1]} ({len(df)}봉) · "
-    f"제안 기준: {analysis.price_label} {_fmt(analysis.price)}"
-    + (f" ({analysis.price_source})" if analysis.price_source else "")
-    + (f" · 봉 종가 {_fmt(analysis.bar_close)}" if analysis.bar_close else "")
-    + " · 지정일 이후 시세는 포함하지 않습니다. "
-    "매물대는 각 봉의 고가~저가에 거래량을 나눠 쌓은 근사치입니다."
-)
