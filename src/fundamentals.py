@@ -99,6 +99,9 @@ class Fundamentals:
     quarters: list[dict] = field(default_factory=list)
     op_down_streak: int = 0
     warnings: list[str] = field(default_factory=list)
+    value_label: str = "판단 보류"
+    value_reasons: list[str] = field(default_factory=list)
+    per_vs_industry: float | None = None
     error: str | None = None
 
     @property
@@ -474,6 +477,115 @@ def _yahoo_fundamentals(symbol: str) -> Fundamentals:
     return out
 
 
+VALUE_STEPS = ("싼 편", "다소 싼 편", "보통", "다소 비싼 편", "비싼 편")
+
+
+def _shift_value(label: str, delta: int) -> str:
+    if label not in VALUE_STEPS:
+        return label
+    idx = max(0, min(len(VALUE_STEPS) - 1, VALUE_STEPS.index(label) + delta))
+    return VALUE_STEPS[idx]
+
+
+def _judge_value(fund: Fundamentals) -> tuple[str, list[str], float | None]:
+    """업종 대비 PER을 기준으로 가격이 싼지/비싼지. 기술적 점수와는 별개."""
+    reasons: list[str] = []
+    ratio = None
+    per_ok = fund.per is not None and fund.per > 0
+    ind_ok = fund.industry_per is not None and fund.industry_per > 0
+
+    if per_ok and ind_ok:
+        ratio = fund.per / fund.industry_per
+        if ratio < 0.70:
+            label = "싼 편"
+        elif ratio < 1.00:
+            label = "다소 싼 편"
+        elif ratio < 1.30:
+            label = "보통"
+        elif ratio < 1.50:
+            label = "다소 비싼 편"
+        else:
+            label = "비싼 편"
+        reasons.append(
+            f"실적 PER {fund.per:.2f}배 / 업종 {fund.industry_per:.2f}배 = {ratio:.2f}배 → {label}"
+        )
+    elif fund.per is not None and fund.per < 0:
+        if fund.pbr is not None and fund.pbr > 0:
+            if fund.pbr < 1:
+                label = "싼 편"
+                reasons.append(f"적자라 PER 대신 PBR {fund.pbr:.2f}배(1배 미만)로 보면 싼 편")
+            elif fund.pbr >= 3:
+                label = "비싼 편"
+                reasons.append(f"적자라 PER 대신 PBR {fund.pbr:.2f}배(3배 이상)로 보면 비싼 편")
+            else:
+                return "판단 보류", [f"적자라 PER을 쓰기 어렵고, PBR {fund.pbr:.2f}배로는 단정하기 어렵습니다."], None
+        else:
+            return "판단 보류", ["적자라 실적 PER로 가격을 판단하기 어렵습니다."], None
+    elif fund.pbr is not None and fund.pbr > 0 and not ind_ok:
+        if fund.pbr < 1:
+            label = "싼 편"
+            reasons.append(f"업종 PER이 없어 PBR {fund.pbr:.2f}배(1배 미만)로 보면 싼 편")
+        elif fund.pbr >= 3:
+            label = "비싼 편"
+            reasons.append(f"업종 PER이 없어 PBR {fund.pbr:.2f}배(3배 이상)로 보면 비싼 편")
+        else:
+            return "판단 보류", [f"업종 PER이 없고 PBR {fund.pbr:.2f}배로는 단정하기 어렵습니다."], None
+    else:
+        return "판단 보류", ["실적 PER 또는 업종 PER이 없어 상대 평가를 하지 못했습니다."], None
+
+    if per_ok and fund.forward_per is not None:
+        fwd_vs = fund.forward_per / fund.per
+        if fwd_vs <= 0.80:
+            nxt = _shift_value(label, -1)
+            if nxt != label:
+                reasons.append(
+                    f"추정 PER {fund.forward_per:.2f}배가 실적보다 {(1 - fwd_vs) * 100:.0f}% 낮음 → {label}에서 {nxt}"
+                )
+            else:
+                reasons.append(
+                    f"추정 PER {fund.forward_per:.2f}배가 실적보다 {(1 - fwd_vs) * 100:.0f}% 낮아 이익 증가가 반영된 상태입니다."
+                )
+            label = nxt
+        elif fwd_vs >= 1.20:
+            nxt = _shift_value(label, 1)
+            if nxt != label:
+                reasons.append(
+                    f"추정 PER {fund.forward_per:.2f}배가 실적보다 {(fwd_vs - 1) * 100:.0f}% 높음 → {label}에서 {nxt}"
+                )
+            else:
+                reasons.append(
+                    f"추정 PER {fund.forward_per:.2f}배가 실적보다 {(fwd_vs - 1) * 100:.0f}% 높아 이익 감소가 반영된 상태입니다."
+                )
+            label = nxt
+        else:
+            reasons.append(
+                f"추정 PER {fund.forward_per:.2f}배는 실적 PER과 크게 다르지 않습니다."
+            )
+
+    if fund.op_yoy is not None and fund.op_yoy >= 10 and label in ("다소 비싼 편", "비싼 편"):
+        nxt = _shift_value(label, -1)
+        if nxt != label:
+            reasons.append(
+                f"영업이익률이 전년 동기 대비 {fund.op_yoy:+.1f}%p → 성장 반영으로 {label}에서 {nxt}"
+            )
+        label = nxt
+    if int(fund.op_down_streak or 0) >= 2 and label in ("싼 편", "다소 싼 편"):
+        nxt = _shift_value(label, 1)
+        if nxt != label:
+            reasons.append(
+                f"영업이익이 전년 동기 대비 {fund.op_down_streak}개 분기 연속 감소 → {label}에서 {nxt}"
+            )
+        label = nxt
+
+    if fund.pbr is not None and fund.pbr > 0 and per_ok and ind_ok:
+        if fund.pbr < 1:
+            reasons.append(f"PBR {fund.pbr:.2f}배는 1배 미만(자산 대비 참고).")
+        elif fund.pbr >= 3:
+            reasons.append(f"PBR {fund.pbr:.2f}배는 3배 이상(자산 대비 참고).")
+
+    return label, reasons, ratio
+
+
 def _build_warnings(fund: Fundamentals, action: str | None) -> list[str]:
     notes: list[str] = []
     buy = action in BUY_ACTIONS
@@ -580,11 +692,13 @@ def fetch_fundamentals(market: str, ticker: str, action: str | None = None) -> F
                 if key in Fundamentals.__dataclass_fields__ and key != "warnings":
                     setattr(fund, key, val)
             fund.warnings = _build_warnings(fund, action)
+            fund.value_label, fund.value_reasons, fund.per_vs_industry = _judge_value(fund)
             fund.source = (fund.source or "") + " (캐시)"
             return fund
         return Fundamentals(market=market, ticker=ticker, error=f"펀더 데이터를 받지 못했습니다: {exc}")
 
     fund.warnings = _build_warnings(fund, action)
+    fund.value_label, fund.value_reasons, fund.per_vs_industry = _judge_value(fund)
     try:
         payload = {
             "market": fund.market,

@@ -926,6 +926,12 @@ if fund is not None:
     if fund.error:
         st.info(fund.error)
     else:
+        verdict = fund.value_label or "판단 보류"
+        st.markdown(f"**가격 판정: {verdict}**")
+        if fund.per_vs_industry is not None:
+            st.caption(f"업종 대비 실적 PER {fund.per_vs_industry:.2f}배 · 기술적 점수와는 별개입니다.")
+        for why in fund.value_reasons:
+            st.write(f"- {why}")
         for note in fund.warnings:
             st.warning(note)
         f1, f2, f3, f4 = st.columns(4)
