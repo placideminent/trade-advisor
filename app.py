@@ -508,38 +508,35 @@ def _render_favorites(as_of, lookback_days: int, timeframe: str, lookback_label:
         row["name"] = item.get("name") or row.get("name") or item["ticker"]
         results.append(row)
     bar.empty()
-    table_rows = []
     for row in results:
-        if row.get("error"):
-            table_rows.append(
-                {
-                    "종목": row.get("name") or row.get("ticker"),
-                    "코드": row.get("ticker"),
-                    "제안": "실패",
-                    "가격판정": "-",
-                    "합산%": "-",
-                    "현재가": row.get("error"),
-                }
-            )
-        else:
-            table_rows.append(
-                {
-                    "종목": row.get("name") or row.get("ticker"),
-                    "코드": row.get("ticker"),
-                    "제안": row.get("action"),
-                    "가격판정": row.get("value_label") or "-",
-                    "합산%": row.get("score_pct"),
-                    "현재가": _fmt(row["price"]) if row.get("price") else "-",
-                }
-            )
-    _show_table(pd.DataFrame(table_rows))
-    with st.expander("즐겨찾기 삭제"):
-        for row in results:
+        cols = st.columns([6, 1])
+        with cols[0]:
+            if row.get("error"):
+                st.markdown(
+                    f"<div class='action-hold'><b>{row.get('name') or row.get('ticker')}</b>"
+                    f" ({row.get('ticker')}) · 계산 실패: {row['error']}</div>",
+                    unsafe_allow_html=True,
+                )
+            else:
+                cls = ACTION_CLASS.get(row.get("action"), "action-hold")
+                value_side = f" · 가격 {row['value_label']}" if row.get("value_label") else ""
+                st.markdown(
+                    f"<div class='{cls}'>"
+                    f"<div style='font-size:0.85rem;opacity:0.8'>"
+                    f"{row.get('name') or row.get('ticker')} ({row.get('ticker')}) · "
+                    f"{row.get('price_label') or ''} {_fmt(row['price']) if row.get('price') else '-'}"
+                    f"</div>"
+                    f"<div style='font-size:1.35rem;font-weight:700'>제안: {row.get('action')}"
+                    f"{value_side} "
+                    f"<span style='font-size:1rem;font-weight:500'>합산 {row.get('score_pct')}%</span>"
+                    f"</div></div>",
+                    unsafe_allow_html=True,
+                )
+        with cols[1]:
             st.button(
-                f"{row.get('name') or row.get('ticker')} 삭제",
+                "삭제",
                 key=f"unfav_{row['market']}_{row['ticker']}",
                 on_click=partial(_remove_fav, row["market"], row["ticker"]),
-                use_container_width=True,
             )
 
 
