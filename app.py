@@ -235,7 +235,12 @@ st.markdown(
       .action-sell { background:#fee2e2; color:#7f1d1d; padding:0.75rem 0.9rem; border-radius:10px; }
       .action-sell-weak { background:#fecaca; color:#9f1239; padding:0.75rem 0.9rem; border-radius:10px; }
       .action-hold { background:#fef9c3; color:#713f12; padding:0.75rem 0.9rem; border-radius:10px; }
-      [data-testid="stDataFrame"] { overflow-x: auto; }
+      .ta-table { width:100%; border-collapse:collapse; font-size:0.92rem; table-layout:auto; }
+      .ta-table th, .ta-table td {
+        border-bottom:1px solid #e5e7eb; padding:0.5rem 0.4rem;
+        text-align:left; vertical-align:top; word-break:break-word;
+      }
+      .ta-table th { background:#f8fafc; font-weight:600; }
       @media (max-width: 640px) {
         .block-container { padding-left: 0.55rem; padding-right: 0.55rem; }
         h1 { font-size: 1.35rem !important; }
@@ -262,12 +267,15 @@ def _preset_label(code: str, name: str) -> str:
     return f"{name} ({code})"
 
 
+def _show_table(df: pd.DataFrame) -> None:
+    if df is None or getattr(df, "empty", True):
+        return
+    html = df.to_html(index=False, escape=True, classes="ta-table", border=0)
+    st.markdown(html, unsafe_allow_html=True)
+
+
 def _kv_table(pairs: list[tuple[str, str]]) -> None:
-    st.dataframe(
-        pd.DataFrame(pairs, columns=["항목", "값"]),
-        hide_index=True,
-        use_container_width=True,
-    )
+    _show_table(pd.DataFrame(pairs, columns=["항목", "값"]))
 
 
 def _transpose_records(rows: list[dict], index_key: str = "기간") -> pd.DataFrame:
@@ -418,7 +426,7 @@ def _render_favorites(as_of, lookback_days: int, timeframe: str, lookback_label:
                     "현재가": _fmt(row["price"]) if row.get("price") else "-",
                 }
             )
-    st.dataframe(pd.DataFrame(table_rows), hide_index=True, use_container_width=True)
+    _show_table(pd.DataFrame(table_rows))
     with st.expander("즐겨찾기 삭제"):
         for row in results:
             st.button(
@@ -538,14 +546,14 @@ def _render_simulation(
 
     st.subheader(f"매수 신호 ({len(buys)})")
     if buys:
-        st.dataframe(_trade_table(buys), hide_index=True, use_container_width=True)
+        _show_table(_trade_table(buys))
         st.caption(" · ".join(t["날짜"] for t in buys))
     else:
         st.info("매수 신호가 없습니다.")
 
     st.subheader(f"매도 신호 ({len(sells)})")
     if sells:
-        st.dataframe(_trade_table(sells), hide_index=True, use_container_width=True)
+        _show_table(_trade_table(sells))
         filled = [t for t in sells if t.get("체결") == "매도"]
         skipped = [t for t in sells if t.get("체결") == "잔량0"]
         if filled:
@@ -933,7 +941,7 @@ if st.session_state.pop("_fav_full", False):
 
 st.subheader("점수 내역")
 if signal.score_rows:
-    st.dataframe(pd.DataFrame(signal.score_rows), hide_index=True, use_container_width=True)
+    _show_table(pd.DataFrame(signal.score_rows))
 
 st.subheader("주요 가격대")
 rows = []
@@ -945,7 +953,7 @@ for lv in analysis.volume_nodes:
     rows.append(
         {"구분": "매물대", "가격": _fmt(lv.price), "근거": lv.note, "강도": round(lv.strength, 2)}
     )
-st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+_show_table(pd.DataFrame(rows))
 
 last_txt = (
     analysis.last_bar.strftime("%Y-%m-%d %H:%M")
@@ -981,11 +989,7 @@ if fund is not None:
         if fund.per_vs_industry is not None:
             st.caption(f"업종 대비 실적 PER {fund.per_vs_industry:.2f}배 · 기술적 점수와는 별개입니다.")
         if fund.value_reasons:
-            st.dataframe(
-                pd.DataFrame({"판정 근거": fund.value_reasons}),
-                hide_index=True,
-                use_container_width=True,
-            )
+            _show_table(pd.DataFrame({"판정 근거": fund.value_reasons}))
         for note in fund.warnings:
             st.warning(note)
         gap_label = f"{fund.per_gap:+.2f}배" if fund.per_gap is not None else "-"
@@ -1020,11 +1024,7 @@ if fund is not None:
         if fund.summary:
             st.write(fund.summary)
         if fund.quarters:
-            st.dataframe(
-                _transpose_records(fund.quarters),
-                hide_index=True,
-                use_container_width=True,
-            )
+            _show_table(_transpose_records(fund.quarters))
         st.caption(
             f"출처: {fund.source}. 최근 공시·컨센서스 기준이며 지정일 과거 재무를 재구성하지 않습니다. "
             "기술적 점수에는 넣지 않고 경고만 표시합니다."
