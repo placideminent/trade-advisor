@@ -87,6 +87,10 @@ class Fundamentals:
     industry_per: float | None = None
     industry_name: str = ""
     summary: str = ""
+    sales_margin: float | None = None
+    sales_profit_yoy: float | None = None
+    op_margin: float | None = None
+    op_yoy: float | None = None
     quarters: list[dict] = field(default_factory=list)
     op_down_streak: int = 0
     warnings: list[str] = field(default_factory=list)
@@ -105,29 +109,109 @@ class Fundamentals:
         return (self.forward_per / self.per - 1.0) * 100.0
 
 
+def _yoy_key(key: str) -> str | None:
+    if len(key) < 6 or not key[:4].isdigit():
+        return None
+    return f"{int(key[:4]) - 1}{key[4:]}"
+
+
+def _yoy_pct(cur: float | None, prev: float | None) -> float | None:
+    if cur is None or prev is None or abs(prev) < 1e-12:
+        return None
+    return (cur / prev - 1.0) * 100.0
+
+
+def _col_num(rows_by_title: dict, title: str, key: str) -> float | None:
+    cell = (rows_by_title.get(title) or {}).get(key) or {}
+    if not isinstance(cell, dict):
+        return None
+    return _parse_num(cell.get("value"))
+
+
+def _col_text(rows_by_title: dict, title: str, key: str) -> str | None:
+    cell = (rows_by_title.get(title) or {}).get(key) or {}
+    if not isinstance(cell, dict):
+        return None
+    val = cell.get("value")
+    return None if val is None else str(val)
+
+
+def _fmt_yoy(val: float | None) -> str | None:
+    if val is None:
+        return None
+    return f"{val:+.1f}%"
+
+
 def _finance_table(payload: dict, limit: int = 4) -> list[dict]:
     info = payload.get("financeInfo") or {}
     titles = info.get("trTitleList") or []
     actual = [t for t in titles if isinstance(t, dict) and str(t.get("isConsensus") or "N") != "Y"]
     actual.sort(key=lambda t: str(t.get("key") or ""))
-    actual = actual[-limit:]
     if not actual:
         return []
-    wanted = ("매출액", "영업이익", "당기순이익", "영업이익률", "ROE", "부채비율")
+    show = actual[-limit:]
     rows_by_title = {
         str(r.get("title") or ""): r.get("columns") or {}
         for r in (info.get("rowList") or [])
         if isinstance(r, dict)
     }
     out = []
-    for col in actual:
+    for col in show:
         key = str(col.get("key") or "")
-        item = {"기간": str(col.get("title") or key).rstrip(".")}
-        for name in wanted:
-            cell = (rows_by_title.get(name) or {}).get(key) or {}
-            item[name] = cell.get("value") if isinstance(cell, dict) else None
+        prev = _yoy_key(key)
+        sales = _col_num(rows_by_title, "매출액", key)
+        op = _col_num(rows_by_title, "영업이익", key)
+        ni = _col_num(rows_by_title, "당기순이익", key)
+        opm = _col_num(rows_by_title, "영업이익률", key)
+        npm = _col_num(rows_by_title, "순이익률", key)
+        if npm is None and sales and abs(sales) > 1e-12 and ni is not None:
+            npm = ni / sales * 100.0
+        prev_op = _col_num(rows_by_title, "영업이익", prev) if prev else None
+        prev_ni = _col_num(rows_by_title, "당기순이익", prev) if prev else None
+        item = {
+            "기간": str(col.get("title") or key).rstrip("."),
+            "매출액": _col_text(rows_by_title, "매출액", key),
+            "영업이익": _col_text(rows_by_title, "영업이익", key),
+            "당기순이익": _col_text(rows_by_title, "당기순이익", key),
+            "매출이익률": f"{npm:.2f}" if npm is not None else None,
+            "매출이익증가율": _fmt_yoy(_yoy_pct(ni, prev_ni)),
+            "영업이익률": f"{opm:.2f}" if opm is not None else None,
+            "영업이익증가율": _fmt_yoy(_yoy_pct(op, prev_op)),
+            "ROE": _col_text(rows_by_title, "ROE", key),
+            "부채비율": _col_text(rows_by_title, "부채비율", key),
+        }
         out.append(item)
     return out
+
+
+def _latest_margins(payload: dict) -> tuple[float | None, float | None, float | None, float | None]:
+    """최근 실제 분기 매출이익률, 매출이익증가율, 영업이익률, 영업이익증가율."""
+    info = payload.get("financeInfo") or {}
+    titles = [
+        t
+        for t in (info.get("trTitleList") or [])
+        if isinstance(t, dict) and str(t.get("isConsensus") or "N") != "Y"
+    ]
+    titles.sort(key=lambda t: str(t.get("key") or ""))
+    if not titles:
+        return None, None, None, None
+    rows_by_title = {
+        str(r.get("title") or ""): r.get("columns") or {}
+        for r in (info.get("rowList") or [])
+        if isinstance(r, dict)
+    }
+    key = str(titles[-1].get("key") or "")
+    prev = _yoy_key(key)
+    sales = _col_num(rows_by_title, "매출액", key)
+    op = _col_num(rows_by_title, "영업이익", key)
+    ni = _col_num(rows_by_title, "당기순이익", key)
+    opm = _col_num(rows_by_title, "영업이익률", key)
+    npm = _col_num(rows_by_title, "순이익률", key)
+    if npm is None and sales and abs(sales) > 1e-12 and ni is not None:
+        npm = ni / sales * 100.0
+    prev_op = _col_num(rows_by_title, "영업이익", prev) if prev else None
+    prev_ni = _col_num(rows_by_title, "당기순이익", prev) if prev else None
+    return npm, _yoy_pct(ni, prev_ni), opm, _yoy_pct(op, prev_op)
 
 
 def _yoy_op_down_streak(payload: dict) -> int:
@@ -232,6 +316,7 @@ def _kr_fundamentals(code: str, name: str = "") -> Fundamentals:
         bits = [str(comments.get(k) or "").strip() for k in ("comment1", "comment2", "comment3")]
         out.summary = " ".join(b for b in bits if b)
     out.quarters = _finance_table(qjs)
+    out.sales_margin, out.sales_profit_yoy, out.op_margin, out.op_yoy = _latest_margins(qjs)
     out.op_down_streak = _yoy_op_down_streak(qjs)
     return out
 
@@ -258,6 +343,19 @@ def _yahoo_fundamentals(symbol: str) -> Fundamentals:
     out.high_52w = str(info.get("fiftyTwoWeekHigh") or "")
     out.low_52w = str(info.get("fiftyTwoWeekLow") or "")
     out.industry_name = str(info.get("industry") or info.get("sector") or "")
+
+    def _ratio_pct(raw) -> float | None:
+        n = _parse_num(raw)
+        if n is None:
+            return None
+        if abs(n) <= 1.5:
+            return n * 100.0
+        return n
+
+    out.sales_margin = _ratio_pct(info.get("profitMargins"))
+    out.sales_profit_yoy = _ratio_pct(info.get("earningsQuarterlyGrowth") or info.get("earningsGrowth"))
+    out.op_margin = _ratio_pct(info.get("operatingMargins"))
+    out.op_yoy = _ratio_pct(info.get("earningsGrowth"))
     return out
 
 
@@ -338,7 +436,7 @@ def fetch_fundamentals(market: str, ticker: str, action: str | None = None) -> F
     if not ticker:
         return Fundamentals(market=market, ticker=ticker, error="종목 코드가 없습니다.")
 
-    cache = CACHE_DIR / f"fund_{market}_{ticker}_{date.today().isoformat()}.json"
+    cache = CACHE_DIR / f"fund2_{market}_{ticker}_{date.today().isoformat()}.json"
     cached = None
     if cache.exists():
         try:
@@ -388,6 +486,10 @@ def fetch_fundamentals(market: str, ticker: str, action: str | None = None) -> F
             "industry_per": fund.industry_per,
             "industry_name": fund.industry_name,
             "summary": fund.summary,
+            "sales_margin": fund.sales_margin,
+            "sales_profit_yoy": fund.sales_profit_yoy,
+            "op_margin": fund.op_margin,
+            "op_yoy": fund.op_yoy,
             "quarters": fund.quarters,
             "op_down_streak": fund.op_down_streak,
         }
