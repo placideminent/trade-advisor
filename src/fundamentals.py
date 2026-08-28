@@ -66,7 +66,7 @@ def _info_text(infos: dict, code: str) -> str:
 
 def _info_desc(infos: dict, code: str) -> str:
     row = infos.get(code) or {}
-    return str(row.get("valueDesc") or "")
+    return str(row.get("valueDesc") or row.get("keyDesc") or "")
 
 
 @dataclass
@@ -117,10 +117,42 @@ class Fundamentals:
         return (self.forward_per / self.per - 1.0) * 100.0
 
 
-def _yoy_key(key: str) -> str | None:
-    if len(key) < 6 or not key[:4].isdigit():
+def _norm_period(key: str) -> str:
+    digits = "".join(c for c in str(key) if c.isdigit())
+    return digits[:6] if len(digits) >= 6 else str(key)
+
+
+def _yoy_key(key: str, all_keys: list | None = None) -> str | None:
+    key = str(key or "")
+    keys = [str(k) for k in (all_keys or [])]
+    if len(key) >= 7 and key[4] == "." and key[:4].isdigit():
+        prefix = f"{int(key[:4]) - 1}{key[4:7]}"
+        for k in keys:
+            if k.startswith(prefix):
+                return k
         return None
-    return f"{int(key[:4]) - 1}{key[4:]}"
+    n = _norm_period(key)
+    if len(n) == 6 and n.isdigit():
+        prevn = f"{int(n[:4]) - 1}{n[4:]}"
+        for k in keys:
+            if _norm_period(k) == prevn:
+                return k
+        return prevn
+    return None
+
+
+def _gmap_get(gmap: dict | None, key: str) -> dict | None:
+    if not gmap:
+        return None
+    if key in gmap:
+        return gmap[key]
+    n = _norm_period(key)
+    if n in gmap:
+        return gmap[n]
+    for k, v in gmap.items():
+        if _norm_period(k) == n:
+            return v
+    return None
 
 
 def _yoy_pct(cur: float | None, prev: float | None) -> float | None:
@@ -136,19 +168,34 @@ def _pp_chg(cur: float | None, prev: float | None) -> float | None:
     return cur - prev
 
 
+_ROW_ALIASES = {
+    "영업이익": ("영업이익", "EBIT"),
+    "당기순이익": ("당기순이익",),
+    "매출액": ("매출액",),
+    "영업이익률": ("영업이익률",),
+    "ROE": ("ROE",),
+    "부채비율": ("부채비율",),
+}
+
+
 def _col_num(rows_by_title: dict, title: str, key: str) -> float | None:
-    cell = (rows_by_title.get(title) or {}).get(key) or {}
-    if not isinstance(cell, dict):
+    if not key:
         return None
-    return _parse_num(cell.get("value"))
+    for name in _ROW_ALIASES.get(title, (title,)):
+        cell = (rows_by_title.get(name) or {}).get(key) or {}
+        if isinstance(cell, dict) and cell.get("value") is not None:
+            return _parse_num(cell.get("value"))
+    return None
 
 
 def _col_text(rows_by_title: dict, title: str, key: str) -> str | None:
-    cell = (rows_by_title.get(title) or {}).get(key) or {}
-    if not isinstance(cell, dict):
+    if not key:
         return None
-    val = cell.get("value")
-    return None if val is None else str(val)
+    for name in _ROW_ALIASES.get(title, (title,)):
+        cell = (rows_by_title.get(name) or {}).get(key) or {}
+        if isinstance(cell, dict) and cell.get("value") is not None:
+            return str(cell.get("value"))
+    return None
 
 
 def _fmt_yoy(val: float | None) -> str | None:
@@ -227,9 +274,10 @@ def _finance_table(payload: dict, gross_map: dict | None = None, limit: int = 4)
     }
     gross_map = gross_map or {}
     out = []
+    all_keys = [str(t.get("key") or "") for t in actual]
     for col in show:
         key = str(col.get("key") or "")
-        prev = _yoy_key(key)
+        prev = _yoy_key(key, all_keys)
         opm = _col_num(rows_by_title, "영업이익률", key)
         prev_opm = _col_num(rows_by_title, "영업이익률", prev) if prev else None
         if opm is None:
@@ -242,8 +290,8 @@ def _finance_table(payload: dict, gross_map: dict | None = None, limit: int = 4)
             po = _col_num(rows_by_title, "영업이익", prev)
             if ps and abs(ps) > 1e-12 and po is not None:
                 prev_opm = po / ps * 100.0
-        gnow = gross_map.get(key) or {}
-        gprev = gross_map.get(prev) if prev else None
+        gnow = _gmap_get(gross_map, key) or {}
+        gprev = _gmap_get(gross_map, prev) if prev else None
         gm = gnow.get("margin")
         gm_prev = (gprev or {}).get("margin") if isinstance(gprev, dict) else None
         item = {
@@ -280,16 +328,17 @@ def _latest_margins(
         for r in (info.get("rowList") or [])
         if isinstance(r, dict)
     }
+    all_keys = [str(t.get("key") or "") for t in titles]
     op_key = str(titles[-1].get("key") or "")
     opm = _col_num(rows_by_title, "영업이익률", op_key)
-    prev_opm = _col_num(rows_by_title, "영업이익률", _yoy_key(op_key) or "")
+    prev_opm = _col_num(rows_by_title, "영업이익률", _yoy_key(op_key, all_keys) or "")
     if opm is None:
         sales = _col_num(rows_by_title, "매출액", op_key)
         op = _col_num(rows_by_title, "영업이익", op_key)
         if sales and abs(sales) > 1e-12 and op is not None:
             opm = op / sales * 100.0
     if prev_opm is None:
-        pk = _yoy_key(op_key)
+        pk = _yoy_key(op_key, all_keys)
         if pk:
             ps = _col_num(rows_by_title, "매출액", pk)
             po = _col_num(rows_by_title, "영업이익", pk)
@@ -300,11 +349,11 @@ def _latest_margins(
     gm_asof = ""
     for col in reversed(titles):
         key = str(col.get("key") or "")
-        gnow = gross_map.get(key)
+        gnow = _gmap_get(gross_map, key)
         if not gnow:
             continue
-        prev = _yoy_key(key)
-        gprev = gross_map.get(prev) if prev else None
+        prev = _yoy_key(key, all_keys)
+        gprev = _gmap_get(gross_map, prev) if prev else None
         gm = gnow.get("margin")
         gm_prev = (gprev or {}).get("margin") if isinstance(gprev, dict) else None
         gpp = _pp_chg(gm, gm_prev)
@@ -431,49 +480,156 @@ def _kr_fundamentals(code: str, name: str = "") -> Fundamentals:
     return out
 
 
-def _yahoo_fundamentals(symbol: str) -> Fundamentals:
+def _naver_world_headers(code: str = "") -> dict:
+    ref = "https://m.stock.naver.com/worldstock/"
+    if code:
+        ref = f"https://m.stock.naver.com/worldstock/stock/{code}"
+    return {"User-Agent": "Mozilla/5.0", "Referer": ref}
+
+
+def _naver_us_codes(ticker: str) -> list[str]:
+    t = ticker.strip().upper()
+    return [f"{t}.O", f"{t}.N", f"{t}.K", f"{t}.A"]
+
+
+def _naver_us_json(path: str, code: str) -> dict | None:
+    try:
+        resp = requests.get(
+            f"https://api.stock.naver.com{path}",
+            headers=_naver_world_headers(code),
+            timeout=15,
+        )
+        if resp.status_code != 200:
+            return None
+        js = resp.json()
+        return js if isinstance(js, dict) else None
+    except Exception:
+        return None
+
+
+def _peer_industry_per(peers: list, self_code: str) -> float | None:
+    pers: list[float] = []
+    for peer in (peers or [])[:8]:
+        if not isinstance(peer, dict):
+            continue
+        rc = str(peer.get("reutersCode") or "")
+        if not rc or rc == self_code:
+            continue
+        basic = _naver_us_json(f"/stock/{rc}/basic", rc)
+        if not basic:
+            continue
+        infos = _infos_map(basic.get("stockItemTotalInfos") or [])
+        per = _info_num(infos, "per")
+        if per is not None and per > 0:
+            pers.append(per)
+    if not pers:
+        return None
+    return sum(pers) / len(pers)
+
+
+def _us_fundamentals(symbol: str) -> Fundamentals:
     import yfinance as yf
 
+    symbol = symbol.strip().upper()
     out = Fundamentals(market="US", ticker=symbol, source="Yahoo")
-    info = yf.Ticker(symbol).info or {}
-    out.name = str(info.get("shortName") or info.get("longName") or symbol)
-    out.per = _parse_num(info.get("trailingPE"))
+    naver_code = ""
+    basic = integ = fin = None
+    for code in _naver_us_codes(symbol):
+        basic = _naver_us_json(f"/stock/{code}/basic", code)
+        if basic and basic.get("stockItemTotalInfos"):
+            naver_code = code
+            break
+        basic = None
+    if naver_code:
+        infos = _infos_map(basic.get("stockItemTotalInfos") or [])
+        out.source = "Naver·Yahoo"
+        out.name = str(basic.get("stockName") or basic.get("stockNameEng") or symbol)
+        out.per = _info_num(infos, "per")
+        out.per_asof = _info_desc(infos, "per")
+        out.eps = _info_num(infos, "eps")
+        out.pbr = _info_num(infos, "pbr")
+        out.bps = _info_num(infos, "bps")
+        out.market_cap = _info_text(infos, "marketValue")
+        out.dividend_yield = _info_num(infos, "dividendYieldRatio")
+        out.dividend = _info_text(infos, "dividend")
+        out.high_52w = _info_text(infos, "highPriceOf52Weeks")
+        out.low_52w = _info_text(infos, "lowPriceOf52Weeks")
+        ind = basic.get("industryCodeType") or {}
+        if isinstance(ind, dict):
+            out.industry_name = str(ind.get("industryGroupKor") or "")
+        integ = _naver_us_json(f"/stock/{naver_code}/integration", naver_code)
+        if integ:
+            overview = integ.get("summaries") or {}
+            if isinstance(overview, dict):
+                out.summary = str(overview.get("summary") or "")
+            peers = (integ.get("industryCompareInfo") or {}).get("globalStocks") or []
+            out.industry_per = _peer_industry_per(peers, naver_code)
+        fin = _naver_us_json(f"/stock/{naver_code}/finance/quarter", naver_code)
+
+    try:
+        info = yf.Ticker(symbol).info or {}
+    except Exception:
+        info = {}
+    if not out.name or out.name == symbol:
+        out.name = str(info.get("shortName") or info.get("longName") or symbol)
+    if out.per is None:
+        out.per = _parse_num(info.get("trailingPE"))
     out.forward_per = _parse_num(info.get("forwardPE"))
-    out.eps = _parse_num(info.get("trailingEps"))
+    if out.eps is None:
+        out.eps = _parse_num(info.get("trailingEps"))
     out.forward_eps = _parse_num(info.get("forwardEps"))
-    out.pbr = _parse_num(info.get("priceToBook"))
-    out.bps = _parse_num(info.get("bookValue"))
-    cap = info.get("marketCap")
-    out.market_cap = f"{cap:,.0f}" if isinstance(cap, (int, float)) else str(cap or "")
-    dy = info.get("dividendYield")
-    if isinstance(dy, (int, float)) and 0 < dy < 1:
-        out.dividend_yield = dy * 100.0
-    else:
-        out.dividend_yield = _parse_num(dy)
-    out.high_52w = str(info.get("fiftyTwoWeekHigh") or "")
-    out.low_52w = str(info.get("fiftyTwoWeekLow") or "")
-    out.industry_name = str(info.get("industry") or info.get("sector") or "")
+    if out.pbr is None:
+        out.pbr = _parse_num(info.get("priceToBook"))
+    if out.bps is None:
+        out.bps = _parse_num(info.get("bookValue"))
+    if not out.market_cap:
+        cap = info.get("marketCap")
+        out.market_cap = f"{cap:,.0f}" if isinstance(cap, (int, float)) else str(cap or "")
+    if out.dividend_yield is None:
+        dy = info.get("dividendYield")
+        n = _parse_num(dy)
+        if n is not None and 0 < n <= 0.05:
+            out.dividend_yield = n * 100.0
+        else:
+            out.dividend_yield = n
+    if not out.high_52w:
+        out.high_52w = str(info.get("fiftyTwoWeekHigh") or "")
+    if not out.low_52w:
+        out.low_52w = str(info.get("fiftyTwoWeekLow") or "")
+    if not out.industry_name:
+        out.industry_name = str(info.get("industry") or info.get("sector") or "")
 
-    def _ratio_pct(raw) -> float | None:
-        n = _parse_num(raw)
-        if n is None:
-            return None
-        if abs(n) <= 1.5:
-            return n * 100.0
-        return n
-
-    out.op_margin = _ratio_pct(info.get("operatingMargins"))
     gmap = _yahoo_gross_map(symbol)
-    if gmap:
+    payload = None
+    if fin and (fin.get("rowList") or fin.get("trTitleList")):
+        payload = {
+            "financeInfo": {
+                "trTitleList": fin.get("trTitleList") or [],
+                "rowList": fin.get("rowList") or [],
+            }
+        }
+        out.quarters = _finance_table(payload, gmap)
+        (
+            out.sales_margin,
+            out.sales_profit_yoy,
+            out.sales_margin_asof,
+            out.op_margin,
+            out.op_yoy,
+        ) = _latest_margins(payload, gmap)
+    if out.sales_margin is None and gmap:
         keys = sorted(gmap)
         last = keys[-1]
-        prev = _yoy_key(last)
+        prev = _yoy_key(last, keys)
         out.sales_margin = gmap[last].get("margin")
         out.sales_profit_yoy = _pp_chg(
             gmap[last].get("margin"),
-            (gmap.get(prev) or {}).get("margin") if prev else None,
+            (_gmap_get(gmap, prev) or {}).get("margin") if prev else None,
         )
         out.sales_margin_asof = f"{last[:4]}.{last[4:]}" if len(last) >= 6 else last
+    if out.op_margin is None:
+        n = _parse_num(info.get("operatingMargins"))
+        if n is not None:
+            out.op_margin = n * 100.0 if abs(n) <= 1.5 else n
     return out
 
 
@@ -669,7 +825,7 @@ def fetch_fundamentals(market: str, ticker: str, action: str | None = None) -> F
     if not ticker:
         return Fundamentals(market=market, ticker=ticker, error="종목 코드가 없습니다.")
 
-    cache = CACHE_DIR / f"fund4_{market}_{ticker}_{date.today().isoformat()}.json"
+    cache = CACHE_DIR / f"fund5_{market}_{ticker}_{date.today().isoformat()}.json"
     cached = None
     if cache.exists():
         try:
@@ -682,7 +838,7 @@ def fetch_fundamentals(market: str, ticker: str, action: str | None = None) -> F
             code = ticker.zfill(6) if ticker.isdigit() else ticker
             fund = _kr_fundamentals(code)
         elif market == "US":
-            fund = _yahoo_fundamentals(ticker.upper())
+            fund = _us_fundamentals(ticker.upper())
         else:
             return Fundamentals(market=market, ticker=ticker, error="이 시장은 펀더 요약을 지원하지 않습니다.")
     except Exception as exc:
