@@ -1,12 +1,11 @@
 """배점·즐겨찾기·시뮬레이션 저장.
 
-로컬 파일은 같은 프로세스가 살아 있는 동안만 유효하다.
-Streamlit Cloud Reboot 은 컨테이너를 새로 만들기 때문에 파일은 사라진다.
-그래서 아래를 같이 쓴다.
+접속자마다 저장 코드(uid)가 있고, 파일·Gist 는 uid 칸만 읽고 쓴다.
+같은 코드를 다른 기기에 넣으면 그 칸을 이어받는다.
 
-1. 브라우저 쿠키 (부모 페이지, 첫 실행에는 iframe 을 그리지 않음)
-2. 주소창 쿼리 (_ta) — 같은 탭에서 리부트할 때
-3. GitHub Gist — Secrets 의 GITHUB_TOKEN 이 있으면 기기·탭이 달라도 유지
+Streamlit Cloud Reboot 은 컨테이너 파일을 지우므로
+브라우저 쿠키와 (있으면) GitHub Gist 로 복구한다.
+쿠키 iframe 은 첫 실행에 그리지 않는다.
 """
 
 from __future__ import annotations
@@ -15,6 +14,8 @@ import base64
 import gzip
 import json
 import os
+import secrets
+import threading
 from pathlib import Path
 
 import requests
@@ -23,17 +24,45 @@ from .backtest import DEFAULT_SIM
 from .signals import DEFAULT_CUTS, DEFAULT_WEIGHTS
 
 COOKIE_NAME = "ta_prefs"
-QUERY_KEY = "_ta"
+UID_COOKIE_NAME = "ta_uid"
 MAX_FAVORITES = 20
+MAX_USERS = 200
 PREFS_VERSION = 1
+STORE_VERSION = 2
+UID_LEN = 8
+UID_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 GIST_FILENAME = "trade-advisor-prefs.json"
 GIST_DESC = "trade-advisor-prefs"
 _GIST_ID_CACHE: str | None = None
+_FILE_LOCK = threading.Lock()
+
+
+def new_uid() -> str:
+    return "".join(secrets.choice(UID_ALPHABET) for _ in range(UID_LEN))
+
+
+def normalize_uid(value: str | None) -> str:
+    if not value:
+        return ""
+    raw = str(value).strip().upper().replace(" ", "").replace("-", "")
+    if len(raw) != UID_LEN:
+        return ""
+    if any(ch not in UID_ALPHABET for ch in raw):
+        return ""
+    return raw
+
+
+def format_uid(uid: str) -> str:
+    uid = normalize_uid(uid)
+    if len(uid) != UID_LEN:
+        return uid
+    return f"{uid[:4]}-{uid[4:]}"
 
 
 def _empty() -> dict:
     return {
         "v": PREFS_VERSION,
+        "uid": "",
         "ts": 0,
         "weights": dict(DEFAULT_WEIGHTS),
         "cuts": dict(DEFAULT_CUTS),
@@ -87,12 +116,14 @@ def _normalize(raw: dict | None) -> dict:
         data["ts"] = int(raw.get("ts") or 0)
     except (TypeError, ValueError):
         data["ts"] = 0
+    data["uid"] = normalize_uid(raw.get("uid") or raw.get("id"))
     return data
 
 
 def snapshot_key(data: dict) -> str:
     """ts 를 빼고 비교한다. 저장 시각만 바뀌면 다시 쓰지 않는다."""
     payload = {
+        "uid": normalize_uid(data.get("uid")),
         "weights": data.get("weights") or {},
         "cuts": data.get("cuts") or {},
         "sim": data.get("sim") or {},
@@ -130,6 +161,41 @@ def merge_prefs(*sources: dict | None) -> dict:
     return best or _empty()
 
 
+def _empty_store() -> dict:
+    return {"v": STORE_VERSION, "users": {}}
+
+
+def _parse_store(raw: object) -> dict:
+    store = _empty_store()
+    if not isinstance(raw, dict):
+        return store
+    users = raw.get("users")
+    if isinstance(users, dict):
+        for key, val in users.items():
+            uid = normalize_uid(key)
+            if not uid or not isinstance(val, dict):
+                continue
+            item = _normalize(val)
+            item["uid"] = uid
+            store["users"][uid] = item
+        return store
+    # 예전 단일 저장은 접속자 공유이므로 새 칸으로 옮기지 않는다.
+    return store
+
+
+def _prune_store(store: dict) -> dict:
+    users = store.get("users") or {}
+    if len(users) <= MAX_USERS:
+        return store
+    ranked = sorted(
+        users.items(),
+        key=lambda kv: int((_normalize(kv[1]).get("ts") or 0)),
+        reverse=True,
+    )
+    store["users"] = dict(ranked[:MAX_USERS])
+    return store
+
+
 def _paths() -> list[Path]:
     return [
         Path.home() / ".trade-advisor" / "prefs.json",
@@ -137,24 +203,44 @@ def _paths() -> list[Path]:
     ]
 
 
-def load_prefs_file() -> dict:
+def _read_store_file() -> dict:
     for path in _paths():
         try:
             if path.is_file():
-                return _normalize(json.loads(path.read_text(encoding="utf-8")))
+                return _parse_store(json.loads(path.read_text(encoding="utf-8")))
         except (OSError, json.JSONDecodeError, TypeError):
             continue
-    return _empty()
+    return _empty_store()
 
 
-def save_prefs_file(data: dict) -> None:
-    payload = json.dumps(_normalize(data), ensure_ascii=False, indent=2)
+def _write_store_file(store: dict) -> None:
+    payload = json.dumps(_prune_store(store), ensure_ascii=False, indent=2)
     for path in _paths():
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(payload, encoding="utf-8")
         except OSError:
             continue
+
+
+def load_user_prefs_file(uid: str) -> dict | None:
+    uid = normalize_uid(uid)
+    if not uid:
+        return None
+    item = _read_store_file().get("users", {}).get(uid)
+    return _normalize(item) if isinstance(item, dict) else None
+
+
+def save_user_prefs_file(uid: str, data: dict) -> None:
+    uid = normalize_uid(uid)
+    if not uid:
+        return
+    item = _normalize(data)
+    item["uid"] = uid
+    with _FILE_LOCK:
+        store = _read_store_file()
+        store.setdefault("users", {})[uid] = item
+        _write_store_file(store)
 
 
 def encode_cookie(data: dict) -> str:
@@ -177,15 +263,18 @@ def decode_cookie(value: str | None) -> dict | None:
 
 
 def cookie_set_html(data: dict) -> str:
-    """부모 페이지 쿠키에 남긴다. 위치 이동은 하지 않는다(리부트 행 방지)."""
+    """부모 페이지 쿠키에 uid 와 설정을 남긴다. 위치 이동은 하지 않는다."""
     token = encode_cookie(data).replace("\\", "\\\\").replace('"', '\\"')
+    uid = normalize_uid(data.get("uid"))
     return (
         "<html><body><script>"
         "(function(){try{"
         f'var t="{token}";'
+        f'var u="{uid}";'
         f'var c="{COOKIE_NAME}="+t+";path=/;max-age=31536000;SameSite=Lax";'
-        "document.cookie=c;"
-        "try{window.parent.document.cookie=c;}catch(e){}"
+        f'var d="{UID_COOKIE_NAME}="+u+";path=/;max-age=31536000;SameSite=Lax";'
+        "document.cookie=c;document.cookie=d;"
+        "try{window.parent.document.cookie=c;window.parent.document.cookie=d;}catch(e){}"
         "}catch(e){}})();"
         "</script></body></html>"
     )
@@ -261,44 +350,65 @@ def _find_gist_id(token: str) -> str:
         return ""
 
 
-def load_prefs_remote() -> dict | None:
+def _gist_content(gist_id: str, token: str) -> dict | None:
+    res = requests.get(
+        f"https://api.github.com/gists/{gist_id}",
+        headers=_headers(token),
+        timeout=8,
+    )
+    if res.status_code != 200:
+        return None
+    files = res.json().get("files") or {}
+    info = files.get(GIST_FILENAME) or (next(iter(files.values())) if files else None)
+    if not info:
+        return None
+    content = info.get("content") or ""
+    if (not content or info.get("truncated")) and info.get("raw_url"):
+        raw = requests.get(str(info["raw_url"]), timeout=8)
+        if raw.status_code == 200:
+            content = raw.text
+    if not content:
+        return None
+    return json.loads(content)
+
+
+def load_store_remote() -> dict:
     token = github_token()
     if not token:
-        return None
+        return _empty_store()
     gist_id = _find_gist_id(token)
     if not gist_id:
-        return None
+        return _empty_store()
     try:
-        res = requests.get(
-            f"https://api.github.com/gists/{gist_id}",
-            headers=_headers(token),
-            timeout=8,
-        )
-        if res.status_code != 200:
-            return None
-        files = res.json().get("files") or {}
-        info = files.get(GIST_FILENAME) or (next(iter(files.values())) if files else None)
-        if not info:
-            return None
-        content = info.get("content") or ""
-        if (not content or info.get("truncated")) and info.get("raw_url"):
-            raw = requests.get(str(info["raw_url"]), timeout=8)
-            if raw.status_code == 200:
-                content = raw.text
-        if not content:
-            return None
-        return _normalize(json.loads(content))
+        raw = _gist_content(gist_id, token)
+        return _parse_store(raw)
     except (requests.RequestException, ValueError, TypeError, json.JSONDecodeError):
+        return _empty_store()
+
+
+def load_user_prefs_remote(uid: str) -> dict | None:
+    uid = normalize_uid(uid)
+    if not uid:
         return None
+    item = load_store_remote().get("users", {}).get(uid)
+    return _normalize(item) if isinstance(item, dict) else None
 
 
-def save_prefs_remote(data: dict) -> bool:
+def save_user_prefs_remote(uid: str, data: dict) -> bool:
     token = github_token()
     if not token:
         return False
+    uid = normalize_uid(uid)
+    if not uid:
+        return False
+    item = _normalize(data)
+    item["uid"] = uid
+    store = load_store_remote()
+    store.setdefault("users", {})[uid] = item
+    store = _prune_store(store)
     body = {
         GIST_FILENAME: {
-            "content": json.dumps(_normalize(data), ensure_ascii=False, indent=2),
+            "content": json.dumps(store, ensure_ascii=False, indent=2),
         }
     }
     gist_id = _find_gist_id(token)

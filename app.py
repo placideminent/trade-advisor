@@ -20,16 +20,18 @@ from src.fundamentals import fetch_fundamentals, fmt_per, fmt_pct, fmt_pp, per_g
 from src.prefs import (
     COOKIE_NAME,
     MAX_FAVORITES,
-    QUERY_KEY,
+    UID_COOKIE_NAME,
     cookie_set_html,
     decode_cookie,
-    encode_cookie,
-    load_prefs_file,
-    load_prefs_remote,
+    format_uid,
+    load_user_prefs_file,
+    load_user_prefs_remote,
     merge_prefs,
+    new_uid,
+    normalize_uid,
     remote_enabled,
-    save_prefs_file,
-    save_prefs_remote,
+    save_user_prefs_file,
+    save_user_prefs_remote,
     snapshot_key,
 )
 from src.signals import (
@@ -113,10 +115,18 @@ ACTION_CLASS = {
 }
 
 
-def _cookie_token() -> str | None:
+def _cookie_map():
     try:
         ctx = getattr(st, "context", None)
         cookies = getattr(ctx, "cookies", None) if ctx is not None else None
+        return cookies
+    except Exception:
+        return None
+
+
+def _cookie_token() -> str | None:
+    try:
+        cookies = _cookie_map()
         if cookies is None:
             return None
         raw = cookies.get(COOKIE_NAME)
@@ -127,20 +137,19 @@ def _cookie_token() -> str | None:
         return None
 
 
-def _query_token() -> str | None:
+def _cookie_uid() -> str:
     try:
-        raw = st.query_params.get(QUERY_KEY)
-        if raw is None:
-            return None
-        if isinstance(raw, list):
-            raw = raw[0] if raw else None
-        return str(raw) if raw else None
+        cookies = _cookie_map()
+        if cookies is None:
+            return ""
+        return normalize_uid(cookies.get(UID_COOKIE_NAME))
     except Exception:
-        return None
+        return ""
 
 
 def _prefs_payload(rule: dict) -> dict:
     return {
+        "uid": normalize_uid(st.session_state.get("prefs_uid")),
         "weights": rule["weights"],
         "cuts": rule["cuts"],
         "sim": {key: int(st.session_state.get(f"s_{key}", default)) for key, default in DEFAULT_SIM.items()},
@@ -171,46 +180,59 @@ def _apply_loaded_prefs(loaded: dict) -> None:
 
 
 def _bootstrap_prefs() -> None:
-    if st.session_state.get("_prefs_boot"):
+    adopt = normalize_uid(st.session_state.pop("_prefs_adopt", None))
+    if st.session_state.get("_prefs_boot") and not adopt:
         return
-    loaded = merge_prefs(
-        load_prefs_file(),
-        decode_cookie(_cookie_token()),
-        decode_cookie(_query_token()),
-        load_prefs_remote(),
-    )
+    cookie_data = decode_cookie(_cookie_token())
+    uid = adopt or normalize_uid((cookie_data or {}).get("uid")) or _cookie_uid()
+    uid = uid or normalize_uid(st.session_state.get("prefs_uid")) or new_uid()
+    sources = []
+    if cookie_data and (not cookie_data.get("uid") or cookie_data.get("uid") == uid):
+        sources.append(cookie_data)
+    sources.append(load_user_prefs_file(uid))
+    sources.append(load_user_prefs_remote(uid))
+    loaded = merge_prefs(*sources)
+    loaded["uid"] = uid
     _apply_loaded_prefs(loaded)
+    st.session_state.prefs_uid = uid
     st.session_state._prefs_snapshot = snapshot_key(loaded)
     st.session_state._prefs_boot = True
-    st.session_state._prefs_just_booted = True
+    st.session_state._prefs_just_booted = not bool(adopt)
+    st.session_state._prefs_need_cookie = True
     st.session_state._prefs_remote_ok = remote_enabled()
+    if adopt and _score_empty(loaded):
+        st.session_state._prefs_adopt_msg = "이 코드로 저장된 기록이 아직 없습니다. 코드를 넣은 뒤 이 기기에서 쓰면 같은 칸에 쌓입니다."
+    elif adopt:
+        st.session_state._prefs_adopt_msg = f"{format_uid(uid)} 저장을 불러왔습니다."
+
+
+def _score_empty(loaded: dict) -> bool:
+    return not loaded.get("favorites") and not loaded.get("ts")
 
 
 def _persist_prefs(rule: dict) -> None:
     payload = _prefs_payload(rule)
+    uid = normalize_uid(payload.get("uid"))
     snap = snapshot_key(payload)
     just_booted = bool(st.session_state.pop("_prefs_just_booted", False))
     if st.session_state.get("_prefs_snapshot") == snap:
-        if just_booted:
-            save_prefs_file(payload)
+        if just_booted and uid:
+            save_user_prefs_file(uid, payload)
+        if (not just_booted) and st.session_state.pop("_prefs_need_cookie", False):
+            st.session_state._prefs_cookie_html = cookie_set_html(payload)
+            st.session_state._prefs_cookie_dirty = True
         return
     st.session_state._prefs_snapshot = snap
     payload["ts"] = int(time.time())
-    save_prefs_file(payload)
+    if uid:
+        save_user_prefs_file(uid, payload)
     if just_booted:
         return
-    if remote_enabled():
-        st.session_state._prefs_remote_ok = save_prefs_remote(payload)
-    else:
-        try:
-            token = encode_cookie(payload)
-            if _query_token() != token:
-                st.query_params[QUERY_KEY] = token
-                st.session_state._prefs_url_ok = True
-        except Exception:
-            pass
+    if uid and remote_enabled():
+        st.session_state._prefs_remote_ok = save_user_prefs_remote(uid, payload)
     st.session_state._prefs_cookie_html = cookie_set_html(payload)
     st.session_state._prefs_cookie_dirty = True
+    st.session_state.pop("_prefs_need_cookie", None)
 
 
 def _emit_prefs_cookie() -> None:
@@ -809,10 +831,30 @@ with st.sidebar:
     rule = _read_rule_from_sidebar()
     _persist_prefs(rule)
     _emit_prefs_cookie()
+    uid_show = format_uid(st.session_state.get("prefs_uid") or "")
+    st.caption(f"내 저장 코드: **{uid_show or '-'}** · 접속자마다 따로 저장됩니다.")
+    with st.expander("다른 기기에서 이어가기"):
+        st.caption(
+            "이 코드를 폰·다른 브라우저에 넣으면 즐겨찾기·배점·시뮬레이션이 이어집니다. "
+            "코드를 모르는 사람은 내 저장을 보지 못합니다."
+        )
+        st.text_input("저장 코드", key="prefs_code_in", placeholder="예: AB3K-9M2Q")
+        if st.button("이 코드로 불러오기", use_container_width=True):
+            other = normalize_uid(st.session_state.get("prefs_code_in"))
+            if not other:
+                st.session_state._prefs_adopt_msg = "코드 형식이 아닙니다. 8자리입니다."
+            elif other == normalize_uid(st.session_state.get("prefs_uid")):
+                st.session_state._prefs_adopt_msg = "이미 이 코드로 연결되어 있습니다."
+            else:
+                st.session_state._prefs_adopt = other
+                st.rerun()
+        msg = st.session_state.get("_prefs_adopt_msg")
+        if msg:
+            st.info(msg)
     if st.session_state.get("_prefs_remote_ok"):
-        st.caption("즐겨찾기·배점·시뮬레이션은 리부트·다른 기기에서도 유지됩니다.")
+        st.caption("리부트 후에도 같은 코드면 기록이 유지됩니다.")
     else:
-        st.caption("즐겨찾기·배점·시뮬레이션은 이 브라우저에 저장되며 클라우드 리부트 후에도 유지됩니다.")
+        st.caption("같은 브라우저면 리부트 후에도 유지됩니다. 다른 기기와 맞추려면 저장 코드를 넣으세요.")
     run = False
     run_sim = False
     if page == "종목 분석":
@@ -875,7 +917,7 @@ if not run:
         5. 시뮬레이션 화면에서 기간·수량을 넣고 매일 신호대로 사고판 결과를 볼 수 있습니다.
 
         1개월은 1시간봉, 2·3개월은 4시간봉, 6개월·1년은 일봉으로 계산합니다.
-        평가 배점·즐겨찾기·시뮬레이션 수량은 저장되어 다음에 들어와도, 클라우드를 리부트해도 그대로 씁니다.
+        평가 배점·즐겨찾기·시뮬레이션 수량은 접속자마다 따로 저장됩니다. 다른 기기는 저장 코드로 이어갑니다.
         """
     )
     st.stop()
