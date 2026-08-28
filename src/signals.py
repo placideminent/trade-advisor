@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
-SIGNAL_RULE_VERSION = 48
+SIGNAL_RULE_VERSION = 49
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 10
 # 합산 %는 조회 기간과 상관없이 같은 눈금(이론상 최저~최고)을 쓴다.
@@ -41,6 +41,14 @@ DEFAULT_WEIGHTS = {
 }
 
 DEFAULT_CUTS = {
+    "buy_weak": 70,
+    "buy_mid": 75,
+    "buy_strong": 79,
+    "sell_weak": 35,
+    "sell_mid": 30,
+    "sell_strong": 25,
+}
+LEGACY_DEFAULT_CUTS = {
     "buy_weak": 65,
     "buy_mid": 70,
     "buy_strong": 75,

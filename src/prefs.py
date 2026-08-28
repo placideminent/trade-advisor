@@ -21,7 +21,7 @@ from pathlib import Path
 import requests
 
 from .backtest import DEFAULT_SIM
-from .signals import DEFAULT_CUTS, DEFAULT_WEIGHTS
+from .signals import DEFAULT_CUTS, DEFAULT_WEIGHTS, LEGACY_DEFAULT_CUTS
 
 COOKIE_NAME = "ta_prefs"
 UID_COOKIE_NAME = "ta_uid"
@@ -91,6 +91,8 @@ def _normalize(raw: dict | None) -> dict:
                 data["cuts"][key] = int(cuts[key])
             except (TypeError, ValueError):
                 data["cuts"][key] = default
+    if all(data["cuts"].get(key) == old for key, old in LEGACY_DEFAULT_CUTS.items()):
+        data["cuts"] = dict(DEFAULT_CUTS)
     for key, default in DEFAULT_SIM.items():
         if key in sim:
             try:
