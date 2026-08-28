@@ -20,7 +20,7 @@ from pathlib import Path
 
 import requests
 
-from .backtest import DEFAULT_SIM
+from .backtest import DEFAULT_SIM, normalize_sim
 from .signals import DEFAULT_CUTS, DEFAULT_WEIGHTS, LEGACY_DEFAULT_CUTS
 
 COOKIE_NAME = "ta_prefs"
@@ -93,12 +93,7 @@ def _normalize(raw: dict | None) -> dict:
                 data["cuts"][key] = default
     if all(data["cuts"].get(key) == old for key, old in LEGACY_DEFAULT_CUTS.items()):
         data["cuts"] = dict(DEFAULT_CUTS)
-    for key, default in DEFAULT_SIM.items():
-        if key in sim:
-            try:
-                data["sim"][key] = int(sim[key])
-            except (TypeError, ValueError):
-                data["sim"][key] = default
+    data["sim"] = normalize_sim(sim)
     out_favs = []
     for item in favs:
         if not isinstance(item, dict):
@@ -110,7 +105,10 @@ def _normalize(raw: dict | None) -> dict:
             continue
         if market == "KR":
             ticker = ticker.zfill(6) if ticker.isdigit() else ticker
-        out_favs.append({"market": market, "ticker": ticker, "name": name})
+        entry = {"market": market, "ticker": ticker, "name": name}
+        if isinstance(item.get("sim"), dict):
+            entry["sim"] = normalize_sim(item.get("sim"))
+        out_favs.append(entry)
         if len(out_favs) >= MAX_FAVORITES:
             break
     data["favorites"] = out_favs

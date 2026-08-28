@@ -12,7 +12,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 from src.analysis import analyze
-from src.backtest import DEFAULT_SIM, run_backtest
+from src.backtest import DEFAULT_SIM, normalize_sim, run_backtest
 from src.chart import build_chart, build_sim_chart
 from src.data import drop_incomplete_session, fetch_ohlcv, fetch_spot_price, market_today, search_kr
 from src.fundamentals import fetch_fundamentals, fmt_per, fmt_pct, fmt_pp, per_gap_text
@@ -102,6 +102,85 @@ def _read_sim_from_sidebar() -> dict:
 def _reset_sim_widgets() -> None:
     for key, default in DEFAULT_SIM.items():
         st.session_state[f"s_{key}"] = int(default)
+
+
+def _fav_sim_prefix(market: str, ticker: str) -> str:
+    return f"sf_{market}_{ticker}_"
+
+
+def _sim_qty_fields(prefix: str) -> None:
+    q1, q2, q3 = st.columns(3)
+    with q1:
+        st.number_input("약한 매수 주", min_value=0, max_value=1000, step=1, key=f"{prefix}buy_weak")
+    with q2:
+        st.number_input("매수 주", min_value=0, max_value=1000, step=1, key=f"{prefix}buy_mid")
+    with q3:
+        st.number_input("강한 매수 주", min_value=0, max_value=1000, step=1, key=f"{prefix}buy_strong")
+    st.number_input("이 수량 이상이면 % 매도", min_value=1, max_value=10000, step=1, key=f"{prefix}share_cut")
+    p1, p2, p3 = st.columns(3)
+    with p1:
+        st.number_input("약한 매도 %", min_value=1, max_value=100, step=1, key=f"{prefix}sell_weak_pct")
+    with p2:
+        st.number_input("매도 %", min_value=1, max_value=100, step=1, key=f"{prefix}sell_mid_pct")
+    with p3:
+        st.number_input("강한 매도 %", min_value=1, max_value=100, step=1, key=f"{prefix}sell_strong_pct")
+    f1, f2, f3 = st.columns(3)
+    with f1:
+        st.number_input("약한 매도 주(미만)", min_value=1, max_value=1000, step=1, key=f"{prefix}sell_weak_qty")
+    with f2:
+        st.number_input("매도 주(미만)", min_value=1, max_value=1000, step=1, key=f"{prefix}sell_mid_qty")
+    with f3:
+        st.number_input("강한 매도 주(미만)", min_value=1, max_value=1000, step=1, key=f"{prefix}sell_strong_qty")
+
+
+def _read_sim_from_prefix(prefix: str) -> dict:
+    raw = {key: st.session_state.get(f"{prefix}{key}", default) for key, default in DEFAULT_SIM.items()}
+    return normalize_sim(raw)
+
+
+def _init_fav_sim_widgets(global_sim: dict) -> None:
+    for item in _fav_list():
+        prefix = _fav_sim_prefix(item["market"], item["ticker"])
+        src = item.get("sim") if isinstance(item.get("sim"), dict) else None
+        for key, default in DEFAULT_SIM.items():
+            sk = f"{prefix}{key}"
+            if sk in st.session_state:
+                continue
+            if src and key in src:
+                try:
+                    st.session_state[sk] = int(src[key])
+                    continue
+                except (TypeError, ValueError):
+                    pass
+            st.session_state[sk] = int(global_sim.get(key, default))
+
+
+def _sync_fav_sims() -> None:
+    out = []
+    for item in _fav_list():
+        prefix = _fav_sim_prefix(item["market"], item["ticker"])
+        entry = {
+            "market": item["market"],
+            "ticker": item["ticker"],
+            "name": item.get("name") or item["ticker"],
+            "sim": _read_sim_from_prefix(prefix),
+        }
+        out.append(entry)
+    st.session_state.favorites = out
+
+
+def _copy_global_sim_to_favs() -> None:
+    global_sim = _read_sim_from_sidebar()
+    for item in _fav_list():
+        prefix = _fav_sim_prefix(item["market"], item["ticker"])
+        for key, val in global_sim.items():
+            st.session_state[f"{prefix}{key}"] = int(val)
+
+
+def _reset_one_fav_sim(market: str, ticker: str) -> None:
+    prefix = _fav_sim_prefix(market, ticker)
+    for key, default in DEFAULT_SIM.items():
+        st.session_state[f"{prefix}{key}"] = int(default)
 
 
 ACTION_CLASS = {
@@ -262,7 +341,14 @@ def _add_fav(market: str, ticker: str, name: str) -> None:
     if len(favs) >= MAX_FAVORITES:
         st.session_state._fav_full = True
         return
-    favs.append({"market": market, "ticker": ticker, "name": name or ticker})
+    favs.append(
+        {
+            "market": market,
+            "ticker": ticker,
+            "name": name or ticker,
+            "sim": _read_sim_from_sidebar(),
+        }
+    )
     st.session_state.favorites = favs
 
 
@@ -712,13 +798,14 @@ def _render_simulation(
         if not favs:
             st.info("아직 즐겨찾기한 종목이 없습니다. 종목 분석 화면에서 별표로 추가하세요.")
             return
-        st.write(f"**즐겨찾기 {len(favs)}종목** · {qty_txt}")
+        st.write(f"**즐겨찾기 {len(favs)}종목** · {start} ~ {end} · 조회 {lookback_label} · 종목별 수량")
         if run:
             bar = st.progress(0, text="즐겨찾기 시뮬레이션 중...")
             out = []
             n_fav = len(favs)
             for i, item in enumerate(favs):
                 name = item.get("name") or item.get("ticker")
+                item_sim = normalize_sim(item.get("sim") or sim)
                 def _prog(j, n, as_of, i=i, name=name, n_fav=n_fav):
                     bar.progress(
                         min((i + j / max(n, 1)) / max(n_fav, 1), 1.0),
@@ -734,7 +821,7 @@ def _render_simulation(
                         timeframe,
                         lookback_label,
                         rule,
-                        sim,
+                        item_sim,
                         progress=_prog,
                     )
                 if item.get("name"):
@@ -928,32 +1015,38 @@ with st.sidebar:
         )
     sim = dict(DEFAULT_SIM)
     if page == "시뮬레이션":
-        with st.expander("매매 수량", expanded=True):
-            st.caption("약한 매수 / 매수 / 강한 매수 주 수, 잔량 기준 이상이면 % 매도, 미만이면 주 수.")
-            q1, q2, q3 = st.columns(3)
-            with q1:
-                st.number_input("약한 매수 주", min_value=0, max_value=1000, step=1, key="s_buy_weak")
-            with q2:
-                st.number_input("매수 주", min_value=0, max_value=1000, step=1, key="s_buy_mid")
-            with q3:
-                st.number_input("강한 매수 주", min_value=0, max_value=1000, step=1, key="s_buy_strong")
-            st.number_input("이 수량 이상이면 % 매도", min_value=1, max_value=10000, step=1, key="s_share_cut")
-            p1, p2, p3 = st.columns(3)
-            with p1:
-                st.number_input("약한 매도 %", min_value=1, max_value=100, step=1, key="s_sell_weak_pct")
-            with p2:
-                st.number_input("매도 %", min_value=1, max_value=100, step=1, key="s_sell_mid_pct")
-            with p3:
-                st.number_input("강한 매도 %", min_value=1, max_value=100, step=1, key="s_sell_strong_pct")
-            f1, f2, f3 = st.columns(3)
-            with f1:
-                st.number_input("약한 매도 주(미만)", min_value=1, max_value=1000, step=1, key="s_sell_weak_qty")
-            with f2:
-                st.number_input("매도 주(미만)", min_value=1, max_value=1000, step=1, key="s_sell_mid_qty")
-            with f3:
-                st.number_input("강한 매도 주(미만)", min_value=1, max_value=1000, step=1, key="s_sell_strong_qty")
+        with st.expander("기본 매매 수량", expanded=sim_scope != "즐겨찾기 전체"):
+            st.caption(
+                "약한 매수 / 매수 / 강한 매수 주 수, 잔량 기준 이상이면 % 매도, 미만이면 주 수. "
+                "바꾼 값은 저장됩니다."
+            )
+            _sim_qty_fields("s_")
             st.button("수량 기본값", use_container_width=True, on_click=_reset_sim_widgets)
         sim = _read_sim_from_sidebar()
+        if sim_scope == "즐겨찾기 전체":
+            favs_now = _fav_list()
+            _init_fav_sim_widgets(sim)
+            with st.expander("종목별 매매 수량", expanded=True):
+                if not favs_now:
+                    st.caption("즐겨찾기가 없습니다.")
+                else:
+                    st.caption("종목마다 따로 정한 수량으로 시뮬레이션하고, 즐겨찾기와 같이 저장됩니다.")
+                    st.button(
+                        "위 기본 수량을 모든 종목에 넣기",
+                        use_container_width=True,
+                        on_click=_copy_global_sim_to_favs,
+                    )
+                    for item in favs_now:
+                        label = f"{item.get('name') or item['ticker']} ({item['ticker']})"
+                        with st.expander(label, expanded=False):
+                            _sim_qty_fields(_fav_sim_prefix(item["market"], item["ticker"]))
+                            st.button(
+                                "이 종목 기본값",
+                                key=f"reset_sim_{item['market']}_{item['ticker']}",
+                                use_container_width=True,
+                                on_click=partial(_reset_one_fav_sim, item["market"], item["ticker"]),
+                            )
+            _sync_fav_sims()
     rule = _read_rule_from_sidebar()
     _persist_prefs(rule)
     _emit_prefs_cookie()
@@ -1019,7 +1112,7 @@ if not run:
         2. **과거 특정 날짜**를 시점으로 넣으면 그 날 이후 시세는 보지 않습니다.
         3. 그 시점의 추세선, 지지/저항, 주요 매물대를 그린 뒤 매수·매도·홀딩을 제안합니다.
         4. 종목을 즐겨찾기에 넣으면 한 화면에서 제안만 모아 볼 수 있습니다.
-        5. 시뮬레이션 화면에서 한 종목 또는 즐겨찾기 전체를 같은 기간·수량으로 돌려 볼 수 있습니다.
+        5. 시뮬레이션 화면에서 한 종목 또는 즐겨찾기 전체를 돌립니다. 즐겨찾기는 종목별 수량을 따로 저장합니다.
 
         1개월은 1시간봉, 2·3개월은 4시간봉, 6개월·1년은 일봉으로 계산합니다.
         평가 배점·즐겨찾기·시뮬레이션 수량은 접속자마다 따로 저장됩니다. 다른 기기는 저장 코드로 이어갑니다.

@@ -29,6 +29,20 @@ DEFAULT_SIM = {
     "sell_strong_qty": 10,
 }
 
+
+def normalize_sim(raw: dict | None) -> dict:
+    data = dict(DEFAULT_SIM)
+    if not isinstance(raw, dict):
+        return data
+    for key, default in DEFAULT_SIM.items():
+        if key not in raw:
+            continue
+        try:
+            data[key] = int(raw[key])
+        except (TypeError, ValueError):
+            data[key] = default
+    return data
+
 BUY_ACTIONS = ("약한 매수", "매수", "강한 매수")
 SELL_ACTIONS = ("약한 매도", "매도", "강한 매도")
 
