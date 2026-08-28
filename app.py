@@ -188,7 +188,7 @@ from src.universe import (
 )
 
 st.set_page_config(
-    page_title="매매시점 제안",
+    page_title="자산 트레이드 분석기",
     page_icon="📈",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -210,7 +210,7 @@ def require_login() -> None:
     password = _app_password()
     if not password or st.session_state.get("auth_ok"):
         return
-    st.title("매매시점 제안")
+    st.title("자산 트레이드 분석기")
     st.caption("외부 접속용 비밀번호가 설정되어 있습니다.")
     pw = st.text_input("비밀번호", type="password")
     if st.button("입장", type="primary"):
@@ -227,7 +227,14 @@ _bootstrap_prefs()
 st.markdown(
     """
     <style>
-      .block-container { padding-top: 0.8rem; padding-bottom: 2.5rem; }
+      .block-container { padding-top: 3.2rem; padding-bottom: 2.5rem; }
+      h1 {
+        overflow: visible !important;
+        white-space: normal !important;
+        line-height: 1.4 !important;
+        word-break: keep-all;
+        padding-top: 0.15rem;
+      }
       .action-buy-strong { background:#86efac; color:#14532d; padding:0.75rem 0.9rem; border-radius:10px; }
       .action-buy { background:#dcfce7; color:#14532d; padding:0.75rem 0.9rem; border-radius:10px; }
       .action-buy-weak { background:#ecfccb; color:#3f6212; padding:0.75rem 0.9rem; border-radius:10px; }
@@ -242,8 +249,12 @@ st.markdown(
       }
       .ta-table th { background:#f8fafc; font-weight:600; }
       @media (max-width: 640px) {
-        .block-container { padding-left: 0.55rem; padding-right: 0.55rem; }
-        h1 { font-size: 1.35rem !important; }
+        .block-container {
+          padding-top: 3.6rem !important;
+          padding-left: 0.55rem;
+          padding-right: 0.55rem;
+        }
+        h1 { font-size: 1.28rem !important; line-height: 1.45 !important; }
         h2, h3 { font-size: 1.05rem !important; }
         .action-buy-strong, .action-buy, .action-buy-weak,
         .action-sell-strong, .action-sell, .action-sell-weak, .action-hold {
@@ -255,7 +266,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-st.title("매매시점 제안")
+st.title("자산 트레이드 분석기")
 st.caption(
     "조회 시점의 현재가를 기준으로 추세선·지지/저항·매물대를 보고 "
     "매수 / 매도 / 홀딩을 제안합니다. "
