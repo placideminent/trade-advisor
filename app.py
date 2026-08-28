@@ -14,6 +14,7 @@ from src.analysis import analyze
 from src.backtest import DEFAULT_SIM, run_backtest
 from src.chart import build_chart, build_sim_chart
 from src.data import drop_incomplete_session, fetch_ohlcv, fetch_spot_price, market_today, search_kr
+from src.fundamentals import fetch_fundamentals, fmt_per, fmt_pct, per_gap_text
 from src.prefs import (
     COOKIE_NAME,
     MAX_FAVORITES,
@@ -868,6 +869,57 @@ c6.metric(
     "손익비",
     f"{signal.reward_risk:.2f}" if signal.reward_risk is not None else "-",
 )
+
+st.subheader("펀더멘털")
+try:
+    fund = fetch_fundamentals(market, ticker, signal.action)
+except Exception as exc:
+    fund = None
+    st.info(f"펀더 요약을 불러오지 못했습니다: {exc}")
+if fund is not None:
+    if fund.error:
+        st.info(fund.error)
+    else:
+        for note in fund.warnings:
+            st.warning(note)
+        f1, f2, f3, f4 = st.columns(4)
+        f1.metric("실적 PER", fmt_per(fund.per))
+        f2.metric("추정 PER", fmt_per(fund.forward_per))
+        gap_label = "-"
+        if fund.per_gap is not None:
+            gap_label = f"{fund.per_gap:+.2f}배"
+        f3.metric("추정−실적", gap_label)
+        f4.metric(
+            "업종 PER",
+            fmt_per(fund.industry_per),
+            help=fund.industry_name or "동일업종 평균",
+        )
+        g1, g2, g3, g4 = st.columns(4)
+        g1.metric("PBR", fmt_per(fund.pbr) if fund.pbr is not None else "-")
+        g2.metric("시총", fund.market_cap or "-")
+        g3.metric("배당수익률", fmt_pct(fund.dividend_yield))
+        g4.metric("외인소진율", fmt_pct(fund.foreign_rate))
+        st.caption(per_gap_text(fund))
+        extra = []
+        if fund.eps is not None:
+            extra.append(f"EPS {_fmt(fund.eps)}")
+        if fund.forward_eps is not None:
+            extra.append(f"추정 EPS {_fmt(fund.forward_eps)}")
+        if fund.high_52w or fund.low_52w:
+            extra.append(f"52주 {fund.low_52w or '-'} ~ {fund.high_52w or '-'}")
+        if fund.per_asof:
+            extra.append(f"실적 기준 {fund.per_asof}")
+        if extra:
+            st.caption(" · ".join(extra))
+        if fund.summary:
+            st.write(fund.summary)
+        if fund.quarters:
+            qdf = pd.DataFrame(fund.quarters)
+            st.dataframe(qdf, hide_index=True, use_container_width=True)
+        st.caption(
+            f"출처: {fund.source}. 최근 공시·컨센서스 기준이며 지정일 과거 재무를 재구성하지 않습니다. "
+            "기술적 점수에는 넣지 않고 경고만 표시합니다."
+        )
 
 st.subheader("점수 내역")
 if signal.score_rows:
