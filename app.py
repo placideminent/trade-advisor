@@ -2,25 +2,35 @@
 
 from __future__ import annotations
 
-import json
 import os
+import time
 from datetime import date, timedelta
 from functools import partial
 
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 
 from src.analysis import analyze
 from src.backtest import DEFAULT_SIM, run_backtest
 from src.chart import build_chart, build_sim_chart
 from src.data import drop_incomplete_session, fetch_ohlcv, fetch_spot_price, market_today, search_kr
 from src.fundamentals import fetch_fundamentals, fmt_per, fmt_pct, fmt_pp, per_gap_text
+
 from src.prefs import (
     COOKIE_NAME,
     MAX_FAVORITES,
+    QUERY_KEY,
+    cookie_set_html,
     decode_cookie,
+    encode_cookie,
     load_prefs_file,
+    load_prefs_remote,
+    merge_prefs,
+    remote_enabled,
     save_prefs_file,
+    save_prefs_remote,
+    snapshot_key,
 )
 from src.signals import (
     CUT_FIELDS,
@@ -103,19 +113,42 @@ ACTION_CLASS = {
 }
 
 
-def _bootstrap_prefs() -> None:
-    if st.session_state.get("_prefs_boot"):
-        return
-    loaded = load_prefs_file()
+def _cookie_token() -> str | None:
     try:
         ctx = getattr(st, "context", None)
         cookies = getattr(ctx, "cookies", None) if ctx is not None else None
-        raw = cookies.get(COOKIE_NAME) if cookies is not None else None
-        cookie_data = decode_cookie(raw)
-        if cookie_data:
-            loaded = cookie_data
+        if cookies is None:
+            return None
+        raw = cookies.get(COOKIE_NAME)
+        if raw is None:
+            return None
+        return str(raw)
     except Exception:
-        pass
+        return None
+
+
+def _query_token() -> str | None:
+    try:
+        raw = st.query_params.get(QUERY_KEY)
+        if raw is None:
+            return None
+        if isinstance(raw, list):
+            raw = raw[0] if raw else None
+        return str(raw) if raw else None
+    except Exception:
+        return None
+
+
+def _prefs_payload(rule: dict) -> dict:
+    return {
+        "weights": rule["weights"],
+        "cuts": rule["cuts"],
+        "sim": {key: int(st.session_state.get(f"s_{key}", default)) for key, default in DEFAULT_SIM.items()},
+        "favorites": list(st.session_state.get("favorites") or []),
+    }
+
+
+def _apply_loaded_prefs(loaded: dict) -> None:
     for key, default in DEFAULT_WEIGHTS.items():
         val = int(loaded["weights"].get(key, default))
         if key == "support_near" and val == 2:
@@ -135,21 +168,61 @@ def _bootstrap_prefs() -> None:
     for key, default in DEFAULT_SIM.items():
         st.session_state[f"s_{key}"] = int(sim.get(key, default))
     st.session_state.favorites = list(loaded.get("favorites") or [])
+
+
+def _bootstrap_prefs() -> None:
+    if st.session_state.get("_prefs_boot"):
+        return
+    loaded = merge_prefs(
+        load_prefs_file(),
+        decode_cookie(_cookie_token()),
+        decode_cookie(_query_token()),
+        load_prefs_remote(),
+    )
+    _apply_loaded_prefs(loaded)
+    st.session_state._prefs_snapshot = snapshot_key(loaded)
     st.session_state._prefs_boot = True
+    st.session_state._prefs_just_booted = True
+    st.session_state._prefs_remote_ok = remote_enabled()
 
 
 def _persist_prefs(rule: dict) -> None:
-    payload = {
-        "weights": rule["weights"],
-        "cuts": rule["cuts"],
-        "sim": {key: int(st.session_state.get(f"s_{key}", default)) for key, default in DEFAULT_SIM.items()},
-        "favorites": list(st.session_state.get("favorites") or []),
-    }
-    snap = json.dumps(payload, sort_keys=True, ensure_ascii=False)
+    payload = _prefs_payload(rule)
+    snap = snapshot_key(payload)
+    just_booted = bool(st.session_state.pop("_prefs_just_booted", False))
     if st.session_state.get("_prefs_snapshot") == snap:
+        if just_booted:
+            save_prefs_file(payload)
         return
     st.session_state._prefs_snapshot = snap
+    payload["ts"] = int(time.time())
     save_prefs_file(payload)
+    if just_booted:
+        return
+    if remote_enabled():
+        st.session_state._prefs_remote_ok = save_prefs_remote(payload)
+    else:
+        try:
+            token = encode_cookie(payload)
+            if _query_token() != token:
+                st.query_params[QUERY_KEY] = token
+                st.session_state._prefs_url_ok = True
+        except Exception:
+            pass
+    st.session_state._prefs_cookie_html = cookie_set_html(payload)
+    st.session_state._prefs_cookie_dirty = True
+
+
+def _emit_prefs_cookie() -> None:
+    if not st.session_state.pop("_prefs_cookie_dirty", False):
+        return
+    html = st.session_state.get("_prefs_cookie_html")
+    if not html:
+        return
+    try:
+        components.html(html, height=1, width=1)
+    except Exception:
+        pass
 
 
 def _fav_list() -> list[dict]:
@@ -669,7 +742,7 @@ with st.sidebar:
 
     _init_rule_widgets()
     with st.expander("평가 배점·기준", expanded=False):
-        st.caption("합산 % 눈금(-5~19점)은 그대로 두고, 항목 점수와 매수/매도 컷만 바꿉니다. 바꾼 값은 이 브라우저에 저장됩니다.")
+        st.caption("합산 % 눈금(-5~19점)은 그대로 두고, 항목 점수와 매수/매도 컷만 바꿉니다. 바꾼 값은 리부트 후에도 남깁니다.")
         st.markdown("**매수 / 매도 기준**")
         cut_cols = st.columns(2)
         for i, (key, label, suffix) in enumerate(CUT_FIELDS):
@@ -735,6 +808,11 @@ with st.sidebar:
         sim = _read_sim_from_sidebar()
     rule = _read_rule_from_sidebar()
     _persist_prefs(rule)
+    _emit_prefs_cookie()
+    if st.session_state.get("_prefs_remote_ok"):
+        st.caption("즐겨찾기·배점·시뮬레이션은 리부트·다른 기기에서도 유지됩니다.")
+    else:
+        st.caption("즐겨찾기·배점·시뮬레이션은 이 브라우저에 저장되며 클라우드 리부트 후에도 유지됩니다.")
     run = False
     run_sim = False
     if page == "종목 분석":
@@ -797,7 +875,7 @@ if not run:
         5. 시뮬레이션 화면에서 기간·수량을 넣고 매일 신호대로 사고판 결과를 볼 수 있습니다.
 
         1개월은 1시간봉, 2·3개월은 4시간봉, 6개월·1년은 일봉으로 계산합니다.
-        평가 배점은 이 브라우저에 저장되어 다음에 들어와도 그대로 쓰입니다.
+        평가 배점·즐겨찾기·시뮬레이션 수량은 저장되어 다음에 들어와도, 클라우드를 리부트해도 그대로 씁니다.
         """
     )
     st.stop()

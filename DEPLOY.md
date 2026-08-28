@@ -50,7 +50,12 @@ GitHub에 코드를 올리면 Streamlit이 서버에서 실행합니다.
 
 ```
 APP_PASSWORD = "원하는비밀번호"
+
+# 리부트 후에도 즐겨찾기·배점·시뮬레이션을 남기려면 (gist 권한)
+GITHUB_TOKEN = "ghp_..."
 ```
+
+`GITHUB_TOKEN` 이 있으면 설정을 비공개 Gist 에 저장합니다. 없어도 같은 브라우저 쿠키로 리부트 후 복구를 시도합니다.
 
 8. Deploy. 끝나면 `https://xxxx.streamlit.app` 주소가 생깁니다.
 
