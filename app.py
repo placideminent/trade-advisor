@@ -633,6 +633,17 @@ def _market_name(code: str) -> str:
     return code or "-"
 
 
+def _sim_currency(market: str) -> str:
+    """KR는 원, 미국 주식·코인은 달러."""
+    return "KRW" if market == "KR" else "USD"
+
+
+def _fmt_ccy(amount: float, ccy: str) -> str:
+    if ccy == "KRW":
+        return f"{amount:+,.0f}원"
+    return f"${amount:+,.2f}"
+
+
 def _sim_qty_caption(start: date, end: date, lookback_label: str, sim: dict) -> str:
     return (
         f"{start} ~ {end} · 조회 {lookback_label} · "
@@ -647,14 +658,15 @@ def _show_sim_result(result) -> None:
     if result.error:
         st.error(result.error)
         return
+    ccy = _sim_currency(getattr(result, "market", "") or "")
     _kv_table(
         [
             ("종목", f"{result.name} ({result.ticker})"),
             ("잔량", f"{result.shares:,}주"),
             ("평단", _fmt(result.avg) if result.shares else "-"),
             ("종료가", _fmt(result.last_px)),
-            ("평가손익", f"{result.m2m:+,.0f} ({result.m2m_pct:+.2f}%)"),
-            ("실현손익", f"{result.realized:+,.0f}"),
+            ("평가손익", f"{_fmt_ccy(result.m2m, ccy)} ({result.m2m_pct:+.2f}%)"),
+            ("실현손익", _fmt_ccy(result.realized, ccy)),
             ("거래일", f"{result.days}일"),
         ]
     )
@@ -721,6 +733,7 @@ def _show_sim_favorites(results: list) -> None:
     totals: dict[str, dict] = {}
     for result in results:
         market = getattr(result, "market", "") or ""
+        ccy = _sim_currency(market)
         if result.error:
             rows.append(
                 {
@@ -735,7 +748,7 @@ def _show_sim_favorites(results: list) -> None:
                 }
             )
             continue
-        bucket = totals.setdefault(market, {"m2m": 0.0, "realized": 0.0, "n": 0})
+        bucket = totals.setdefault(ccy, {"m2m": 0.0, "realized": 0.0, "n": 0})
         bucket["m2m"] += float(result.m2m or 0)
         bucket["realized"] += float(result.realized or 0)
         bucket["n"] += 1
@@ -746,27 +759,41 @@ def _show_sim_favorites(results: list) -> None:
                 "잔량": f"{result.shares:,}주",
                 "평단": _fmt(result.avg) if result.shares else "-",
                 "종료가": _fmt(result.last_px),
-                "평가손익": f"{result.m2m:+,.0f} ({result.m2m_pct:+.2f}%)",
-                "실현손익": f"{result.realized:+,.0f}",
+                "평가손익": f"{_fmt_ccy(result.m2m, ccy)} ({result.m2m_pct:+.2f}%)",
+                "실현손익": _fmt_ccy(result.realized, ccy),
                 "비고": "",
             }
         )
     st.subheader("종목 요약")
     _show_table(pd.DataFrame(rows))
     if totals:
-        bits = []
-        for market, bucket in totals.items():
-            bits.append(
-                f"{_market_name(market)} {bucket['n']}종목 · "
-                f"평가손익 {bucket['m2m']:+,.0f} · 실현 {bucket['realized']:+,.0f}"
+        st.subheader("통화별 합계")
+        ccy_rows = []
+        for ccy in ("KRW", "USD"):
+            bucket = totals.get(ccy)
+            if not bucket:
+                continue
+            label = "원 (한국 주식)" if ccy == "KRW" else "달러 (미국 주식·코인)"
+            m2m = bucket["m2m"]
+            realized = bucket["realized"]
+            ccy_rows.append(
+                {
+                    "통화": label,
+                    "종목 수": f"{bucket['n']}종목",
+                    "평가손익": _fmt_ccy(m2m, ccy),
+                    "실현손익": _fmt_ccy(realized, ccy),
+                    "평가+실현": _fmt_ccy(m2m + realized, ccy),
+                }
             )
-        st.caption(" · ".join(bits) + " · 통화가 다른 시장은 합치지 않습니다.")
+        _show_table(pd.DataFrame(ccy_rows))
+        st.caption("코인은 달러 기준입니다. 원과 달러는 합치지 않습니다.")
     for result in results:
         title = f"{result.name} ({result.ticker})"
         if result.error:
             title += " · 실패"
         else:
-            title += f" · 평가 {result.m2m:+,.0f}"
+            ccy = _sim_currency(getattr(result, "market", "") or "")
+            title += f" · 평가 {_fmt_ccy(result.m2m, ccy)}"
         with st.expander(title, expanded=False):
             _show_sim_result(result)
 
