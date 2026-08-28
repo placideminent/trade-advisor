@@ -14,7 +14,7 @@ from src.analysis import analyze
 from src.backtest import DEFAULT_SIM, run_backtest
 from src.chart import build_chart, build_sim_chart
 from src.data import drop_incomplete_session, fetch_ohlcv, fetch_spot_price, market_today, search_kr
-from src.fundamentals import fetch_fundamentals, fmt_per, fmt_pct, per_gap_text
+from src.fundamentals import fetch_fundamentals, fmt_per, fmt_pct, fmt_pp, per_gap_text
 from src.prefs import (
     COOKIE_NAME,
     MAX_FAVORITES,
@@ -952,9 +952,17 @@ if fund is not None:
             help="매출총이익(매출−매출원가) ÷ 매출"
             + (f" · 기준 {fund.sales_margin_asof}" if fund.sales_margin_asof else ""),
         )
-        h2.metric("매출이익증가율", fmt_pct(fund.sales_profit_yoy), help="매출총이익 전년 동기 대비")
+        h2.metric(
+            "매출이익률 증감",
+            fmt_pp(fund.sales_profit_yoy),
+            help="전년 동기 매출이익률 대비 퍼센트포인트",
+        )
         h3.metric("영업이익률", fmt_pct(fund.op_margin), help="최근 분기 영업이익 ÷ 매출")
-        h4.metric("영업이익증가율", fmt_pct(fund.op_yoy), help="영업이익 전년 동기 대비")
+        h4.metric(
+            "영업이익률 증감",
+            fmt_pp(fund.op_yoy),
+            help="전년 동기 영업이익률 대비 퍼센트포인트",
+        )
         st.caption(per_gap_text(fund))
         extra = []
         if fund.eps is not None:

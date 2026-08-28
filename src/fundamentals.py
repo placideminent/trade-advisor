@@ -126,6 +126,13 @@ def _yoy_pct(cur: float | None, prev: float | None) -> float | None:
     return (cur / prev - 1.0) * 100.0
 
 
+def _pp_chg(cur: float | None, prev: float | None) -> float | None:
+    """이익률처럼 이미 %인 값의 전년 동기 대비 퍼센트포인트."""
+    if cur is None or prev is None:
+        return None
+    return cur - prev
+
+
 def _col_num(rows_by_title: dict, title: str, key: str) -> float | None:
     cell = (rows_by_title.get(title) or {}).get(key) or {}
     if not isinstance(cell, dict):
@@ -145,6 +152,12 @@ def _fmt_yoy(val: float | None) -> str | None:
     if val is None:
         return None
     return f"{val:+.1f}%"
+
+
+def _fmt_pp(val: float | None) -> str | None:
+    if val is None:
+        return None
+    return f"{val:+.1f}%p"
 
 
 def _period_from_ts(ts) -> str | None:
@@ -214,22 +227,31 @@ def _finance_table(payload: dict, gross_map: dict | None = None, limit: int = 4)
     for col in show:
         key = str(col.get("key") or "")
         prev = _yoy_key(key)
-        op = _col_num(rows_by_title, "영업이익", key)
         opm = _col_num(rows_by_title, "영업이익률", key)
-        prev_op = _col_num(rows_by_title, "영업이익", prev) if prev else None
+        prev_opm = _col_num(rows_by_title, "영업이익률", prev) if prev else None
+        if opm is None:
+            sales = _col_num(rows_by_title, "매출액", key)
+            op = _col_num(rows_by_title, "영업이익", key)
+            if sales and abs(sales) > 1e-12 and op is not None:
+                opm = op / sales * 100.0
+        if prev_opm is None and prev:
+            ps = _col_num(rows_by_title, "매출액", prev)
+            po = _col_num(rows_by_title, "영업이익", prev)
+            if ps and abs(ps) > 1e-12 and po is not None:
+                prev_opm = po / ps * 100.0
         gnow = gross_map.get(key) or {}
         gprev = gross_map.get(prev) if prev else None
         gm = gnow.get("margin")
-        gyoy = _yoy_pct(gnow.get("gross"), (gprev or {}).get("gross") if isinstance(gprev, dict) else None)
+        gm_prev = (gprev or {}).get("margin") if isinstance(gprev, dict) else None
         item = {
             "기간": str(col.get("title") or key).rstrip("."),
             "매출액": _col_text(rows_by_title, "매출액", key),
             "영업이익": _col_text(rows_by_title, "영업이익", key),
             "당기순이익": _col_text(rows_by_title, "당기순이익", key),
             "매출이익률": f"{gm:.2f}" if gm is not None else None,
-            "매출이익증가율": _fmt_yoy(gyoy),
+            "매출이익률증감": _fmt_pp(_pp_chg(gm, gm_prev)),
             "영업이익률": f"{opm:.2f}" if opm is not None else None,
-            "영업이익증가율": _fmt_yoy(_yoy_pct(op, prev_op)),
+            "영업이익률증감": _fmt_pp(_pp_chg(opm, prev_opm)),
             "ROE": _col_text(rows_by_title, "ROE", key),
             "부채비율": _col_text(rows_by_title, "부채비율", key),
         }
@@ -256,11 +278,22 @@ def _latest_margins(
         if isinstance(r, dict)
     }
     op_key = str(titles[-1].get("key") or "")
-    op = _col_num(rows_by_title, "영업이익", op_key)
     opm = _col_num(rows_by_title, "영업이익률", op_key)
-    prev_op = _col_num(rows_by_title, "영업이익", _yoy_key(op_key) or "")
+    prev_opm = _col_num(rows_by_title, "영업이익률", _yoy_key(op_key) or "")
+    if opm is None:
+        sales = _col_num(rows_by_title, "매출액", op_key)
+        op = _col_num(rows_by_title, "영업이익", op_key)
+        if sales and abs(sales) > 1e-12 and op is not None:
+            opm = op / sales * 100.0
+    if prev_opm is None:
+        pk = _yoy_key(op_key)
+        if pk:
+            ps = _col_num(rows_by_title, "매출액", pk)
+            po = _col_num(rows_by_title, "영업이익", pk)
+            if ps and abs(ps) > 1e-12 and po is not None:
+                prev_opm = po / ps * 100.0
     gross_map = gross_map or {}
-    gm = gyoy = None
+    gm = gpp = None
     gm_asof = ""
     for col in reversed(titles):
         key = str(col.get("key") or "")
@@ -270,10 +303,11 @@ def _latest_margins(
         prev = _yoy_key(key)
         gprev = gross_map.get(prev) if prev else None
         gm = gnow.get("margin")
-        gyoy = _yoy_pct(gnow.get("gross"), (gprev or {}).get("gross") if isinstance(gprev, dict) else None)
+        gm_prev = (gprev or {}).get("margin") if isinstance(gprev, dict) else None
+        gpp = _pp_chg(gm, gm_prev)
         gm_asof = str(col.get("title") or key).rstrip(".")
         break
-    return gm, gyoy, gm_asof, opm, _yoy_pct(op, prev_op)
+    return gm, gpp, gm_asof, opm, _pp_chg(opm, prev_opm)
 
 
 def _yoy_op_down_streak(payload: dict) -> int:
@@ -426,16 +460,15 @@ def _yahoo_fundamentals(symbol: str) -> Fundamentals:
         return n
 
     out.op_margin = _ratio_pct(info.get("operatingMargins"))
-    out.op_yoy = _ratio_pct(info.get("earningsGrowth"))
     gmap = _yahoo_gross_map(symbol)
     if gmap:
         keys = sorted(gmap)
         last = keys[-1]
         prev = _yoy_key(last)
         out.sales_margin = gmap[last].get("margin")
-        out.sales_profit_yoy = _yoy_pct(
-            gmap[last].get("gross"),
-            (gmap.get(prev) or {}).get("gross") if prev else None,
+        out.sales_profit_yoy = _pp_chg(
+            gmap[last].get("margin"),
+            (gmap.get(prev) or {}).get("margin") if prev else None,
         )
         out.sales_margin_asof = f"{last[:4]}.{last[4:]}" if len(last) >= 6 else last
     return out
@@ -489,6 +522,12 @@ def fmt_pct(val: float | None) -> str:
     return f"{val:.2f}%"
 
 
+def fmt_pp(val: float | None) -> str:
+    if val is None:
+        return "-"
+    return f"{val:+.1f}%p"
+
+
 def per_gap_text(fund: Fundamentals) -> str:
     if fund.per is None or fund.forward_per is None:
         return "실적 PER 또는 추정 PER이 없어 차이를 계산하지 못했습니다."
@@ -518,7 +557,7 @@ def fetch_fundamentals(market: str, ticker: str, action: str | None = None) -> F
     if not ticker:
         return Fundamentals(market=market, ticker=ticker, error="종목 코드가 없습니다.")
 
-    cache = CACHE_DIR / f"fund3_{market}_{ticker}_{date.today().isoformat()}.json"
+    cache = CACHE_DIR / f"fund4_{market}_{ticker}_{date.today().isoformat()}.json"
     cached = None
     if cache.exists():
         try:
