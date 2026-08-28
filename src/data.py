@@ -318,10 +318,78 @@ def _kr_yahoo_symbols(code: str) -> list[str]:
     return [f"{code}{s}" for s in suffixes]
 
 
-def _naver_spot(code: str) -> float | None:
+def _parse_price(val) -> float | None:
+    if val is None:
+        return None
+    if isinstance(val, (int, float)):
+        px = float(val)
+        return px if px > 0 else None
+    text = str(val).replace(",", "").replace(" ", "").strip()
+    if not text:
+        return None
+    try:
+        px = float(text)
+    except (TypeError, ValueError):
+        return None
+    return px if px > 0 else None
+
+
+def _naver_payload_price(node: dict) -> tuple[float | None, str]:
+    """정규장 현재가, 장 마감 후면 NXT 시간외 최근 체결가."""
+    if not isinstance(node, dict):
+        return None, ""
+    if isinstance(node.get("datas"), list) and node["datas"]:
+        node = node["datas"][0] if isinstance(node["datas"][0], dict) else node
+    regular = _parse_price(
+        node.get("closePrice")
+        or node.get("nv")
+        or node.get("nowVal")
+        or node.get("currentPrice")
+    )
+    market_status = str(node.get("marketStatus") or "").upper()
+    over = node.get("overMarketPriceInfo")
+    over = over if isinstance(over, dict) else {}
+    over_px = _parse_price(over.get("overPrice"))
+    session = str(over.get("tradingSessionType") or "").upper()
+    over_status = str(over.get("overMarketStatus") or "").upper()
+    off_hours = session in ("AFTER_MARKET", "PRE_MARKET")
+    if over_px and off_hours and (over_status == "OPEN" or market_status != "OPEN"):
+        label = "Naver 시간외(프리)" if "PRE" in session else "Naver 시간외(NXT)"
+        return over_px, label
+    if (
+        over_px
+        and market_status != "OPEN"
+        and regular
+        and abs(over_px - regular) > 1e-9
+    ):
+        return over_px, "Naver 시간외(NXT)"
+    if regular:
+        return regular, "Naver 현재가"
+    if over_px:
+        return over_px, "Naver 시간외"
+    return None, ""
+
+
+def _naver_spot(code: str) -> tuple[float | None, str]:
     import requests
 
-    headers = {"User-Agent": "Mozilla/5.0"}
+    headers = {
+        "User-Agent": "Mozilla/5.0",
+        "Referer": "https://m.stock.naver.com/",
+    }
+    urls = (
+        f"https://m.stock.naver.com/api/stock/{code}/basic",
+        f"https://polling.finance.naver.com/api/realtime/domestic/stock/{code}",
+    )
+    for url in urls:
+        try:
+            resp = requests.get(url, headers=headers, timeout=10)
+            resp.raise_for_status()
+            px, src = _naver_payload_price(resp.json())
+            if px:
+                return px, src
+        except Exception:
+            continue
     try:
         resp = requests.get(
             "https://polling.finance.naver.com/api/realtime",
@@ -331,28 +399,15 @@ def _naver_spot(code: str) -> float | None:
         )
         resp.raise_for_status()
         datas = (((resp.json().get("result") or {}).get("areas") or [{}])[0].get("datas") or [{}])[0]
-        nv = datas.get("nv")
-        if nv is None:
-            return None
-        return float(nv)
+        px = _parse_price(datas.get("nv"))
+        if px:
+            return px, "Naver 현재가"
     except Exception:
-        try:
-            resp = requests.get(
-                f"https://m.stock.naver.com/api/stock/{code}/basic",
-                headers=headers,
-                timeout=10,
-            )
-            resp.raise_for_status()
-            js = resp.json()
-            for key in ("closePrice", "nowVal", "nv", "currentPrice"):
-                if js.get(key) is not None:
-                    return float(str(js[key]).replace(",", ""))
-        except Exception:
-            return None
-    return None
+        pass
+    return None, ""
 
 
-def _yahoo_spot(symbol: str) -> float | None:
+def _yahoo_spot(symbol: str) -> tuple[float | None, str]:
     import requests
 
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
@@ -360,7 +415,7 @@ def _yahoo_spot(symbol: str) -> float | None:
         try:
             resp = requests.get(
                 f"https://{host}/v8/finance/chart/{symbol}",
-                params={"range": "1d", "interval": "1m", "includePrePost": "false"},
+                params={"range": "1d", "interval": "1m", "includePrePost": "true"},
                 headers=headers,
                 timeout=12,
             )
@@ -370,40 +425,70 @@ def _yahoo_spot(symbol: str) -> float | None:
                 continue
             node = result[0]
             meta = node.get("meta") or {}
+            quote = ((node.get("indicators") or {}).get("quote") or [{}])[0]
+            timestamps = node.get("timestamp") or []
+            closes = quote.get("close") or []
+            last_px = None
+            last_ts = None
+            for ts, close in zip(timestamps, closes):
+                if close is None:
+                    continue
+                try:
+                    last_px = float(close)
+                    last_ts = int(ts)
+                except (TypeError, ValueError):
+                    continue
+            periods = meta.get("currentTradingPeriod") or {}
+
+            def _span(name: str) -> tuple[int | None, int | None]:
+                part = periods.get(name) if isinstance(periods, dict) else None
+                if not isinstance(part, dict):
+                    return None, None
+                try:
+                    start = int(part["start"]) if part.get("start") is not None else None
+                    end = int(part["end"]) if part.get("end") is not None else None
+                except (TypeError, ValueError, KeyError):
+                    return None, None
+                return start, end
+
+            pre_s, pre_e = _span("pre")
+            post_s, post_e = _span("post")
+            label = "Yahoo 현재가"
+            if last_ts is not None:
+                if pre_s is not None and pre_e is not None and pre_s <= last_ts < pre_e:
+                    label = "Yahoo 시간외(프리)"
+                elif post_s is not None and last_ts >= post_s:
+                    label = "Yahoo 시간외(애프터)"
+            if last_px:
+                return last_px, label
             px = meta.get("regularMarketPrice")
             if px is not None:
-                return float(px)
-            quote = ((node.get("indicators") or {}).get("quote") or [{}])[0]
-            closes = [c for c in (quote.get("close") or []) if c is not None]
-            if closes:
-                return float(closes[-1])
+                return float(px), "Yahoo 현재가"
         except Exception:
             continue
-    return None
+    return None, ""
 
 
 def fetch_spot_price(market: str, ticker: str) -> tuple[float | None, str]:
-    """조회 직후 현재가. 장중이 아니면 최근 체결가."""
+    """조회 직후 현재가. 정규장 마감 후면 시간외(NXT/프리·애프터) 최근 체결가."""
     if market == "KR":
         code = ticker.strip().zfill(6)
-        px = _naver_spot(code)
+        px, src = _naver_spot(code)
         if px:
-            return px, "Naver 현재가"
+            return px, src
         for symbol in _kr_yahoo_symbols(code):
-            px = _yahoo_spot(symbol)
+            px, src = _yahoo_spot(symbol)
             if px:
-                return px, f"Yahoo 현재가 ({symbol})"
+                return px, f"{src} ({symbol})"
         return None, ""
     if market == "US":
         symbol = ticker.strip().upper()
-        px = _yahoo_spot(symbol)
-        return (px, "Yahoo 현재가") if px else (None, "")
+        return _yahoo_spot(symbol)
     if market == "CRYPTO":
         key = ticker.strip().upper().replace("-USD", "").replace("USDT", "").replace("/", "")
         info = CRYPTO.get(key)
         symbol = info["symbol"] if info else f"{key}-USD"
-        px = _yahoo_spot(symbol)
-        return (px, "Yahoo 현재가") if px else (None, "")
+        return _yahoo_spot(symbol)
     return None, ""
 
 
