@@ -227,14 +227,24 @@ _bootstrap_prefs()
 st.markdown(
     """
     <style>
-      .block-container { padding-top: 1.2rem; }
-      .action-buy-strong { background:#86efac; color:#14532d; padding:1rem 1.2rem; border-radius:12px; }
-      .action-buy { background:#dcfce7; color:#14532d; padding:1rem 1.2rem; border-radius:12px; }
-      .action-buy-weak { background:#ecfccb; color:#3f6212; padding:1rem 1.2rem; border-radius:12px; }
-      .action-sell-strong { background:#fca5a5; color:#7f1d1d; padding:1rem 1.2rem; border-radius:12px; }
-      .action-sell { background:#fee2e2; color:#7f1d1d; padding:1rem 1.2rem; border-radius:12px; }
-      .action-sell-weak { background:#fecaca; color:#9f1239; padding:1rem 1.2rem; border-radius:12px; }
-      .action-hold { background:#fef9c3; color:#713f12; padding:1rem 1.2rem; border-radius:12px; }
+      .block-container { padding-top: 0.8rem; padding-bottom: 2.5rem; }
+      .action-buy-strong { background:#86efac; color:#14532d; padding:0.75rem 0.9rem; border-radius:10px; }
+      .action-buy { background:#dcfce7; color:#14532d; padding:0.75rem 0.9rem; border-radius:10px; }
+      .action-buy-weak { background:#ecfccb; color:#3f6212; padding:0.75rem 0.9rem; border-radius:10px; }
+      .action-sell-strong { background:#fca5a5; color:#7f1d1d; padding:0.75rem 0.9rem; border-radius:10px; }
+      .action-sell { background:#fee2e2; color:#7f1d1d; padding:0.75rem 0.9rem; border-radius:10px; }
+      .action-sell-weak { background:#fecaca; color:#9f1239; padding:0.75rem 0.9rem; border-radius:10px; }
+      .action-hold { background:#fef9c3; color:#713f12; padding:0.75rem 0.9rem; border-radius:10px; }
+      [data-testid="stDataFrame"] { overflow-x: auto; }
+      @media (max-width: 640px) {
+        .block-container { padding-left: 0.55rem; padding-right: 0.55rem; }
+        h1 { font-size: 1.35rem !important; }
+        h2, h3 { font-size: 1.05rem !important; }
+        .action-buy-strong, .action-buy, .action-buy-weak,
+        .action-sell-strong, .action-sell, .action-sell-weak, .action-hold {
+          padding: 0.6rem 0.7rem; font-size: 0.95rem;
+        }
+      }
     </style>
     """,
     unsafe_allow_html=True,
@@ -250,6 +260,25 @@ st.caption(
 
 def _preset_label(code: str, name: str) -> str:
     return f"{name} ({code})"
+
+
+def _kv_table(pairs: list[tuple[str, str]]) -> None:
+    st.dataframe(
+        pd.DataFrame(pairs, columns=["항목", "값"]),
+        hide_index=True,
+        use_container_width=True,
+    )
+
+
+def _transpose_records(rows: list[dict], index_key: str = "기간") -> pd.DataFrame:
+    if not rows:
+        return pd.DataFrame()
+    periods = [str(r.get(index_key) or "") for r in rows]
+    keys = [k for k in rows[0].keys() if k != index_key]
+    data = {"항목": keys}
+    for rec, period in zip(rows, periods):
+        data[period] = [rec.get(k) for k in keys]
+    return pd.DataFrame(data)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -365,32 +394,38 @@ def _render_favorites(as_of, lookback_days: int, timeframe: str, lookback_label:
         row["name"] = item.get("name") or row.get("name") or item["ticker"]
         results.append(row)
     bar.empty()
+    table_rows = []
     for row in results:
-        cols = st.columns([6, 1])
-        with cols[0]:
-            if row.get("error"):
-                st.markdown(
-                    f"<div class='action-hold'><b>{row['name']}</b> ({row['ticker']}) · "
-                    f"계산 실패: {row['error']}</div>",
-                    unsafe_allow_html=True,
-                )
-            else:
-                cls = ACTION_CLASS.get(row["action"], "action-hold")
-                st.markdown(
-                    f"<div class='{cls}'>"
-                    f"<div style='font-size:0.85rem;opacity:0.8'>{row['name']} ({row['ticker']}) · "
-                    f"{row['price_label']} {_fmt(row['price'])}</div>"
-                    f"<div style='font-size:1.35rem;font-weight:700'>제안: {row['action']}"
-                    f"{(' · 가격 ' + row['value_label']) if row.get('value_label') else ''} "
-                    f"<span style='font-size:1rem;font-weight:500'>합산 {row['score_pct']}%</span></div>"
-                    f"</div>",
-                    unsafe_allow_html=True,
-                )
-        with cols[1]:
+        if row.get("error"):
+            table_rows.append(
+                {
+                    "종목": row.get("name") or row.get("ticker"),
+                    "코드": row.get("ticker"),
+                    "제안": "실패",
+                    "가격판정": "-",
+                    "합산%": "-",
+                    "현재가": row.get("error"),
+                }
+            )
+        else:
+            table_rows.append(
+                {
+                    "종목": row.get("name") or row.get("ticker"),
+                    "코드": row.get("ticker"),
+                    "제안": row.get("action"),
+                    "가격판정": row.get("value_label") or "-",
+                    "합산%": row.get("score_pct"),
+                    "현재가": _fmt(row["price"]) if row.get("price") else "-",
+                }
+            )
+    st.dataframe(pd.DataFrame(table_rows), hide_index=True, use_container_width=True)
+    with st.expander("즐겨찾기 삭제"):
+        for row in results:
             st.button(
-                "삭제",
+                f"{row.get('name') or row.get('ticker')} 삭제",
                 key=f"unfav_{row['market']}_{row['ticker']}",
                 on_click=partial(_remove_fav, row["market"], row["ticker"]),
+                use_container_width=True,
             )
 
 
@@ -451,12 +486,17 @@ def _render_simulation(
         st.error(result.error)
         return
 
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("잔량", f"{result.shares:,}주")
-    c2.metric("평단", _fmt(result.avg) if result.shares else "-")
-    c3.metric("종료가", _fmt(result.last_px))
-    c4.metric("평가손익", f"{result.m2m:+,.0f}", f"{result.m2m_pct:+.2f}%")
-    c5.metric("실현손익", f"{result.realized:+,.0f}")
+    _kv_table(
+        [
+            ("종목", f"{result.name} ({result.ticker})"),
+            ("잔량", f"{result.shares:,}주"),
+            ("평단", _fmt(result.avg) if result.shares else "-"),
+            ("종료가", _fmt(result.last_px)),
+            ("평가손익", f"{result.m2m:+,.0f} ({result.m2m_pct:+.2f}%)"),
+            ("실현손익", f"{result.realized:+,.0f}"),
+            ("거래일", f"{result.days}일"),
+        ]
+    )
     counts = result.counts or {}
     st.caption(
         f"{result.name} ({result.ticker}) · 거래일 {result.days}일 · "
@@ -844,80 +884,68 @@ six_txt = (
 st.markdown(
     f"""
     <div class="{action_class}">
-      <div style="font-size:0.9rem;opacity:0.8">{meta.get("name") or display_name} ·
+      <div style="font-size:0.85rem;opacity:0.8">{meta.get("name") or display_name} ·
       분석일 {as_of} · {meta.get("bar", bar_name)} · {analysis.price_label} 기준
       {(" · " + analysis.price_source) if analysis.price_source else ""}</div>
-      <div style="font-size:1.8rem;font-weight:700;margin:0.2rem 0">제안: {signal.action}{value_side}
-      <span style="font-size:1rem;font-weight:500">합산 {signal.score_pct}%{six_txt} · 신뢰 {signal.confidence}%</span></div>
-      <div>{signal.summary}</div>
+      <div style="font-size:1.25rem;font-weight:700;margin:0.25rem 0">제안 {signal.action}{value_side}</div>
+      <div style="font-size:0.95rem">{signal.summary}</div>
     </div>
     """,
     unsafe_allow_html=True,
 )
 
-fav_l, fav_r = st.columns([3, 1])
-with fav_r:
-    if _is_fav(market, ticker):
-        st.button(
-            "즐겨찾기 해제",
-            use_container_width=True,
-            on_click=partial(_remove_fav, market, ticker),
-        )
-    else:
-        st.button(
-            "★ 즐겨찾기 추가",
-            use_container_width=True,
-            on_click=partial(_add_fav, market, ticker, display_name or ticker),
-        )
-if st.session_state.pop("_fav_full", False):
-    st.warning(f"즐겨찾기는 {MAX_FAVORITES}개까지입니다.")
-
-c1, c2, c3, c4, c5, c6 = st.columns(6)
+price_cell = _fmt(analysis.price)
 if is_live and last_bar_price and abs(float(analysis.price) - last_bar_price) > 1e-9:
-    c1.metric(
-        analysis.price_label,
-        _fmt(analysis.price),
-        delta=f"최근 봉 {_fmt(last_bar_price)}",
-        delta_color="off",
+    price_cell = f"{_fmt(analysis.price)} (봉 {_fmt(last_bar_price)})"
+_kv_table(
+    [
+        ("제안", signal.action),
+        ("가격 판정", (fund.value_label if fund and not fund.error else None) or "-"),
+        ("합산", f"{signal.score_pct}%{six_txt}"),
+        ("신뢰", f"{signal.confidence}%"),
+        (analysis.price_label, price_cell),
+        ("지지", _fmt(signal.nearest_support.price) if signal.nearest_support else "-"),
+        ("저항", _fmt(signal.nearest_resistance.price) if signal.nearest_resistance else "-"),
+        ("POC", _fmt(analysis.poc)),
+        ("VAL", _fmt(analysis.val)),
+        ("VAH", _fmt(analysis.vah)),
+        ("RSI", f"{analysis.rsi:.1f}"),
+        ("손익비", f"{signal.reward_risk:.2f}" if signal.reward_risk is not None else "-"),
+        ("손절 참고", _fmt(signal.stop) if signal.stop else "-"),
+        ("1차 목표", _fmt(signal.target) if signal.target else "-"),
+    ]
+)
+
+if _is_fav(market, ticker):
+    st.button(
+        "즐겨찾기 해제",
+        use_container_width=True,
+        on_click=partial(_remove_fav, market, ticker),
     )
 else:
-    c1.metric(analysis.price_label, _fmt(analysis.price))
-c2.metric("지지", _fmt(signal.nearest_support.price) if signal.nearest_support else "-")
-c3.metric("저항", _fmt(signal.nearest_resistance.price) if signal.nearest_resistance else "-")
-c4.metric("POC", _fmt(analysis.poc))
-c5.metric("RSI", f"{analysis.rsi:.1f}")
-c6.metric(
-    "손익비",
-    f"{signal.reward_risk:.2f}" if signal.reward_risk is not None else "-",
-)
+    st.button(
+        "★ 즐겨찾기 추가",
+        use_container_width=True,
+        on_click=partial(_add_fav, market, ticker, display_name or ticker),
+    )
+if st.session_state.pop("_fav_full", False):
+    st.warning(f"즐겨찾기는 {MAX_FAVORITES}개까지입니다.")
 
 st.subheader("점수 내역")
 if signal.score_rows:
     st.dataframe(pd.DataFrame(signal.score_rows), hide_index=True, use_container_width=True)
-st.caption(f"VAL {_fmt(analysis.val)} · VAH {_fmt(analysis.vah)} · POC {_fmt(analysis.poc)}")
 
-left, right = st.columns([1.15, 0.85])
-with left:
-    st.subheader("근거")
-    for reason in signal.reasons:
-        st.write(f"- {reason}")
-    if signal.stop:
-        st.write(f"- 무효화(손절 참고): **{_fmt(signal.stop)}**")
-    if signal.target:
-        st.write(f"- 1차 목표(다음 저항): **{_fmt(signal.target)}**")
-
-with right:
-    st.subheader("주요 가격대")
-    rows = []
-    for lv in analysis.supports:
-        rows.append({"구분": "지지", "가격": _fmt(lv.price), "근거": lv.note, "강도": round(lv.strength, 2)})
-    for lv in analysis.resistances:
-        rows.append({"구분": "저항", "가격": _fmt(lv.price), "근거": lv.note, "강도": round(lv.strength, 2)})
-    for lv in analysis.volume_nodes:
-        rows.append(
-            {"구분": "매물대", "가격": _fmt(lv.price), "근거": lv.note, "강도": round(lv.strength, 2)}
-        )
-    st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+st.subheader("주요 가격대")
+rows = []
+for lv in analysis.supports:
+    rows.append({"구분": "지지", "가격": _fmt(lv.price), "근거": lv.note, "강도": round(lv.strength, 2)})
+for lv in analysis.resistances:
+    rows.append({"구분": "저항", "가격": _fmt(lv.price), "근거": lv.note, "강도": round(lv.strength, 2)})
+for lv in analysis.volume_nodes:
+    rows.append(
+        {"구분": "매물대", "가격": _fmt(lv.price), "근거": lv.note, "강도": round(lv.strength, 2)}
+    )
+st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
 
 last_txt = (
     analysis.last_bar.strftime("%Y-%m-%d %H:%M")
@@ -925,7 +953,11 @@ last_txt = (
     else str(analysis.last_bar.date())
 )
 title = f"{meta.get('name', ticker)} ({meta.get('ticker', ticker)})  ·  {bar_name}  ·  {analysis.price_label} {_fmt(analysis.price)}"
-st.plotly_chart(build_chart(analysis, signal, title), use_container_width=True)
+st.plotly_chart(
+    build_chart(analysis, signal, title),
+    use_container_width=True,
+    config={"displayModeBar": False, "responsive": True},
+)
 
 st.caption(
     f"데이터: {meta.get('source')} · {bar_name} · "
@@ -948,62 +980,51 @@ if fund is not None:
         st.markdown(f"**가격 판정: {verdict}**")
         if fund.per_vs_industry is not None:
             st.caption(f"업종 대비 실적 PER {fund.per_vs_industry:.2f}배 · 기술적 점수와는 별개입니다.")
-        for why in fund.value_reasons:
-            st.write(f"- {why}")
+        if fund.value_reasons:
+            st.dataframe(
+                pd.DataFrame({"판정 근거": fund.value_reasons}),
+                hide_index=True,
+                use_container_width=True,
+            )
         for note in fund.warnings:
             st.warning(note)
-        f1, f2, f3, f4 = st.columns(4)
-        f1.metric("실적 PER", fmt_per(fund.per))
-        f2.metric("추정 PER", fmt_per(fund.forward_per))
-        gap_label = "-"
-        if fund.per_gap is not None:
-            gap_label = f"{fund.per_gap:+.2f}배"
-        f3.metric("추정−실적", gap_label)
-        f4.metric(
-            "업종 PER",
-            fmt_per(fund.industry_per),
-            help=fund.industry_name or "동일업종 평균",
-        )
-        g1, g2, g3, g4 = st.columns(4)
-        g1.metric("PBR", fmt_per(fund.pbr) if fund.pbr is not None else "-")
-        g2.metric("시총", fund.market_cap or "-")
-        g3.metric("배당수익률", fmt_pct(fund.dividend_yield))
-        g4.metric("외인소진율", fmt_pct(fund.foreign_rate))
-        h1, h2, h3, h4 = st.columns(4)
-        h1.metric(
-            "매출이익률",
-            fmt_pct(fund.sales_margin),
-            help="매출총이익(매출−매출원가) ÷ 매출"
-            + (f" · 기준 {fund.sales_margin_asof}" if fund.sales_margin_asof else ""),
-        )
-        h2.metric(
-            "매출이익률 증감",
-            fmt_pp(fund.sales_profit_yoy),
-            help="전년 동기 매출이익률 대비 퍼센트포인트",
-        )
-        h3.metric("영업이익률", fmt_pct(fund.op_margin), help="최근 분기 영업이익 ÷ 매출")
-        h4.metric(
-            "영업이익률 증감",
-            fmt_pp(fund.op_yoy),
-            help="전년 동기 영업이익률 대비 퍼센트포인트",
-        )
-        st.caption(per_gap_text(fund))
-        extra = []
+        gap_label = f"{fund.per_gap:+.2f}배" if fund.per_gap is not None else "-"
+        fund_rows = [
+            ("실적 PER", fmt_per(fund.per)),
+            ("추정 PER", fmt_per(fund.forward_per)),
+            ("추정−실적", gap_label),
+            ("업종 PER", fmt_per(fund.industry_per)),
+            ("PBR", fmt_per(fund.pbr)),
+            ("시총", fund.market_cap or "-"),
+            ("배당수익률", fmt_pct(fund.dividend_yield)),
+            ("외인소진율", fmt_pct(fund.foreign_rate)),
+            (
+                "매출이익률",
+                fmt_pct(fund.sales_margin)
+                + (f" ({fund.sales_margin_asof})" if fund.sales_margin_asof else ""),
+            ),
+            ("매출이익률 증감", fmt_pp(fund.sales_profit_yoy)),
+            ("영업이익률", fmt_pct(fund.op_margin)),
+            ("영업이익률 증감", fmt_pp(fund.op_yoy)),
+        ]
         if fund.eps is not None:
-            extra.append(f"EPS {_fmt(fund.eps)}")
+            fund_rows.append(("EPS", _fmt(fund.eps)))
         if fund.forward_eps is not None:
-            extra.append(f"추정 EPS {_fmt(fund.forward_eps)}")
+            fund_rows.append(("추정 EPS", _fmt(fund.forward_eps)))
         if fund.high_52w or fund.low_52w:
-            extra.append(f"52주 {fund.low_52w or '-'} ~ {fund.high_52w or '-'}")
+            fund_rows.append(("52주", f"{fund.low_52w or '-'} ~ {fund.high_52w or '-'}"))
         if fund.per_asof:
-            extra.append(f"실적 기준 {fund.per_asof}")
-        if extra:
-            st.caption(" · ".join(extra))
+            fund_rows.append(("실적 기준", fund.per_asof))
+        _kv_table(fund_rows)
+        st.caption(per_gap_text(fund))
         if fund.summary:
             st.write(fund.summary)
         if fund.quarters:
-            qdf = pd.DataFrame(fund.quarters)
-            st.dataframe(qdf, hide_index=True, use_container_width=True)
+            st.dataframe(
+                _transpose_records(fund.quarters),
+                hide_index=True,
+                use_container_width=True,
+            )
         st.caption(
             f"출처: {fund.source}. 최근 공시·컨센서스 기준이며 지정일 과거 재무를 재구성하지 않습니다. "
             "기술적 점수에는 넣지 않고 경고만 표시합니다."
