@@ -40,6 +40,7 @@ class BacktestResult:
     start: date
     end: date
     lookback_label: str
+    market: str = ""
     last_px: float = 0.0
     shares: int = 0
     avg: float = 0.0
@@ -112,6 +113,7 @@ def run_backtest(
         start=start,
         end=end,
         lookback_label=lookback_label,
+        market=market,
     )
     if start > end:
         result.error = "시작일이 종료일보다 뒤입니다."
