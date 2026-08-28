@@ -946,8 +946,13 @@ if fund is not None:
         g3.metric("배당수익률", fmt_pct(fund.dividend_yield))
         g4.metric("외인소진율", fmt_pct(fund.foreign_rate))
         h1, h2, h3, h4 = st.columns(4)
-        h1.metric("매출이익률", fmt_pct(fund.sales_margin), help="최근 분기 순이익 ÷ 매출")
-        h2.metric("매출이익증가율", fmt_pct(fund.sales_profit_yoy), help="당기순이익 전년 동기 대비")
+        h1.metric(
+            "매출이익률",
+            fmt_pct(fund.sales_margin),
+            help="매출총이익(매출−매출원가) ÷ 매출"
+            + (f" · 기준 {fund.sales_margin_asof}" if fund.sales_margin_asof else ""),
+        )
+        h2.metric("매출이익증가율", fmt_pct(fund.sales_profit_yoy), help="매출총이익 전년 동기 대비")
         h3.metric("영업이익률", fmt_pct(fund.op_margin), help="최근 분기 영업이익 ÷ 매출")
         h4.metric("영업이익증가율", fmt_pct(fund.op_yoy), help="영업이익 전년 동기 대비")
         st.caption(per_gap_text(fund))

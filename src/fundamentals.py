@@ -7,9 +7,10 @@ import re
 from dataclasses import dataclass, field
 from datetime import date
 
+import pandas as pd
 import requests
 
-from .data import CACHE_DIR
+from .data import CACHE_DIR, _kr_yahoo_symbols
 
 _HEADERS = {
     "User-Agent": "Mozilla/5.0",
@@ -24,7 +25,10 @@ def _parse_num(val) -> float | None:
     if val is None:
         return None
     if isinstance(val, (int, float)):
-        return float(val)
+        px = float(val)
+        if px != px:  # NaN
+            return None
+        return px
     text = str(val)
     text = text.replace(",", "").replace(" ", "")
     for token in ("배", "원", "%", "억", "조"):
@@ -89,6 +93,7 @@ class Fundamentals:
     summary: str = ""
     sales_margin: float | None = None
     sales_profit_yoy: float | None = None
+    sales_margin_asof: str = ""
     op_margin: float | None = None
     op_yoy: float | None = None
     quarters: list[dict] = field(default_factory=list)
@@ -142,7 +147,56 @@ def _fmt_yoy(val: float | None) -> str | None:
     return f"{val:+.1f}%"
 
 
-def _finance_table(payload: dict, limit: int = 4) -> list[dict]:
+def _period_from_ts(ts) -> str | None:
+    try:
+        t = pd.Timestamp(ts)
+    except Exception:
+        return None
+    if t.month not in (3, 6, 9, 12):
+        return f"{t.year}{t.month:02d}"
+    return f"{t.year}{t.month:02d}"
+
+
+def _yahoo_gross_map(symbol: str) -> dict[str, dict]:
+    """분기별 매출총이익(Gross Profit). key=YYYYMM."""
+    import yfinance as yf
+
+    out: dict[str, dict] = {}
+    try:
+        q = yf.Ticker(symbol).quarterly_financials
+    except Exception:
+        return out
+    if q is None or getattr(q, "empty", True):
+        return out
+    idx = {str(i): i for i in q.index}
+
+    def _row(name: str):
+        for key, raw in idx.items():
+            if key.lower() == name.lower():
+                return q.loc[raw]
+        return None
+
+    gross = _row("Gross Profit")
+    rev = _row("Total Revenue")
+    if gross is None or rev is None:
+        return out
+    for col in q.columns:
+        key = _period_from_ts(col)
+        if not key:
+            continue
+        g = _parse_num(gross.get(col))
+        r = _parse_num(rev.get(col))
+        if g is None or r is None or abs(r) < 1e-12:
+            continue
+        out[key] = {
+            "gross": g,
+            "revenue": r,
+            "margin": g / r * 100.0,
+        }
+    return out
+
+
+def _finance_table(payload: dict, gross_map: dict | None = None, limit: int = 4) -> list[dict]:
     info = payload.get("financeInfo") or {}
     titles = info.get("trTitleList") or []
     actual = [t for t in titles if isinstance(t, dict) and str(t.get("isConsensus") or "N") != "Y"]
@@ -155,26 +209,25 @@ def _finance_table(payload: dict, limit: int = 4) -> list[dict]:
         for r in (info.get("rowList") or [])
         if isinstance(r, dict)
     }
+    gross_map = gross_map or {}
     out = []
     for col in show:
         key = str(col.get("key") or "")
         prev = _yoy_key(key)
-        sales = _col_num(rows_by_title, "매출액", key)
         op = _col_num(rows_by_title, "영업이익", key)
-        ni = _col_num(rows_by_title, "당기순이익", key)
         opm = _col_num(rows_by_title, "영업이익률", key)
-        npm = _col_num(rows_by_title, "순이익률", key)
-        if npm is None and sales and abs(sales) > 1e-12 and ni is not None:
-            npm = ni / sales * 100.0
         prev_op = _col_num(rows_by_title, "영업이익", prev) if prev else None
-        prev_ni = _col_num(rows_by_title, "당기순이익", prev) if prev else None
+        gnow = gross_map.get(key) or {}
+        gprev = gross_map.get(prev) if prev else None
+        gm = gnow.get("margin")
+        gyoy = _yoy_pct(gnow.get("gross"), (gprev or {}).get("gross") if isinstance(gprev, dict) else None)
         item = {
             "기간": str(col.get("title") or key).rstrip("."),
             "매출액": _col_text(rows_by_title, "매출액", key),
             "영업이익": _col_text(rows_by_title, "영업이익", key),
             "당기순이익": _col_text(rows_by_title, "당기순이익", key),
-            "매출이익률": f"{npm:.2f}" if npm is not None else None,
-            "매출이익증가율": _fmt_yoy(_yoy_pct(ni, prev_ni)),
+            "매출이익률": f"{gm:.2f}" if gm is not None else None,
+            "매출이익증가율": _fmt_yoy(gyoy),
             "영업이익률": f"{opm:.2f}" if opm is not None else None,
             "영업이익증가율": _fmt_yoy(_yoy_pct(op, prev_op)),
             "ROE": _col_text(rows_by_title, "ROE", key),
@@ -184,8 +237,10 @@ def _finance_table(payload: dict, limit: int = 4) -> list[dict]:
     return out
 
 
-def _latest_margins(payload: dict) -> tuple[float | None, float | None, float | None, float | None]:
-    """최근 실제 분기 매출이익률, 매출이익증가율, 영업이익률, 영업이익증가율."""
+def _latest_margins(
+    payload: dict, gross_map: dict | None = None
+) -> tuple[float | None, float | None, str, float | None, float | None]:
+    """최근 분기 매출이익률·증가율(매출총이익), 영업이익률·증가율."""
     info = payload.get("financeInfo") or {}
     titles = [
         t
@@ -194,24 +249,31 @@ def _latest_margins(payload: dict) -> tuple[float | None, float | None, float | 
     ]
     titles.sort(key=lambda t: str(t.get("key") or ""))
     if not titles:
-        return None, None, None, None
+        return None, None, "", None, None
     rows_by_title = {
         str(r.get("title") or ""): r.get("columns") or {}
         for r in (info.get("rowList") or [])
         if isinstance(r, dict)
     }
-    key = str(titles[-1].get("key") or "")
-    prev = _yoy_key(key)
-    sales = _col_num(rows_by_title, "매출액", key)
-    op = _col_num(rows_by_title, "영업이익", key)
-    ni = _col_num(rows_by_title, "당기순이익", key)
-    opm = _col_num(rows_by_title, "영업이익률", key)
-    npm = _col_num(rows_by_title, "순이익률", key)
-    if npm is None and sales and abs(sales) > 1e-12 and ni is not None:
-        npm = ni / sales * 100.0
-    prev_op = _col_num(rows_by_title, "영업이익", prev) if prev else None
-    prev_ni = _col_num(rows_by_title, "당기순이익", prev) if prev else None
-    return npm, _yoy_pct(ni, prev_ni), opm, _yoy_pct(op, prev_op)
+    op_key = str(titles[-1].get("key") or "")
+    op = _col_num(rows_by_title, "영업이익", op_key)
+    opm = _col_num(rows_by_title, "영업이익률", op_key)
+    prev_op = _col_num(rows_by_title, "영업이익", _yoy_key(op_key) or "")
+    gross_map = gross_map or {}
+    gm = gyoy = None
+    gm_asof = ""
+    for col in reversed(titles):
+        key = str(col.get("key") or "")
+        gnow = gross_map.get(key)
+        if not gnow:
+            continue
+        prev = _yoy_key(key)
+        gprev = gross_map.get(prev) if prev else None
+        gm = gnow.get("margin")
+        gyoy = _yoy_pct(gnow.get("gross"), (gprev or {}).get("gross") if isinstance(gprev, dict) else None)
+        gm_asof = str(col.get("title") or key).rstrip(".")
+        break
+    return gm, gyoy, gm_asof, opm, _yoy_pct(op, prev_op)
 
 
 def _yoy_op_down_streak(payload: dict) -> int:
@@ -315,8 +377,19 @@ def _kr_fundamentals(code: str, name: str = "") -> Fundamentals:
     if isinstance(comments, dict):
         bits = [str(comments.get(k) or "").strip() for k in ("comment1", "comment2", "comment3")]
         out.summary = " ".join(b for b in bits if b)
-    out.quarters = _finance_table(qjs)
-    out.sales_margin, out.sales_profit_yoy, out.op_margin, out.op_yoy = _latest_margins(qjs)
+    gross_map: dict[str, dict] = {}
+    for symbol in _kr_yahoo_symbols(code):
+        gross_map = _yahoo_gross_map(symbol)
+        if gross_map:
+            break
+    out.quarters = _finance_table(qjs, gross_map)
+    (
+        out.sales_margin,
+        out.sales_profit_yoy,
+        out.sales_margin_asof,
+        out.op_margin,
+        out.op_yoy,
+    ) = _latest_margins(qjs, gross_map)
     out.op_down_streak = _yoy_op_down_streak(qjs)
     return out
 
@@ -352,10 +425,19 @@ def _yahoo_fundamentals(symbol: str) -> Fundamentals:
             return n * 100.0
         return n
 
-    out.sales_margin = _ratio_pct(info.get("profitMargins"))
-    out.sales_profit_yoy = _ratio_pct(info.get("earningsQuarterlyGrowth") or info.get("earningsGrowth"))
     out.op_margin = _ratio_pct(info.get("operatingMargins"))
     out.op_yoy = _ratio_pct(info.get("earningsGrowth"))
+    gmap = _yahoo_gross_map(symbol)
+    if gmap:
+        keys = sorted(gmap)
+        last = keys[-1]
+        prev = _yoy_key(last)
+        out.sales_margin = gmap[last].get("margin")
+        out.sales_profit_yoy = _yoy_pct(
+            gmap[last].get("gross"),
+            (gmap.get(prev) or {}).get("gross") if prev else None,
+        )
+        out.sales_margin_asof = f"{last[:4]}.{last[4:]}" if len(last) >= 6 else last
     return out
 
 
@@ -436,7 +518,7 @@ def fetch_fundamentals(market: str, ticker: str, action: str | None = None) -> F
     if not ticker:
         return Fundamentals(market=market, ticker=ticker, error="종목 코드가 없습니다.")
 
-    cache = CACHE_DIR / f"fund2_{market}_{ticker}_{date.today().isoformat()}.json"
+    cache = CACHE_DIR / f"fund3_{market}_{ticker}_{date.today().isoformat()}.json"
     cached = None
     if cache.exists():
         try:
@@ -488,6 +570,7 @@ def fetch_fundamentals(market: str, ticker: str, action: str | None = None) -> F
             "summary": fund.summary,
             "sales_margin": fund.sales_margin,
             "sales_profit_yoy": fund.sales_profit_yoy,
+            "sales_margin_asof": fund.sales_margin_asof,
             "op_margin": fund.op_margin,
             "op_yoy": fund.op_yoy,
             "quarters": fund.quarters,
