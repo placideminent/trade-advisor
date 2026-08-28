@@ -320,6 +320,13 @@ def _quick_signal(market: str, ticker: str, as_of, lookback_days: int, timeframe
             "name": meta.get("name") or ticker,
             "error": str(exc),
         }
+    value_label = ""
+    try:
+        fund = fetch_fundamentals(market, ticker, signal.action)
+        if fund is not None and not fund.error:
+            value_label = fund.value_label or ""
+    except Exception:
+        value_label = ""
     return {
         "market": market,
         "ticker": str(meta.get("ticker") or ticker),
@@ -328,6 +335,7 @@ def _quick_signal(market: str, ticker: str, as_of, lookback_days: int, timeframe
         "score_pct": signal.score_pct,
         "price": analysis.price,
         "price_label": analysis.price_label,
+        "value_label": value_label,
         "error": None,
     }
 
@@ -372,7 +380,8 @@ def _render_favorites(as_of, lookback_days: int, timeframe: str, lookback_label:
                     f"<div class='{cls}'>"
                     f"<div style='font-size:0.85rem;opacity:0.8'>{row['name']} ({row['ticker']}) · "
                     f"{row['price_label']} {_fmt(row['price'])}</div>"
-                    f"<div style='font-size:1.35rem;font-weight:700'>제안: {row['action']} "
+                    f"<div style='font-size:1.35rem;font-weight:700'>제안: {row['action']}"
+                    f"{(' · 가격 ' + row['value_label']) if row.get('value_label') else ''} "
                     f"<span style='font-size:1rem;font-weight:500'>합산 {row['score_pct']}%</span></div>"
                     f"</div>",
                     unsafe_allow_html=True,
@@ -814,6 +823,18 @@ except Exception as exc:
     st.error(f"분석 실패: {exc}")
     st.stop()
 
+try:
+    fund = fetch_fundamentals(market, ticker, signal.action)
+except Exception as exc:
+    fund = None
+    fund_fetch_error = str(exc)
+else:
+    fund_fetch_error = None
+
+value_side = ""
+if fund is not None and not fund.error and fund.value_label:
+    value_side = f" · 가격 {fund.value_label}"
+
 action_class = ACTION_CLASS.get(signal.action, "action-hold")
 six_txt = (
     f" · 6개월 가격 {six_month_chg * 100:+.1f}%"
@@ -826,7 +847,7 @@ st.markdown(
       <div style="font-size:0.9rem;opacity:0.8">{meta.get("name") or display_name} ·
       분석일 {as_of} · {meta.get("bar", bar_name)} · {analysis.price_label} 기준
       {(" · " + analysis.price_source) if analysis.price_source else ""}</div>
-      <div style="font-size:1.8rem;font-weight:700;margin:0.2rem 0">제안: {signal.action}
+      <div style="font-size:1.8rem;font-weight:700;margin:0.2rem 0">제안: {signal.action}{value_side}
       <span style="font-size:1rem;font-weight:500">합산 {signal.score_pct}%{six_txt} · 신뢰 {signal.confidence}%</span></div>
       <div>{signal.summary}</div>
     </div>
@@ -917,11 +938,8 @@ st.caption(
 )
 
 st.subheader("펀더멘털")
-try:
-    fund = fetch_fundamentals(market, ticker, signal.action)
-except Exception as exc:
-    fund = None
-    st.info(f"펀더 요약을 불러오지 못했습니다: {exc}")
+if fund is None and fund_fetch_error:
+    st.info(f"펀더 요약을 불러오지 못했습니다: {fund_fetch_error}")
 if fund is not None:
     if fund.error:
         st.info(fund.error)
