@@ -20,12 +20,9 @@ from src.fundamentals import fetch_fundamentals, fmt_per, fmt_pct, fmt_pp, per_g
 from src.prefs import (
     COOKIE_NAME,
     MAX_FAVORITES,
-    QUERY_PREFS,
-    QUERY_UID,
     UID_COOKIE_NAME,
     cookie_set_html,
     decode_cookie,
-    encode_browser,
     format_uid,
     load_user_prefs_file,
     load_user_prefs_remote,
@@ -37,6 +34,17 @@ from src.prefs import (
     save_user_prefs_remote,
     snapshot_key,
 )
+
+try:
+    from src.prefs import QUERY_PREFS, QUERY_UID, encode_browser
+except ImportError:
+    QUERY_PREFS = "_p"
+    QUERY_UID = "_u"
+
+    def encode_browser(data: dict) -> str:
+        from src.prefs import encode_cookie
+
+        return encode_cookie(data)
 from src.signals import (
     CUT_FIELDS,
     DEFAULT_CUTS,

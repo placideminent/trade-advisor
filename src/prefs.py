@@ -20,8 +20,45 @@ from pathlib import Path
 
 import requests
 
-from .backtest import DEFAULT_SIM, normalize_sim
-from .signals import DEFAULT_CUTS, DEFAULT_WEIGHTS, LEGACY_DEFAULT_CUTS
+from .signals import DEFAULT_CUTS, DEFAULT_WEIGHTS
+
+try:
+    from .backtest import DEFAULT_SIM, normalize_sim
+except ImportError:
+    DEFAULT_SIM = {
+        "buy_weak": 5,
+        "buy_mid": 10,
+        "buy_strong": 15,
+        "share_cut": 30,
+        "sell_weak_pct": 10,
+        "sell_mid_pct": 20,
+        "sell_strong_pct": 30,
+        "sell_weak_qty": 3,
+        "sell_mid_qty": 5,
+        "sell_strong_qty": 10,
+    }
+
+    def normalize_sim(raw: dict | None) -> dict:
+        data = dict(DEFAULT_SIM)
+        if not isinstance(raw, dict):
+            return data
+        for key, default in DEFAULT_SIM.items():
+            if key not in raw:
+                continue
+            try:
+                data[key] = int(raw[key])
+            except (TypeError, ValueError):
+                data[key] = default
+        return data
+
+LEGACY_DEFAULT_CUTS = {
+    "buy_weak": 65,
+    "buy_mid": 70,
+    "buy_strong": 75,
+    "sell_weak": 27,
+    "sell_mid": 24,
+    "sell_strong": 21,
+}
 
 COOKIE_NAME = "ta_prefs"
 UID_COOKIE_NAME = "ta_uid"
