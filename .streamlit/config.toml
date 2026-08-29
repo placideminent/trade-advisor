@@ -5,3 +5,7 @@ port = 8501
 
 [browser]
 gatherUsageStats = false
+
+[client]
+# C 키가 캐시 지우기로 가로채져 Ctrl+C 복사가 막이지 않게 한다.
+toolbarMode = "minimal"
