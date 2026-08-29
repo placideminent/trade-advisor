@@ -234,6 +234,15 @@ FAVBAR_COLORS = {
     "약한 매도": ("#fecaca", "#9f1239"),
     "홀딩": ("#fef9c3", "#713f12"),
 }
+FAVBAR_KIND = {
+    "강한 매수": "bstrong",
+    "매수": "bmid",
+    "약한 매수": "bweak",
+    "강한 매도": "sstrong",
+    "매도": "smid",
+    "약한 매도": "sweak",
+    "홀딩": "hold",
+}
 
 
 def _cookie_map():
@@ -585,6 +594,20 @@ st.markdown(
       .action-sell { background:#fee2e2; color:#7f1d1d; padding:0.75rem 0.9rem; border-radius:10px; }
       .action-sell-weak { background:#fecaca; color:#9f1239; padding:0.75rem 0.9rem; border-radius:10px; }
       .action-hold { background:#fef9c3; color:#713f12; padding:0.75rem 0.9rem; border-radius:10px; }
+      .fav-static {
+        min-height: 4.5rem;
+        box-sizing: border-box;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+      }
+      .fav-static .fav-meta, .fav-static .fav-main {
+        text-align: left;
+        font-weight: 800;
+        letter-spacing: -0.02em;
+      }
+      .fav-static .fav-meta { font-size: 0.92rem; }
+      .fav-static .fav-main { font-size: 1.2rem; margin-top: 0.18rem; }
       div[data-testid="stHorizontalBlock"]:has([class*="st-key-unfav_"]) {
         flex-wrap: nowrap !important;
         align-items: stretch !important;
@@ -595,26 +618,45 @@ st.markdown(
         width: 3.6rem !important;
         min-width: 3.6rem !important;
       }
+      div[class*="st-key-favbar_"] button,
+      div[class*="st-key-unfav_"] button {
+        min-height: 4.5rem !important;
+        height: 100% !important;
+        margin-top: 0 !important;
+        border-radius: 10px !important;
+      }
       div[class*="st-key-favbar_"] button {
         display: flex !important;
         justify-content: flex-start !important;
         align-items: flex-start !important;
         text-align: left !important;
         white-space: pre-line !important;
-        min-height: 4.5rem;
-        line-height: 1.4;
+        line-height: 1.4 !important;
         font-weight: 800 !important;
-        font-size: 1.12rem !important;
-        letter-spacing: -0.02em;
+        font-size: 1.15rem !important;
+        letter-spacing: -0.02em !important;
         padding: 0.7rem 0.85rem !important;
         border: none !important;
         box-shadow: none !important;
-        border-radius: 10px !important;
+      }
+      div[class*="st-key-favbar_"] button p,
+      div[class*="st-key-favbar_"] button span,
+      div[class*="st-key-favbar_"] button div {
+        font-weight: 800 !important;
+        font-size: inherit !important;
+        text-align: left !important;
+        color: inherit !important;
       }
       div[class*="st-key-unfav_"] button {
-        min-height: 4.5rem;
         padding: 0 0.35rem !important;
       }
+      div[class*="st-key-favbar_bstrong_"] button { background:#86efac !important; color:#14532d !important; }
+      div[class*="st-key-favbar_bweak_"] button { background:#ecfccb !important; color:#3f6212 !important; }
+      div[class*="st-key-favbar_bmid_"] button { background:#dcfce7 !important; color:#14532d !important; }
+      div[class*="st-key-favbar_sstrong_"] button { background:#fca5a5 !important; color:#7f1d1d !important; }
+      div[class*="st-key-favbar_sweak_"] button { background:#fecaca !important; color:#9f1239 !important; }
+      div[class*="st-key-favbar_smid_"] button { background:#fee2e2 !important; color:#7f1d1d !important; }
+      div[class*="st-key-favbar_hold_"] button { background:#fef9c3 !important; color:#713f12 !important; }
       .ta-table { width:100%; border-collapse:collapse; font-size:0.92rem; table-layout:auto; }
       .ta-table th, .ta-table td {
         border-bottom:1px solid #e5e7eb; padding:0.5rem 0.4rem;
@@ -631,8 +673,9 @@ st.markdown(
         div[data-testid="stHorizontalBlock"]:has([class*="st-key-unfav_"]) {
           flex-wrap: nowrap !important;
         }
-        div[class*="st-key-favbar_"] button {
-          font-size: 1.05rem !important;
+        div[class*="st-key-favbar_"] button,
+        div[class*="st-key-favbar_"] button p {
+          font-size: 1.08rem !important;
           font-weight: 800 !important;
           text-align: left !important;
         }
@@ -808,40 +851,33 @@ def _fav_row_key(market: str, ticker: str) -> str:
 
 
 def _render_fav_row(row: dict, as_of, *, analyzed: bool) -> None:
-    cols = st.columns([6, 1], gap="small")
+    cols = st.columns([6, 1], gap="small", vertical_alignment="center")
     safe = f"{row['market']}_{str(row.get('ticker') or '').replace('.', '_')}"
     name = row.get("name") or row.get("ticker")
     with cols[0]:
         if not analyzed:
             st.markdown(
-                f"<div class='action-hold'><div style='font-weight:800;text-align:left'>"
+                f"<div class='action-hold fav-static'><div class='fav-meta'>"
                 f"{name} ({row.get('ticker')})</div>"
-                f"<div style='font-weight:700;text-align:left;margin-top:0.15rem'>아직 분석하지 않음</div></div>",
+                f"<div class='fav-main'>아직 분석하지 않음</div></div>",
                 unsafe_allow_html=True,
             )
         elif row.get("error"):
             st.markdown(
-                f"<div class='action-hold'><div style='font-weight:800;text-align:left'>"
+                f"<div class='action-hold fav-static'><div class='fav-meta'>"
                 f"{name} ({row.get('ticker')})</div>"
-                f"<div style='font-weight:700;text-align:left;margin-top:0.15rem'>계산 실패: {row['error']}</div></div>",
+                f"<div class='fav-main'>계산 실패: {row['error']}</div></div>",
                 unsafe_allow_html=True,
             )
         else:
             action = row.get("action") or "홀딩"
-            bg, fg = FAVBAR_COLORS.get(action, FAVBAR_COLORS["홀딩"])
-            st.markdown(
-                f"<style>div.st-key-favbar_{safe} button {{"
-                f"background:{bg} !important; color:{fg} !important;"
-                f"justify-content:flex-start !important; text-align:left !important;"
-                f"font-weight:800 !important;}}</style>",
-                unsafe_allow_html=True,
-            )
+            kind = FAVBAR_KIND.get(action, "hold")
             label = (
                 f"{name} ({row.get('ticker')}) · "
                 f"{row.get('price_label') or ''} {_fmt(row['price']) if row.get('price') else '-'}\n"
                 f"제안: {action}   합산 {row.get('score_pct')}%"
             )
-            if st.button(label, key=f"favbar_{safe}", use_container_width=True):
+            if st.button(label, key=f"favbar_{kind}_{safe}", use_container_width=True):
                 st.session_state._jump_analysis = {
                     "market": row["market"],
                     "ticker": row["ticker"],
