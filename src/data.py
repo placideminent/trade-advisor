@@ -278,7 +278,7 @@ def fetch_intraday_range(market: str, ticker: str, start: date, end: date) -> pd
         chunk = pd.DataFrame()
         try:
             if market == "KR":
-                code = ticker.strip().zfill(6)
+                code = _kr_code(ticker)
                 for symbol in _kr_yahoo_symbols(code):
                     try:
                         chunk = _fetch_intraday(symbol, cur - timedelta(days=1), nxt)
@@ -304,6 +304,13 @@ def fetch_intraday_range(market: str, ticker: str, start: date, end: date) -> pd
     return out[~out.index.duplicated(keep="last")]
 
 
+def _kr_code(ticker: str) -> str:
+    raw = str(ticker or "").strip()
+    if raw.isdigit():
+        return raw.zfill(6)
+    return raw
+
+
 def _kr_yahoo_symbols(code: str) -> list[str]:
     suffixes = [".KS", ".KQ"]
     try:
@@ -316,6 +323,75 @@ def _kr_yahoo_symbols(code: str) -> list[str]:
     except Exception:
         pass
     return [f"{code}{s}" for s in suffixes]
+
+
+def _fetch_daily(symbol: str, start: date, end: date) -> pd.DataFrame:
+    df = pd.DataFrame()
+    try:
+        df = _fetch_yf(symbol, start, end, interval="1d")
+    except Exception:
+        df = pd.DataFrame()
+    if df.empty:
+        df = _fetch_yahoo_chart(symbol, start, end, interval="1d")
+    return df
+
+
+def _fetch_naver_daily(code: str, start: date, end: date) -> pd.DataFrame:
+    """Cloud에서 FDR/Yahoo가 막힐 때 한국 일봉 폴백."""
+    import json
+    import re
+    import requests
+
+    code = _kr_code(code)
+    if not code.isdigit():
+        return pd.DataFrame()
+    params = {
+        "symbol": code,
+        "requestType": "1",
+        "startTime": start.strftime("%Y%m%d"),
+        "endTime": end.strftime("%Y%m%d"),
+        "timeframe": "day",
+    }
+    headers = {
+        "User-Agent": "Mozilla/5.0",
+        "Referer": "https://finance.naver.com/",
+    }
+    for url in (
+        "https://api.finance.naver.com/siseJson.naver",
+        "https://fchart.stock.naver.com/siseJson.nhn",
+    ):
+        try:
+            resp = requests.get(url, params=params, headers=headers, timeout=20)
+            resp.raise_for_status()
+            text = resp.text.strip()
+            text = re.sub(r"^[^(]*\(", "", text)
+            text = re.sub(r"\)\s*;?\s*$", "", text)
+            rows = json.loads(text.replace("'", '"'))
+            if not isinstance(rows, list) or len(rows) < 2:
+                continue
+            recs = []
+            for row in rows[1:]:
+                if not isinstance(row, (list, tuple)) or len(row) < 6:
+                    continue
+                recs.append(
+                    {
+                        "date": str(row[0]),
+                        "open": row[1],
+                        "high": row[2],
+                        "low": row[3],
+                        "close": row[4],
+                        "volume": row[5],
+                    }
+                )
+            if not recs:
+                continue
+            out = pd.DataFrame(recs)
+            out.index = pd.to_datetime(out["date"], errors="coerce")
+            out = out.drop(columns=["date"])
+            return _normalize_ohlcv(out)
+        except Exception:
+            continue
+    return pd.DataFrame()
 
 
 def _parse_price(val) -> float | None:
@@ -472,7 +548,7 @@ def _yahoo_spot(symbol: str) -> tuple[float | None, str]:
 def fetch_spot_price(market: str, ticker: str) -> tuple[float | None, str]:
     """조회 직후 현재가. 정규장 마감 후면 시간외(NXT/프리·애프터) 최근 체결가."""
     if market == "KR":
-        code = ticker.strip().zfill(6)
+        code = _kr_code(ticker)
         px, src = _naver_spot(code)
         if px:
             return px, src
@@ -515,7 +591,7 @@ def fetch_ohlcv(
     }
 
     if market == "KR":
-        code = ticker.strip().zfill(6)
+        code = _kr_code(ticker)
         meta["ticker"] = code
         try:
             listing = load_kr_listing()
@@ -525,67 +601,81 @@ def fetch_ohlcv(
         except Exception:
             pass
         df = pd.DataFrame()
-        if timeframe == "1d":
+        want_intra = timeframe in ("1h", "4h")
+        used_intra = False
+        if want_intra:
+            for symbol in _kr_yahoo_symbols(code):
+                df = _fetch_intraday(symbol, start, as_of)
+                if not df.empty:
+                    meta["source"] = f"Yahoo Finance ({symbol})"
+                    used_intra = True
+                    break
+        if df.empty:
             try:
                 df = _fetch_fdr(code, start, as_of)
-                meta["source"] = "FinanceDataReader"
+                if not df.empty:
+                    meta["source"] = "FinanceDataReader"
             except Exception:
                 df = pd.DataFrame()
         if df.empty:
-            last_err = None
             for symbol in _kr_yahoo_symbols(code):
-                try:
-                    if timeframe in ("1h", "4h"):
-                        df = _fetch_intraday(symbol, start, as_of)
-                    else:
-                        df = _fetch_yf(symbol, start, as_of, interval="1d")
-                    if not df.empty:
-                        meta["source"] = f"Yahoo Finance ({symbol})"
-                        break
-                except Exception as exc:
-                    last_err = exc
-                    df = pd.DataFrame()
-            if df.empty and timeframe in ("1h", "4h"):
-                try:
-                    df = _fetch_fdr(code, start, as_of)
-                    if not df.empty:
-                        missed = "1시간봉" if timeframe == "1h" else "4시간봉"
-                        timeframe = "1d"
-                        interval = "1d"
-                        meta["source"] = "FinanceDataReader"
-                        meta["note"] = f"한국 주식 {missed}을 받지 못해 일봉으로 계산합니다."
-                except Exception as exc:
-                    last_err = exc
-                    df = pd.DataFrame()
-            if df.empty and last_err:
-                raise last_err
+                df = _fetch_daily(symbol, start, as_of)
+                if not df.empty:
+                    meta["source"] = f"Yahoo Finance ({symbol})"
+                    break
+        if df.empty:
+            df = _fetch_naver_daily(code, start, as_of)
+            if not df.empty:
+                meta["source"] = "Naver"
+        if want_intra and not used_intra and not df.empty:
+            timeframe = "1d"
+            meta["note"] = "시간봉을 받지 못해 일봉으로 계산합니다."
     elif market == "US":
-        symbol = ticker.strip().upper()
+        symbol = ticker.strip().upper().replace("/", "-")
+
         meta["ticker"] = symbol
         meta["name"] = symbol
-        try:
-            df = _fetch_intraday(symbol, start, as_of) if timeframe in ("1h", "4h") else _fetch_yf(symbol, start, as_of)
-            meta["source"] = "Yahoo Finance"
-        except Exception:
-            if timeframe in ("1h", "4h"):
-                df = _fetch_yahoo_chart(symbol, start, as_of, interval="60m")
+        df = pd.DataFrame()
+        want_intra = timeframe in ("1h", "4h")
+        used_intra = False
+        if want_intra:
+            df = _fetch_intraday(symbol, start, as_of)
+            if not df.empty:
+                used_intra = True
                 meta["source"] = "Yahoo Finance"
-                if df.empty:
-                    raise
-            else:
+        if df.empty:
+            df = _fetch_daily(symbol, start, as_of)
+            if not df.empty:
+                meta["source"] = "Yahoo Finance"
+        if df.empty:
+            try:
                 df = _fetch_fdr(symbol, start, as_of)
-                meta["source"] = "FinanceDataReader"
+                if not df.empty:
+                    meta["source"] = "FinanceDataReader"
+            except Exception:
+                df = pd.DataFrame()
+        if want_intra and not used_intra and not df.empty:
+            timeframe = "1d"
+            meta["note"] = "시간봉을 받지 못해 일봉으로 계산합니다."
     elif market == "CRYPTO":
         key = ticker.strip().upper().replace("-USD", "").replace("USDT", "").replace("/", "")
         info = CRYPTO.get(key)
         symbol = info["symbol"] if info else f"{key}-USD"
         meta["ticker"] = key
         meta["name"] = info["name"] if info else key
-        if timeframe in ("1h", "4h"):
+        df = pd.DataFrame()
+        want_intra = timeframe in ("1h", "4h")
+        used_intra = False
+        if want_intra:
             df = _fetch_intraday(symbol, start, as_of)
-        else:
-            df = _fetch_yf(symbol, start, as_of)
+            if not df.empty:
+                used_intra = True
+        if df.empty:
+            df = _fetch_daily(symbol, start, as_of)
         meta["source"] = "Yahoo Finance"
+        if want_intra and not used_intra and not df.empty:
+            timeframe = "1d"
+            meta["note"] = "시간봉을 받지 못해 일봉으로 계산합니다."
     else:
         raise ValueError(f"지원하지 않는 시장: {market}")
 
@@ -594,17 +684,32 @@ def fetch_ohlcv(
 
     meta["timeframe"] = timeframe
     if timeframe == "4h":
+        intra = df
         df = resample_4h(df, market)
-        meta["bar"] = "4시간봉"
-    elif timeframe == "1h":
+        if df.empty:
+            df = to_market_wall(intra, market)
+            timeframe = "1h"
+            meta["timeframe"] = "1h"
+            meta["bar"] = "1시간봉"
+            meta["note"] = "4시간봉 변환에 실패해 1시간봉으로 계산합니다."
+        else:
+            meta["bar"] = "4시간봉"
+    if timeframe == "1h":
         df = to_market_wall(df, market)
         meta["bar"] = "1시간봉"
-    else:
+    if timeframe == "1d":
         df = df.copy()
         df.index = _index_naive_wall(df.index)
         meta["bar"] = "일봉"
 
+    if df.empty:
+        return df, meta
+
     cutoff = pd.Timestamp(as_of) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
     window_start = pd.Timestamp(as_of) - pd.Timedelta(days=lookback_days)
-    df = df.loc[(df.index >= window_start) & (df.index <= cutoff)]
-    return df, meta
+    work = df.copy()
+    work.index = _index_naive_wall(work.index)
+    sliced = work.loc[(work.index >= window_start) & (work.index <= cutoff)]
+    if sliced.empty:
+        sliced = work.loc[work.index <= cutoff]
+    return sliced, meta

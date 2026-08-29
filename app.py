@@ -698,6 +698,8 @@ def _quick_signal(market: str, ticker: str, as_of, lookback_days: int, timeframe
         df, meta = _cached_ohlcv(
             market, ticker, as_of.isoformat(), lookback_days, timeframe
         )
+        if df is None or getattr(df, "empty", True):
+            df, meta = fetch_ohlcv(market, ticker, as_of, lookback_days, timeframe)
         df = df.copy()
         meta = dict(meta)
         tf = str(meta.get("timeframe") or timeframe)
@@ -716,9 +718,9 @@ def _quick_signal(market: str, ticker: str, as_of, lookback_days: int, timeframe
             live_px, live_src = None, ""
         if live_px:
             spot_price, spot_source = live_px, live_src
-        df = drop_incomplete_session(df, as_of)
-        if df.empty:
-            return {"market": market, "ticker": ticker, "name": ticker, "error": "봉 없음"}
+        trimmed = drop_incomplete_session(df, as_of)
+        if trimmed is not None and not trimmed.empty:
+            df = trimmed
     try:
         analysis = analyze(
             df,
@@ -1646,6 +1648,8 @@ with st.spinner(f"{display_name or ticker} / {as_of} {bar_name} 수집 중..."):
         df, meta = _cached_ohlcv(
             market, ticker, as_of.isoformat(), lookback_days, timeframe
         )
+        if df is None or getattr(df, "empty", True):
+            df, meta = fetch_ohlcv(market, ticker, as_of, lookback_days, timeframe)
         df = df.copy()
         meta = dict(meta)
         timeframe = str(meta.get("timeframe") or timeframe)
