@@ -75,6 +75,7 @@ GIST_FILENAME = "trade-advisor-prefs.json"
 GIST_DESC = "trade-advisor-prefs"
 _GIST_ID_CACHE: str | None = None
 _FILE_LOCK = threading.Lock()
+_LAST_REMOTE_ERROR = ""
 
 
 def new_uid() -> str:
@@ -389,6 +390,15 @@ def remote_enabled() -> bool:
     return bool(github_token())
 
 
+def remote_last_error() -> str:
+    return _LAST_REMOTE_ERROR
+
+
+def _set_remote_error(msg: str) -> None:
+    global _LAST_REMOTE_ERROR
+    _LAST_REMOTE_ERROR = msg
+
+
 def _headers(token: str) -> dict[str, str]:
     return {
         "Authorization": f"Bearer {token}",
@@ -424,6 +434,7 @@ def _find_gist_id(token: str) -> str:
             timeout=8,
         )
         if res.status_code != 200:
+            _set_remote_error(f"Gist 목록 실패 ({res.status_code}). 토큰에 gist 권한이 있는지 확인하세요.")
             return ""
         matches = []
         for gist in res.json() or []:
@@ -486,6 +497,7 @@ def load_user_prefs_remote(uid: str) -> dict | None:
 def save_user_prefs_remote(uid: str, data: dict) -> bool:
     token = github_token()
     if not token:
+        _set_remote_error("GITHUB_TOKEN 이 Secrets에 없습니다.")
         return False
     uid = normalize_uid(uid)
     if not uid:
@@ -518,6 +530,12 @@ def save_user_prefs_remote(uid: str, data: dict) -> bool:
             )
             if res.status_code in (200, 201):
                 _cached_gist_id(str((res.json() or {}).get("id") or ""))
-        return res.status_code in (200, 201)
-    except (requests.RequestException, ValueError, TypeError):
+        ok = res.status_code in (200, 201)
+        if ok:
+            _set_remote_error("")
+        else:
+            _set_remote_error(f"Gist 저장 실패 ({res.status_code}). gist 권한 토큰인지 확인하세요.")
+        return ok
+    except (requests.RequestException, ValueError, TypeError) as extra:
+        _set_remote_error(f"Gist 저장 오류: {extra}")
         return False

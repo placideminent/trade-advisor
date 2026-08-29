@@ -50,14 +50,20 @@ GitHub에 코드를 올리면 Streamlit이 서버에서 실행합니다.
 
 ```
 APP_PASSWORD = "원하는비밀번호"
-
-# 리부트 후에도 즐겨찾기·배점·시뮬레이션을 남기려면 (gist 권한)
 GITHUB_TOKEN = "ghp_..."
 ```
 
-즐겨찾기·배점·시뮬레이션은 **접속자마다 따로** 저장됩니다. 사이드바의 저장 코드를 다른 기기에 넣으면 같은 사람만 이어갑니다.
+다른 기기·리부트 후에도 즐겨찾기를 이어가려면 `GITHUB_TOKEN` 이 필요합니다.
 
-`GITHUB_TOKEN` 이 있으면 설정을 비공개 Gist 에 사람별로 저장합니다. 없어도 같은 브라우저 쿠키로 리부트 후 복구를 시도합니다.
+1. https://github.com/settings/tokens → **Generate new token (classic)**
+2. Note: `trade-advisor`, Expiration: 원하는 기간, 권한은 **gist** 만 체크
+3. 생성 후 `ghp_` 로 시작하는 값을 복사 (한 번만 보임)
+4. Streamlit Cloud 앱 → **Manage app → Settings → Secrets** 에 위처럼 붙여 넣고 Save
+5. **Reboot app**
+6. 즐겨찾기가 있는 기기에서 앱을 열고, 사이드바 **지금 클라우드에 저장**
+7. 폰·다른 PC에서는 사이드바 저장 코드를 넣고 **이 코드로 불러오기**
+
+토큰은 저장소에 올리지 마세요. gist 권한만 있으면 되고, 앱이 `trade-advisor-prefs.json` 비공개 Gist를 만들거나 찾아 씁니다.
 
 8. Deploy. 끝나면 `https://xxxx.streamlit.app` 주소가 생깁니다.
 

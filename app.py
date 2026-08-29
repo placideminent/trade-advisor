@@ -42,7 +42,13 @@ from src.prefs import (
 )
 
 try:
-    from src.prefs import QUERY_PREFS, QUERY_UID, encode_browser, localstorage_restore_html
+    from src.prefs import (
+        QUERY_PREFS,
+        QUERY_UID,
+        encode_browser,
+        localstorage_restore_html,
+        remote_last_error,
+    )
 except ImportError:
     QUERY_PREFS = "_p"
     QUERY_UID = "_u"
@@ -53,6 +59,9 @@ except ImportError:
         return encode_cookie(data)
 
     def localstorage_restore_html(uid: str) -> str:
+        return ""
+
+    def remote_last_error() -> str:
         return ""
 from src.signals import (
     CUT_FIELDS,
@@ -375,9 +384,15 @@ def _bootstrap_prefs() -> None:
     st.session_state._prefs_remote_ok = remote_enabled()
     if adopt and _score_empty(loaded):
         st.session_state._prefs_ls_html = localstorage_restore_html(uid)
-        st.session_state._prefs_adopt_msg = (
-            "서버에는 이 코드 기록이 없습니다. 이 브라우저에 남은 저장이 있으면 불러옵니다."
-        )
+        if remote_enabled():
+            st.session_state._prefs_adopt_msg = (
+                f"{format_uid(uid)} 클라우드 기록이 없습니다. "
+                "예전에 토큰 없이 쓰던 목록은 리부트 때 지워졌을 수 있습니다."
+            )
+        else:
+            st.session_state._prefs_adopt_msg = (
+                "클라우드 저장이 아직 연결되지 않았습니다. 이 브라우저에 남은 저장이 있으면 불러옵니다."
+            )
     elif adopt:
         st.session_state._prefs_adopt_msg = f"{format_uid(uid)} 저장을 불러왔습니다."
 
@@ -396,6 +411,10 @@ def _persist_prefs(rule: dict) -> None:
             save_user_prefs_file(uid, payload)
             if payload.get("favorites"):
                 _bind_prefs_url(payload)
+                if remote_enabled():
+                    st.session_state._prefs_remote_ok = save_user_prefs_remote(uid, payload)
+        if st.session_state.pop("_prefs_force_remote", False) and uid and remote_enabled():
+            st.session_state._prefs_remote_ok = save_user_prefs_remote(uid, payload)
         if (not just_booted) and st.session_state.pop("_prefs_need_cookie", False):
             if payload.get("favorites") or int(payload.get("ts") or 0):
                 st.session_state._prefs_cookie_html = cookie_set_html(payload)
@@ -410,6 +429,8 @@ def _persist_prefs(rule: dict) -> None:
     if just_booted:
         if payload.get("favorites"):
             _bind_prefs_url(payload)
+            if uid and remote_enabled():
+                st.session_state._prefs_remote_ok = save_user_prefs_remote(uid, payload)
         return
     if uid and remote_enabled():
         st.session_state._prefs_remote_ok = save_user_prefs_remote(uid, payload)
@@ -1428,12 +1449,33 @@ with st.sidebar:
     _persist_prefs(rule)
     _emit_prefs_cookie()
     uid_show = format_uid(st.session_state.get("prefs_uid") or "")
-    st.caption(f"내 저장 코드: **{uid_show or '-'}** · 접속자마다 따로 저장됩니다.")
-    with st.expander("다른 기기에서 이어가기"):
-        st.caption(
-            "예전에 쓰던 저장 코드를 넣으면 이 브라우저에 남은 즐겨찾기를 다시 불러옵니다. "
-            "리부트 전에 이 폰·PC에서 쓴 코드여야 합니다."
-        )
+    st.caption(f"내 저장 코드: **{uid_show or '-'}**")
+    with st.expander(
+        "다른 기기에서 이어가기",
+        expanded=not remote_enabled() or not st.session_state.get("_prefs_remote_ok"),
+    ):
+        if remote_enabled():
+            st.caption(
+                "클라우드에 연결되어 있습니다. 이 코드를 폰·다른 PC에 넣으면 "
+                "리부트 후에도 같은 즐겨찾기가 불러와집니다."
+            )
+            if st.button("지금 클라우드에 저장", use_container_width=True):
+                st.session_state._prefs_force_remote = True
+                st.rerun()
+            if st.session_state.get("_prefs_remote_ok"):
+                st.caption("클라우드 저장 완료.")
+            err = remote_last_error()
+            if err:
+                st.warning(err)
+        else:
+            st.caption("지금 Secrets에 GitHub 토큰이 없어, 리부트 후 다른 기기에서는 불러올 수 없습니다. 한 번만 연결하면 됩니다.")
+            st.markdown(
+                "1. [GitHub 토큰 만들기](https://github.com/settings/tokens) → **Generate new token (classic)**  \n"
+                "2. 권한에서 **gist** 만 체크하고 생성, 나온 `ghp_...` 를 복사  \n"
+                "3. 앱 오른쪽 아래 **Manage app → Settings → Secrets** 에 아래를 넣고 Save  \n"
+                "4. **Reboot app** 한 뒤, 즐겨찾기가 있는 기기에서 **지금 클라우드에 저장**"
+            )
+            st.code('GITHUB_TOKEN = "ghp_여기에붙여넣기"', language="toml")
         st.text_input("저장 코드", key="prefs_code_in", placeholder="예: AB3K-9M2Q")
         if st.button("이 코드로 불러오기", use_container_width=True):
             other = normalize_uid(st.session_state.get("prefs_code_in"))
@@ -1448,10 +1490,6 @@ with st.sidebar:
         msg = st.session_state.get("_prefs_adopt_msg")
         if msg:
             st.info(msg)
-    if st.session_state.get("_prefs_remote_ok"):
-        st.caption("리부트 후에도 같은 코드면 기록이 유지됩니다.")
-    else:
-        st.caption("같은 브라우저면 리부트 후에도 유지됩니다. 다른 기기와 맞추려면 저장 코드를 넣으세요.")
     run = False
     run_sim = False
     if page == "종목 분석":
