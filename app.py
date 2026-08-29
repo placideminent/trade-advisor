@@ -20,7 +20,7 @@ from src.chart import (
     build_sim_chart,
     build_ticker_vs_spy_fig,
 )
-from src.data import drop_incomplete_session, fetch_ohlcv, fetch_spot_price, market_today, search_kr
+from src.data import drop_incomplete_session, fetch_ohlcv, fetch_spot_price, fetch_usdkrw, market_today, search_kr
 from src.fundamentals import fetch_fundamentals, fmt_per, fmt_pct, fmt_pp, per_gap_text
 
 from src.prefs import (
@@ -978,6 +978,12 @@ def _cached_spy_hold(start_iso: str, end_iso: str) -> tuple[float | None, str]:
     return spy_hold_return(date.fromisoformat(start_iso), date.fromisoformat(end_iso))
 
 
+@st.cache_data(ttl=600, show_spinner=False)
+def _cached_usdkrw(as_of_iso: str) -> tuple[float | None, str, str]:
+    rate, src, when = fetch_usdkrw(date.fromisoformat(as_of_iso))
+    return rate, src, when.isoformat() if when else ""
+
+
 def _show_spy_compare(results: list, start: date, end: date) -> None:
     spy_pct, spy_err = _cached_spy_hold(start.isoformat(), end.isoformat())
     st.subheader("S&P 500 (SPY) 비교")
@@ -1253,10 +1259,55 @@ def _show_sim_favorites(results: list) -> None:
                     "평가+실현": _fmt_ccy(m2m + realized, ccy),
                 }
             )
-        _show_table(pd.DataFrame(ccy_rows))
-        st.caption("코인은 달러 기준입니다. 원과 달러는 합치지 않습니다.")
         starts = [r.start for r in results if getattr(r, "start", None)]
         ends = [r.end for r in results if getattr(r, "end", None)]
+        as_of_end = max(ends) if ends else None
+        rate = None
+        rate_src = ""
+        rate_day = ""
+        if as_of_end:
+            rate, rate_src, rate_day = _cached_usdkrw(as_of_end.isoformat())
+        krw_b = totals.get("KRW") or {"m2m": 0.0, "realized": 0.0, "n": 0}
+        usd_b = totals.get("USD") or {"m2m": 0.0, "realized": 0.0, "n": 0}
+        if rate:
+            n_all = int(krw_b["n"]) + int(usd_b["n"])
+            krw_m2m = float(krw_b["m2m"]) + float(usd_b["m2m"]) * rate
+            krw_real = float(krw_b["realized"]) + float(usd_b["realized"]) * rate
+            usd_m2m = float(usd_b["m2m"]) + float(krw_b["m2m"]) / rate
+            usd_real = float(usd_b["realized"]) + float(krw_b["realized"]) / rate
+            ccy_rows.append(
+                {
+                    "통화": "합계 (원)",
+                    "종목 수": f"{n_all}종목",
+                    "평가손익": _fmt_ccy(krw_m2m, "KRW"),
+                    "실현손익": _fmt_ccy(krw_real, "KRW"),
+                    "평가+실현": _fmt_ccy(krw_m2m + krw_real, "KRW"),
+                }
+            )
+            ccy_rows.append(
+                {
+                    "통화": "합계 (달러)",
+                    "종목 수": f"{n_all}종목",
+                    "평가손익": _fmt_ccy(usd_m2m, "USD"),
+                    "실현손익": _fmt_ccy(usd_real, "USD"),
+                    "평가+실현": _fmt_ccy(usd_m2m + usd_real, "USD"),
+                }
+            )
+        _show_table(pd.DataFrame(ccy_rows))
+        if rate:
+            used = rate_day or str(as_of_end)
+            extra = f", {used}" if str(used) != str(as_of_end) else ""
+            st.caption(
+                f"코인은 달러 기준입니다. 합계는 조회 종료일 {as_of_end} 원/달러 "
+                f"{rate:,.2f}원({rate_src}{extra})으로 달러를 환산했습니다."
+            )
+            m1, m2 = st.columns(2)
+            m1.metric("합계 평가+실현 (원)", _fmt_ccy(krw_m2m + krw_real, "KRW"))
+            m2.metric("합계 평가+실현 (달러)", _fmt_ccy(usd_m2m + usd_real, "USD"))
+        else:
+            st.caption(
+                "코인은 달러 기준입니다. 원/달러 환율을 받지 못해 원·달러 합계는 표시하지 않습니다."
+            )
         if starts and ends:
             _show_spy_compare(results, min(starts), max(ends))
     for result in results:

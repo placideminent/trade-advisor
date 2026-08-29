@@ -713,3 +713,145 @@ def fetch_ohlcv(
     if sliced.empty:
         sliced = work.loc[work.index <= cutoff]
     return sliced, meta
+
+
+def _usdkrw_from_close(px) -> float | None:
+    """원/달러. KRWUSD(0.0007대)로 오면 뒤집는다."""
+    try:
+        val = float(px)
+    except (TypeError, ValueError):
+        return None
+    if val <= 0:
+        return None
+    if val < 1:
+        val = 1.0 / val
+    if 500 <= val <= 3000:
+        return val
+    return None
+
+
+def _close_on_or_before(df: pd.DataFrame, as_of: date) -> tuple[float | None, date | None]:
+    if df is None or df.empty or "close" not in df.columns:
+        return None, None
+    work = df.copy()
+    work.index = _index_naive_wall(work.index)
+    cutoff = pd.Timestamp(as_of) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
+    sliced = work.loc[work.index <= cutoff]
+    if sliced.empty:
+        return None, None
+    px = _usdkrw_from_close(sliced["close"].iloc[-1])
+    if px is None:
+        return None, None
+    ts = sliced.index[-1]
+    try:
+        when = ts.date() if hasattr(ts, "date") else pd.Timestamp(ts).date()
+    except Exception:
+        when = as_of
+    return px, when
+
+
+def _naver_usdkrw(as_of: date) -> tuple[float | None, date | None, str]:
+    """Naver 원/달러 일별. Cloud에서 Yahoo/FDR이 막힐 때."""
+    import requests
+
+    headers = {
+        "User-Agent": "Mozilla/5.0",
+        "Referer": "https://m.stock.naver.com/marketindex/exchange/FX_USDKRW",
+    }
+    try:
+        resp = requests.get(
+            "https://m.stock.naver.com/front-api/marketIndex/prices",
+            params={
+                "category": "exchange",
+                "reutersCode": "FX_USDKRW",
+                "page": 1,
+                "pageSize": 40,
+            },
+            headers=headers,
+            timeout=12,
+        )
+        resp.raise_for_status()
+        payload = resp.json()
+        rows = None
+        if isinstance(payload, dict):
+            result = payload.get("result")
+            if isinstance(result, list):
+                rows = result
+            elif isinstance(result, dict):
+                rows = (
+                    result.get("prices")
+                    or result.get("data")
+                    or result.get("priceInfos")
+                    or result.get("list")
+                )
+            if rows is None:
+                rows = payload.get("prices") or payload.get("data")
+        elif isinstance(payload, list):
+            rows = payload
+        if not isinstance(rows, list):
+            return None, None, ""
+        best_px = None
+        best_day = None
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            raw_day = (
+                row.get("localTradedAt")
+                or row.get("tradeDate")
+                or row.get("date")
+                or row.get("bizdate")
+                or ""
+            )
+            try:
+                day = pd.Timestamp(str(raw_day)[:10]).date()
+            except Exception:
+                continue
+            if day > as_of:
+                continue
+            px = _usdkrw_from_close(
+                row.get("closePrice")
+                or row.get("nv")
+                or row.get("close")
+                or row.get("value")
+            )
+            if not px:
+                continue
+            if best_day is None or day > best_day:
+                best_px = px
+                best_day = day
+        if best_px:
+            return best_px, best_day, "Naver FX_USDKRW"
+    except Exception:
+        pass
+    return None, None, ""
+
+
+def fetch_usdkrw(as_of: date) -> tuple[float | None, str, date | None]:
+    """조회일(as_of) 기준 원/달러 종가. 휴일이면 직전 거래일."""
+    as_of = _to_date(as_of)
+    start = as_of - timedelta(days=21)
+    try:
+        df = _fetch_fdr("USD/KRW", start, as_of)
+        px, when = _close_on_or_before(df, as_of)
+        if px:
+            return px, "FinanceDataReader USD/KRW", when
+    except Exception:
+        pass
+    for symbol, src in (("USDKRW=X", "Yahoo USDKRW=X"), ("KRW=X", "Yahoo KRW=X")):
+        try:
+            df = _fetch_daily(symbol, start, as_of)
+            px, when = _close_on_or_before(df, as_of)
+            if px:
+                return px, src, when
+        except Exception:
+            continue
+    if as_of >= market_today("KR"):
+        spot, src = _yahoo_spot("USDKRW=X")
+        px = _usdkrw_from_close(spot)
+        if px:
+            return px, src or "Yahoo 현재가", as_of
+    px, when, src = _naver_usdkrw(as_of)
+    if px:
+        return px, src, when
+    return None, "", None
+
