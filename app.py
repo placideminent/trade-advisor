@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import html
 import os
 import time
 from datetime import date, timedelta
@@ -594,20 +595,55 @@ st.markdown(
       .action-sell { background:#fee2e2; color:#7f1d1d; padding:0.75rem 0.9rem; border-radius:10px; }
       .action-sell-weak { background:#fecaca; color:#9f1239; padding:0.75rem 0.9rem; border-radius:10px; }
       .action-hold { background:#fef9c3; color:#713f12; padding:0.75rem 0.9rem; border-radius:10px; }
-      .fav-static {
-        min-height: 4.5rem;
+      .fav-bar {
+        min-height: 4.6rem;
         box-sizing: border-box;
         display: flex;
         flex-direction: column;
         justify-content: center;
-      }
-      .fav-static .fav-meta, .fav-static .fav-main {
+        align-items: stretch;
+        width: 100%;
         text-align: left;
+        padding: 0.7rem 0.85rem !important;
+      }
+      .fav-bar .fav-meta,
+      .fav-bar .fav-main {
+        display: block;
+        width: 100%;
+        box-sizing: border-box;
+        text-align: left !important;
+        font-weight: 800;
+        letter-spacing: -0.02em;
+        line-height: 1.35;
+        margin: 0;
+        padding: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .fav-bar .fav-meta { font-size: 0.92rem; opacity: 0.92; }
+      .fav-bar .fav-main { font-size: 1.12rem; margin-top: 0.22rem; }
+      .fav-bar .fav-main-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1.35fr) minmax(0, 1.05fr) minmax(0, 0.85fr);
+        gap: 0.15rem 0.45rem;
+        width: 100%;
+        white-space: nowrap;
+      }
+      .fav-bar .fav-main-grid > span {
+        display: block;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        text-align: left !important;
         font-weight: 800;
         letter-spacing: -0.02em;
       }
-      .fav-static .fav-meta { font-size: 0.92rem; }
-      .fav-static .fav-main { font-size: 1.2rem; margin-top: 0.18rem; }
+      [data-testid="stMarkdownContainer"]:has(.fav-bar),
+      [data-testid="stMarkdownContainer"]:has(.fav-bar) p {
+        margin: 0 !important;
+        padding: 0 !important;
+      }
       div[data-testid="stHorizontalBlock"]:has([class*="st-key-unfav_"]) {
         flex-wrap: nowrap !important;
         align-items: stretch !important;
@@ -618,45 +654,35 @@ st.markdown(
         width: 3.6rem !important;
         min-width: 3.6rem !important;
       }
-      div[class*="st-key-favbar_"] button,
+      div[data-testid="stHorizontalBlock"]:has([class*="st-key-unfav_"]) [data-testid="stVerticalBlock"] {
+        gap: 0 !important;
+      }
+      div[class*="st-key-favbar_"] {
+        position: relative;
+        z-index: 5;
+        margin-top: -4.6rem !important;
+        height: 4.6rem !important;
+        min-height: 4.6rem !important;
+        overflow: hidden;
+      }
+      div[class*="st-key-favbar_"] button {
+        width: 100% !important;
+        min-height: 4.6rem !important;
+        height: 4.6rem !important;
+        margin: 0 !important;
+        opacity: 0 !important;
+        cursor: pointer !important;
+        border: none !important;
+        box-shadow: none !important;
+        background: transparent !important;
+      }
       div[class*="st-key-unfav_"] button {
-        min-height: 4.5rem !important;
+        min-height: 4.6rem !important;
         height: 100% !important;
         margin-top: 0 !important;
         border-radius: 10px !important;
+        padding: 0 0.25rem !important;
       }
-      div[class*="st-key-favbar_"] button {
-        display: flex !important;
-        justify-content: flex-start !important;
-        align-items: flex-start !important;
-        text-align: left !important;
-        white-space: pre-line !important;
-        line-height: 1.4 !important;
-        font-weight: 800 !important;
-        font-size: 1.15rem !important;
-        letter-spacing: -0.02em !important;
-        padding: 0.7rem 0.85rem !important;
-        border: none !important;
-        box-shadow: none !important;
-      }
-      div[class*="st-key-favbar_"] button p,
-      div[class*="st-key-favbar_"] button span,
-      div[class*="st-key-favbar_"] button div {
-        font-weight: 800 !important;
-        font-size: inherit !important;
-        text-align: left !important;
-        color: inherit !important;
-      }
-      div[class*="st-key-unfav_"] button {
-        padding: 0 0.35rem !important;
-      }
-      div[class*="st-key-favbar_bstrong_"] button { background:#86efac !important; color:#14532d !important; }
-      div[class*="st-key-favbar_bweak_"] button { background:#ecfccb !important; color:#3f6212 !important; }
-      div[class*="st-key-favbar_bmid_"] button { background:#dcfce7 !important; color:#14532d !important; }
-      div[class*="st-key-favbar_sstrong_"] button { background:#fca5a5 !important; color:#7f1d1d !important; }
-      div[class*="st-key-favbar_sweak_"] button { background:#fecaca !important; color:#9f1239 !important; }
-      div[class*="st-key-favbar_smid_"] button { background:#fee2e2 !important; color:#7f1d1d !important; }
-      div[class*="st-key-favbar_hold_"] button { background:#fef9c3 !important; color:#713f12 !important; }
       .ta-table { width:100%; border-collapse:collapse; font-size:0.92rem; table-layout:auto; }
       .ta-table th, .ta-table td {
         border-bottom:1px solid #e5e7eb; padding:0.5rem 0.4rem;
@@ -673,12 +699,8 @@ st.markdown(
         div[data-testid="stHorizontalBlock"]:has([class*="st-key-unfav_"]) {
           flex-wrap: nowrap !important;
         }
-        div[class*="st-key-favbar_"] button,
-        div[class*="st-key-favbar_"] button p {
-          font-size: 1.08rem !important;
-          font-weight: 800 !important;
-          text-align: left !important;
-        }
+        .fav-bar .fav-meta { font-size: 0.86rem; }
+        .fav-bar .fav-main { font-size: 1.02rem; }
         h2, h3 { font-size: 1.05rem !important; }
         .action-buy-strong, .action-buy, .action-buy-weak,
         .action-sell-strong, .action-sell, .action-sell-weak, .action-hold {
@@ -850,34 +872,71 @@ def _fav_row_key(market: str, ticker: str) -> str:
     return f"{market}|{ticker}"
 
 
+def _fav_bar_markup(
+    css_class: str,
+    meta: str,
+    main: str = "",
+    *,
+    price: str = "",
+    action: str = "",
+    score: str = "",
+) -> str:
+    meta_e = html.escape(str(meta))
+    if price or action or score:
+        body = (
+            "<div class='fav-main fav-main-grid'>"
+            f"<span>{html.escape(price)}</span>"
+            f"<span>{html.escape(action)}</span>"
+            f"<span>{html.escape(score)}</span>"
+            "</div>"
+        )
+    else:
+        body = f"<div class='fav-main'>{html.escape(str(main))}</div>"
+    return f"<div class='{css_class} fav-bar'><div class='fav-meta'>{meta_e}</div>{body}</div>"
+
+
 def _render_fav_row(row: dict, as_of, *, analyzed: bool) -> None:
     cols = st.columns([6, 1], gap="small", vertical_alignment="center")
     safe = f"{row['market']}_{str(row.get('ticker') or '').replace('.', '_')}"
     name = row.get("name") or row.get("ticker")
+    ticker = row.get("ticker")
+    meta = f"{name} ({ticker})"
+    css = "action-hold"
+    main = "아직 분석하지 않음"
+    clickable = False
+    kind = "hold"
+    if not analyzed:
+        pass
+    elif row.get("error"):
+        main = f"계산 실패: {row['error']}"
+    else:
+        action = row.get("action") or "홀딩"
+        kind = FAVBAR_KIND.get(action, "hold")
+        css = ACTION_CLASS.get(action, "action-hold")
+        price_txt = _fmt(row["price"]) if row.get("price") else "-"
+        label = (row.get("price_label") or "").strip() or "가격"
+        clickable = True
     with cols[0]:
-        if not analyzed:
+        if clickable:
             st.markdown(
-                f"<div class='action-hold fav-static'><div class='fav-meta'>"
-                f"{name} ({row.get('ticker')})</div>"
-                f"<div class='fav-main'>아직 분석하지 않음</div></div>",
-                unsafe_allow_html=True,
-            )
-        elif row.get("error"):
-            st.markdown(
-                f"<div class='action-hold fav-static'><div class='fav-meta'>"
-                f"{name} ({row.get('ticker')})</div>"
-                f"<div class='fav-main'>계산 실패: {row['error']}</div></div>",
+                _fav_bar_markup(
+                    css,
+                    meta,
+                    price=f"{label} {price_txt}",
+                    action=f"제안 {action}",
+                    score=f"합산 {row.get('score_pct')}%",
+                ),
                 unsafe_allow_html=True,
             )
         else:
-            action = row.get("action") or "홀딩"
-            kind = FAVBAR_KIND.get(action, "hold")
-            label = (
-                f"{name} ({row.get('ticker')}) · "
-                f"{row.get('price_label') or ''} {_fmt(row['price']) if row.get('price') else '-'}\n"
-                f"제안: {action}   합산 {row.get('score_pct')}%"
-            )
-            if st.button(label, key=f"favbar_{kind}_{safe}", use_container_width=True):
+            st.markdown(_fav_bar_markup(css, meta, main), unsafe_allow_html=True)
+        if clickable:
+            if st.button(
+                "이 종목 분석",
+                key=f"favbar_{kind}_{safe}",
+                use_container_width=True,
+                help="이 종목 분석 화면으로 이동합니다.",
+            ):
                 st.session_state._jump_analysis = {
                     "market": row["market"],
                     "ticker": row["ticker"],
