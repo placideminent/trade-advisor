@@ -26,6 +26,8 @@ from .signals import DEFAULT_CUTS, DEFAULT_WEIGHTS, LEGACY_DEFAULT_CUTS
 COOKIE_NAME = "ta_prefs"
 UID_COOKIE_NAME = "ta_uid"
 QUERY_UID = "_u"
+QUERY_PREFS = "_p"
+COOKIE_MAX_LEN = 3500
 MAX_FAVORITES = 20
 MAX_USERS = 200
 PREFS_VERSION = 1
@@ -244,10 +246,28 @@ def save_user_prefs_file(uid: str, data: dict) -> None:
         _write_store_file(store)
 
 
-def encode_cookie(data: dict) -> str:
-    raw = json.dumps(_normalize(data), ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+def _compact_prefs(data: dict) -> dict:
+    """쿠키·주소용. 종목별 수량만 빼서 용량을 줄인다. 즐겨찾기 목록은 남긴다."""
+    n = _normalize(data)
+    n["favorites"] = [
+        {"market": f["market"], "ticker": f["ticker"], "name": f["name"]}
+        for f in (n.get("favorites") or [])
+    ]
+    return n
+
+
+def encode_cookie(data: dict, *, compact: bool = False) -> str:
+    payload = _compact_prefs(data) if compact else _normalize(data)
+    raw = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     packed = b"z" + gzip.compress(raw, 9)
     return base64.urlsafe_b64encode(packed).decode("ascii")
+
+
+def encode_browser(data: dict) -> str:
+    token = encode_cookie(data)
+    if len(token) <= COOKIE_MAX_LEN:
+        return token
+    return encode_cookie(data, compact=True)
 
 
 def decode_cookie(value: str | None) -> dict | None:
@@ -264,26 +284,21 @@ def decode_cookie(value: str | None) -> dict | None:
 
 
 def cookie_set_html(data: dict) -> str:
-    """부모 페이지에 uid 쿠키를 먼저 남긴다. 설정 쿠키가 너무 크면 uid 만 남긴다."""
+    """부모 페이지에 uid·설정을 남긴다. 설정이 크면 즐겨찾기 목록만 남긴다."""
     uid = normalize_uid(data.get("uid"))
-    token = encode_cookie(data).replace("\\", "\\\\").replace('"', '\\"')
+    token = encode_browser(data).replace("\\", "\\\\").replace('"', '\\"')
     script = (
         "(function(){try{"
         f'var u="{uid}";'
+        f'var t="{token}";'
         f'var d="{UID_COOKIE_NAME}="+u+";path=/;max-age=31536000;SameSite=Lax";'
-        "document.cookie=d;"
-        "try{window.parent.document.cookie=d;}catch(e){}"
-        "try{window.parent.localStorage.setItem('ta_uid',u);}catch(e){}"
-        "try{localStorage.setItem('ta_uid',u);}catch(e){}"
+        f'var c="{COOKIE_NAME}="+t+";path=/;max-age=31536000;SameSite=Lax";'
+        "document.cookie=d;document.cookie=c;"
+        "try{window.parent.document.cookie=d;window.parent.document.cookie=c;}catch(e){}"
+        "try{window.parent.localStorage.setItem('ta_uid',u);window.parent.localStorage.setItem('ta_prefs',t);}catch(e){}"
+        "try{localStorage.setItem('ta_uid',u);localStorage.setItem('ta_prefs',t);}catch(e){}"
+        "}catch(e){}})();"
     )
-    if len(token) <= 3500:
-        script += (
-            f'var t="{token}";'
-            f'var c="{COOKIE_NAME}="+t+";path=/;max-age=31536000;SameSite=Lax";'
-            "document.cookie=c;"
-            "try{window.parent.document.cookie=c;}catch(e){}"
-        )
-    script += "}catch(e){}})();"
     return f"<html><body><script>{script}</script></body></html>"
 
 

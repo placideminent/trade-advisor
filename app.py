@@ -20,10 +20,12 @@ from src.fundamentals import fetch_fundamentals, fmt_per, fmt_pct, fmt_pp, per_g
 from src.prefs import (
     COOKIE_NAME,
     MAX_FAVORITES,
+    QUERY_PREFS,
     QUERY_UID,
     UID_COOKIE_NAME,
     cookie_set_html,
     decode_cookie,
+    encode_browser,
     format_uid,
     load_user_prefs_file,
     load_user_prefs_remote,
@@ -250,9 +252,38 @@ def _bind_uid_url(uid: str) -> None:
         pass
 
 
+def _query_prefs() -> dict | None:
+    try:
+        raw = st.query_params.get(QUERY_PREFS)
+        if raw is None:
+            return None
+        if isinstance(raw, list):
+            raw = raw[0] if raw else None
+        return decode_cookie(raw)
+    except Exception:
+        return None
+
+
+def _bind_prefs_url(payload: dict) -> None:
+    uid = normalize_uid(payload.get("uid"))
+    _bind_uid_url(uid)
+    if not payload.get("favorites") and not int(payload.get("ts") or 0):
+        return
+    try:
+        token = encode_browser(payload)
+        current = st.query_params.get(QUERY_PREFS)
+        if isinstance(current, list):
+            current = current[0] if current else None
+        if current != token:
+            st.query_params[QUERY_PREFS] = token
+    except Exception:
+        pass
+
+
 def _prefs_payload(rule: dict) -> dict:
     return {
         "uid": normalize_uid(st.session_state.get("prefs_uid")),
+        "ts": int(st.session_state.get("_prefs_ts") or 0),
         "weights": rule["weights"],
         "cuts": rule["cuts"],
         "sim": {key: int(st.session_state.get(f"s_{key}", default)) for key, default in DEFAULT_SIM.items()},
@@ -287,10 +318,12 @@ def _bootstrap_prefs() -> None:
     if st.session_state.get("_prefs_boot") and not adopt:
         return
     cookie_data = decode_cookie(_cookie_token())
+    query_data = _query_prefs()
     uid = (
         adopt
         or normalize_uid((cookie_data or {}).get("uid"))
         or _cookie_uid()
+        or normalize_uid((query_data or {}).get("uid"))
         or _query_uid()
         or normalize_uid(st.session_state.get("prefs_uid"))
         or new_uid()
@@ -298,14 +331,17 @@ def _bootstrap_prefs() -> None:
     sources = []
     if cookie_data and (not cookie_data.get("uid") or cookie_data.get("uid") == uid):
         sources.append(cookie_data)
+    if query_data and (not query_data.get("uid") or query_data.get("uid") == uid):
+        sources.append(query_data)
     sources.append(load_user_prefs_file(uid))
     sources.append(load_user_prefs_remote(uid))
     loaded = merge_prefs(*sources)
     loaded["uid"] = uid
     _apply_loaded_prefs(loaded)
     st.session_state.prefs_uid = uid
-    if adopt or _cookie_uid() or _query_uid():
-        _bind_uid_url(uid)
+    st.session_state._prefs_ts = int(loaded.get("ts") or 0)
+    if loaded.get("favorites") or adopt or _cookie_uid() or _query_uid() or query_data:
+        _bind_prefs_url(loaded)
     st.session_state._prefs_snapshot = snapshot_key(loaded)
     st.session_state._prefs_boot = True
     st.session_state._prefs_just_booted = not bool(adopt)
@@ -329,23 +365,28 @@ def _persist_prefs(rule: dict) -> None:
     if st.session_state.get("_prefs_snapshot") == snap:
         if just_booted and uid:
             save_user_prefs_file(uid, payload)
+            if payload.get("favorites"):
+                _bind_prefs_url(payload)
         if (not just_booted) and st.session_state.pop("_prefs_need_cookie", False):
             st.session_state._prefs_cookie_html = cookie_set_html(payload)
             st.session_state._prefs_cookie_dirty = True
-            _bind_uid_url(uid)
+            _bind_prefs_url(payload)
         return
     st.session_state._prefs_snapshot = snap
     payload["ts"] = int(time.time())
+    st.session_state._prefs_ts = payload["ts"]
     if uid:
         save_user_prefs_file(uid, payload)
     if just_booted:
+        if payload.get("favorites"):
+            _bind_prefs_url(payload)
         return
     if uid and remote_enabled():
         st.session_state._prefs_remote_ok = save_user_prefs_remote(uid, payload)
     st.session_state._prefs_cookie_html = cookie_set_html(payload)
     st.session_state._prefs_cookie_dirty = True
     st.session_state.pop("_prefs_need_cookie", None)
-    _bind_uid_url(uid)
+    _bind_prefs_url(payload)
 
 
 def _emit_prefs_cookie() -> None:
