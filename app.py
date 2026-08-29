@@ -561,13 +561,35 @@ st.markdown(
       .action-sell { background:#fee2e2; color:#7f1d1d; padding:0.75rem 0.9rem; border-radius:10px; }
       .action-sell-weak { background:#fecaca; color:#9f1239; padding:0.75rem 0.9rem; border-radius:10px; }
       .action-hold { background:#fef9c3; color:#713f12; padding:0.75rem 0.9rem; border-radius:10px; }
+      div[data-testid="stHorizontalBlock"]:has([class*="st-key-unfav_"]) {
+        flex-wrap: nowrap !important;
+        align-items: stretch !important;
+        gap: 0.4rem !important;
+      }
+      div[data-testid="stHorizontalBlock"]:has([class*="st-key-unfav_"]) > div:last-child {
+        flex: 0 0 3.6rem !important;
+        width: 3.6rem !important;
+        min-width: 3.6rem !important;
+      }
       div[class*="st-key-favbar_"] button {
+        display: flex !important;
+        justify-content: flex-start !important;
+        align-items: flex-start !important;
         text-align: left !important;
         white-space: pre-line !important;
-        min-height: 4.4rem;
-        line-height: 1.35;
+        min-height: 4.5rem;
+        line-height: 1.4;
+        font-weight: 800 !important;
+        font-size: 1.12rem !important;
+        letter-spacing: -0.02em;
+        padding: 0.7rem 0.85rem !important;
         border: none !important;
         box-shadow: none !important;
+        border-radius: 10px !important;
+      }
+      div[class*="st-key-unfav_"] button {
+        min-height: 4.5rem;
+        padding: 0 0.35rem !important;
       }
       .ta-table { width:100%; border-collapse:collapse; font-size:0.92rem; table-layout:auto; }
       .ta-table th, .ta-table td {
@@ -582,6 +604,14 @@ st.markdown(
           padding-right: 0.55rem;
         }
         h1 { font-size: 1.28rem !important; line-height: 1.45 !important; }
+        div[data-testid="stHorizontalBlock"]:has([class*="st-key-unfav_"]) {
+          flex-wrap: nowrap !important;
+        }
+        div[class*="st-key-favbar_"] button {
+          font-size: 1.05rem !important;
+          font-weight: 800 !important;
+          text-align: left !important;
+        }
         h2, h3 { font-size: 1.05rem !important; }
         .action-buy-strong, .action-buy, .action-buy-weak,
         .action-sell-strong, .action-sell, .action-sell-weak, .action-hold {
@@ -752,19 +782,22 @@ def _fav_row_key(market: str, ticker: str) -> str:
 
 
 def _render_fav_row(row: dict, as_of, *, analyzed: bool) -> None:
-    cols = st.columns([6, 1])
+    cols = st.columns([6, 1], gap="small")
     safe = f"{row['market']}_{str(row.get('ticker') or '').replace('.', '_')}"
     name = row.get("name") or row.get("ticker")
     with cols[0]:
         if not analyzed:
             st.markdown(
-                f"<div class='action-hold'><b>{name}</b> ({row.get('ticker')}) · 아직 분석하지 않음</div>",
+                f"<div class='action-hold'><div style='font-weight:800;text-align:left'>"
+                f"{name} ({row.get('ticker')})</div>"
+                f"<div style='font-weight:700;text-align:left;margin-top:0.15rem'>아직 분석하지 않음</div></div>",
                 unsafe_allow_html=True,
             )
         elif row.get("error"):
             st.markdown(
-                f"<div class='action-hold'><b>{name}</b>"
-                f" ({row.get('ticker')}) · 계산 실패: {row['error']}</div>",
+                f"<div class='action-hold'><div style='font-weight:800;text-align:left'>"
+                f"{name} ({row.get('ticker')})</div>"
+                f"<div style='font-weight:700;text-align:left;margin-top:0.15rem'>계산 실패: {row['error']}</div></div>",
                 unsafe_allow_html=True,
             )
         else:
@@ -772,7 +805,9 @@ def _render_fav_row(row: dict, as_of, *, analyzed: bool) -> None:
             bg, fg = FAVBAR_COLORS.get(action, FAVBAR_COLORS["홀딩"])
             st.markdown(
                 f"<style>div.st-key-favbar_{safe} button {{"
-                f"background:{bg} !important; color:{fg} !important;}}</style>",
+                f"background:{bg} !important; color:{fg} !important;"
+                f"justify-content:flex-start !important; text-align:left !important;"
+                f"font-weight:800 !important;}}</style>",
                 unsafe_allow_html=True,
             )
             label = (
