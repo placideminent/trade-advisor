@@ -321,22 +321,52 @@ def decode_cookie(value: str | None) -> dict | None:
 
 
 def cookie_set_html(data: dict) -> str:
-    """부모 페이지에 uid·설정을 남긴다. 설정이 크면 즐겨찾기 목록만 남긴다."""
+    """uid 쿠키는 항상 남긴다. 즐겨찾기가 있을 때만 설정·localStorage 를 덮는다."""
     uid = normalize_uid(data.get("uid"))
     token = encode_browser(data).replace("\\", "\\\\").replace('"', '\\"')
+    has_data = bool(data.get("favorites") or int(data.get("ts") or 0))
     script = (
         "(function(){try{"
         f'var u="{uid}";'
         f'var t="{token}";'
+        f'var keep={str(has_data).lower()};'
         f'var d="{UID_COOKIE_NAME}="+u+";path=/;max-age=31536000;SameSite=Lax";'
+        "document.cookie=d;"
+        "try{window.parent.document.cookie=d;}catch(e){}"
+        "if(keep){"
         f'var c="{COOKIE_NAME}="+t+";path=/;max-age=31536000;SameSite=Lax";'
-        "document.cookie=d;document.cookie=c;"
-        "try{window.parent.document.cookie=d;window.parent.document.cookie=c;}catch(e){}"
-        "try{window.parent.localStorage.setItem('ta_uid',u);window.parent.localStorage.setItem('ta_prefs',t);}catch(e){}"
-        "try{localStorage.setItem('ta_uid',u);localStorage.setItem('ta_prefs',t);}catch(e){}"
+        "document.cookie=c;"
+        "try{window.parent.document.cookie=c;}catch(e){}"
+        "try{window.parent.localStorage.setItem('ta_uid',u);"
+        "window.parent.localStorage.setItem('ta_prefs',t);"
+        "window.parent.localStorage.setItem('ta_prefs_'+u,t);}catch(e){}"
+        "try{localStorage.setItem('ta_uid',u);"
+        "localStorage.setItem('ta_prefs',t);"
+        "localStorage.setItem('ta_prefs_'+u,t);}catch(e){}"
+        "}"
         "}catch(e){}})();"
     )
     return f"<html><body><script>{script}</script></body></html>"
+
+
+def localstorage_restore_html(uid: str) -> str:
+    """이어가기 때 이 브라우저 localStorage 에서 해당 코드 설정을 읽어 주소로 넣는다."""
+    uid = normalize_uid(uid)
+    return (
+        "<html><body><script>(function(){try{"
+        f'var u="{uid}";'
+        "var t=null;"
+        "try{t=window.parent.localStorage.getItem('ta_prefs_'+u);}catch(e){}"
+        "if(!t){try{t=window.parent.localStorage.getItem('ta_prefs');}catch(e){}}"
+        "if(!t){try{t=localStorage.getItem('ta_prefs_'+u)||localStorage.getItem('ta_prefs');}catch(e){}}"
+        "if(!t)return;"
+        "var url=new URL(window.parent.location.href);"
+        "if(url.searchParams.get('_p')===t)return;"
+        "url.searchParams.set('_p',t);"
+        "url.searchParams.set('_u',u);"
+        "window.parent.location.replace(url.toString());"
+        "}catch(e){}})();</script></body></html>"
+    )
 
 
 def _get_secret(name: str) -> str:

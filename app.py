@@ -42,7 +42,7 @@ from src.prefs import (
 )
 
 try:
-    from src.prefs import QUERY_PREFS, QUERY_UID, encode_browser
+    from src.prefs import QUERY_PREFS, QUERY_UID, encode_browser, localstorage_restore_html
 except ImportError:
     QUERY_PREFS = "_p"
     QUERY_UID = "_u"
@@ -51,6 +51,9 @@ except ImportError:
         from src.prefs import encode_cookie
 
         return encode_cookie(data)
+
+    def localstorage_restore_html(uid: str) -> str:
+        return ""
 from src.signals import (
     CUT_FIELDS,
     DEFAULT_CUTS,
@@ -371,7 +374,10 @@ def _bootstrap_prefs() -> None:
     st.session_state._prefs_need_cookie = True
     st.session_state._prefs_remote_ok = remote_enabled()
     if adopt and _score_empty(loaded):
-        st.session_state._prefs_adopt_msg = "이 코드로 저장된 기록이 아직 없습니다. 코드를 넣은 뒤 이 기기에서 쓰면 같은 칸에 쌓입니다."
+        st.session_state._prefs_ls_html = localstorage_restore_html(uid)
+        st.session_state._prefs_adopt_msg = (
+            "서버에는 이 코드 기록이 없습니다. 이 브라우저에 남은 저장이 있으면 불러옵니다."
+        )
     elif adopt:
         st.session_state._prefs_adopt_msg = f"{format_uid(uid)} 저장을 불러왔습니다."
 
@@ -391,9 +397,10 @@ def _persist_prefs(rule: dict) -> None:
             if payload.get("favorites"):
                 _bind_prefs_url(payload)
         if (not just_booted) and st.session_state.pop("_prefs_need_cookie", False):
-            st.session_state._prefs_cookie_html = cookie_set_html(payload)
-            st.session_state._prefs_cookie_dirty = True
-            _bind_prefs_url(payload)
+            if payload.get("favorites") or int(payload.get("ts") or 0):
+                st.session_state._prefs_cookie_html = cookie_set_html(payload)
+                st.session_state._prefs_cookie_dirty = True
+                _bind_prefs_url(payload)
         return
     st.session_state._prefs_snapshot = snap
     payload["ts"] = int(time.time())
@@ -406,10 +413,21 @@ def _persist_prefs(rule: dict) -> None:
         return
     if uid and remote_enabled():
         st.session_state._prefs_remote_ok = save_user_prefs_remote(uid, payload)
-    st.session_state._prefs_cookie_html = cookie_set_html(payload)
-    st.session_state._prefs_cookie_dirty = True
+    if payload.get("favorites") or int(payload.get("ts") or 0):
+        st.session_state._prefs_cookie_html = cookie_set_html(payload)
+        st.session_state._prefs_cookie_dirty = True
+        _bind_prefs_url(payload)
     st.session_state.pop("_prefs_need_cookie", None)
-    _bind_prefs_url(payload)
+
+
+def _emit_ls_restore() -> None:
+    html = st.session_state.pop("_prefs_ls_html", None)
+    if not html:
+        return
+    try:
+        components.html(html, height=1, width=1)
+    except Exception:
+        pass
 
 
 def _emit_prefs_cookie() -> None:
@@ -502,6 +520,7 @@ def require_login() -> None:
 
 require_login()
 _bootstrap_prefs()
+_emit_ls_restore()
 
 st.markdown(
     """
@@ -1412,18 +1431,19 @@ with st.sidebar:
     st.caption(f"내 저장 코드: **{uid_show or '-'}** · 접속자마다 따로 저장됩니다.")
     with st.expander("다른 기기에서 이어가기"):
         st.caption(
-            "이 코드를 폰·다른 브라우저에 넣으면 즐겨찾기·배점·시뮬레이션이 이어집니다. "
-            "코드를 모르는 사람은 내 저장을 보지 못합니다."
+            "예전에 쓰던 저장 코드를 넣으면 이 브라우저에 남은 즐겨찾기를 다시 불러옵니다. "
+            "리부트 전에 이 폰·PC에서 쓴 코드여야 합니다."
         )
         st.text_input("저장 코드", key="prefs_code_in", placeholder="예: AB3K-9M2Q")
         if st.button("이 코드로 불러오기", use_container_width=True):
             other = normalize_uid(st.session_state.get("prefs_code_in"))
             if not other:
                 st.session_state._prefs_adopt_msg = "코드 형식이 아닙니다. 8자리입니다."
-            elif other == normalize_uid(st.session_state.get("prefs_uid")):
+            elif other == normalize_uid(st.session_state.get("prefs_uid")) and _fav_list():
                 st.session_state._prefs_adopt_msg = "이미 이 코드로 연결되어 있습니다."
             else:
                 st.session_state._prefs_adopt = other
+                st.session_state._prefs_boot = False
                 st.rerun()
         msg = st.session_state.get("_prefs_adopt_msg")
         if msg:
