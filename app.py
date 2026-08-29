@@ -22,6 +22,7 @@ from src.chart import (
     build_ticker_vs_spy_fig,
 )
 from src.data import drop_incomplete_session, fetch_ohlcv, fetch_spot_price, fetch_usdkrw, market_today, search_kr
+from src.options import fetch_option_walls
 from src.fundamentals import fetch_fundamentals, fmt_per, fmt_pct, fmt_pp, per_gap_text
 
 from src.prefs import (
@@ -83,18 +84,37 @@ from src.signals import (
 )
 
 
+@st.cache_data(ttl=300, show_spinner=False)
+def _cached_option_walls(ticker: str, price_key: str, as_of_iso: str) -> dict:
+    return fetch_option_walls(ticker, date.fromisoformat(as_of_iso), float(price_key))
+
+
 def _make_signal(
     an,
     six_month_chg=None,
     lookback_days=None,
     rule=None,
+    market=None,
+    ticker=None,
+    live=False,
 ):
+    walls = None
+    if live and str(market or "").upper() == "US" and ticker:
+        try:
+            px = float(getattr(an, "price", 0) or 0)
+            as_iso = str(getattr(an, "as_of", "") or "")[:10]
+            if px > 0 and as_iso:
+                walls = _cached_option_walls(str(ticker).strip().upper(), f"{px:.4f}", as_iso)
+        except Exception as extra:
+            walls = {"error": str(extra)[:120], "soon": False}
     try:
         return recommend(
             an,
             six_month_chg=six_month_chg,
             lookback_days=lookback_days,
             rule=rule,
+            option_walls=walls,
+            market=market,
         )
     except TypeError:
         try:
@@ -890,6 +910,9 @@ def _quick_signal(market: str, ticker: str, as_of, lookback_days: int, timeframe
             six_month_chg,
             lookback_days,
             rule,
+            market=market,
+            ticker=ticker,
+            live=is_live,
         )
     except Exception as extra:
         return {
@@ -1966,6 +1989,9 @@ try:
         six_month_chg,
         lookback_days,
         rule,
+        market=market,
+        ticker=ticker,
+        live=is_live,
     )
 except Exception as exc:
     st.error(f"분석 실패: {exc}")
@@ -2042,6 +2068,12 @@ if st.session_state.pop("_fav_full", False):
 st.subheader("점수 내역")
 if signal.score_rows:
     _show_table(pd.DataFrame(signal.score_rows))
+    if any(str(r.get("항목") or "") == "옵션 월" for r in signal.score_rows):
+        st.caption(
+            "옵션 월은 기존 매수/매도 판정 뒤에 더해 제안을 다시 봅니다. "
+            "미국 주식 당일 조회, 만기 14일 안 체인, 근처는 현재가 ±5%입니다. "
+            "시뮬레이션·과거 시점에는 넣지 않습니다."
+        )
 
 st.subheader("주요 가격대")
 rows = []

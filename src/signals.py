@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
-SIGNAL_RULE_VERSION = 50
+SIGNAL_RULE_VERSION = 51
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 10
 # 합산 %는 조회 기간과 상관없이 같은 눈금(이론상 최저~최고)을 쓴다.
@@ -38,6 +38,7 @@ DEFAULT_WEIGHTS = {
     "chg6_300": -2,
     "chg6_400": -3,
     "rr_penalty": -1,
+    "option_wall": 1,
 }
 
 DEFAULT_CUTS = {
@@ -82,6 +83,7 @@ WEIGHT_FIELDS = [
     ("chg6_300", "6개월 상승 300%", "6개월 전 대비 300% 이상 400% 미만 −2 (모든 조회)"),
     ("chg6_400", "6개월 상승 400%", "6개월 전 대비 400% 이상 −3 (모든 조회)"),
     ("rr_penalty", "손익비 부족", "손익비 1.2 미만이고 점수가 높을 때"),
+    ("option_wall", "옵션 월", "기존 매수/매도 이후 추가. 만기 14일 안 콜·풋월. 매도 때 근처 콜두껍/풋얇 −1, 반대 +1. 매수 때 근처 풋얇+콜두껍 −1"),
 ]
 
 CUT_FIELDS = [
@@ -248,11 +250,35 @@ def _bars_aside_line(df, line, last_price: float, *, below: bool) -> int | None:
     return count
 
 
+def _action_from_pct(score_pct: int, cuts: dict) -> str:
+    buy_weak = int(cuts["buy_weak"])
+    buy_mid = int(cuts["buy_mid"])
+    buy_strong = int(cuts["buy_strong"])
+    sell_weak = int(cuts["sell_weak"])
+    sell_mid = int(cuts["sell_mid"])
+    sell_strong = int(cuts["sell_strong"])
+    if score_pct >= buy_strong:
+        return "강한 매수"
+    if score_pct >= buy_mid:
+        return "매수"
+    if score_pct >= buy_weak:
+        return "약한 매수"
+    if score_pct <= sell_strong:
+        return "강한 매도"
+    if score_pct <= sell_mid:
+        return "매도"
+    if score_pct <= sell_weak:
+        return "약한 매도"
+    return "홀딩"
+
+
 def recommend(
     an: Analysis,
     six_month_chg: float | None = None,
     lookback_days: int | None = None,
     rule: dict | None = None,
+    option_walls: dict | None = None,
+    market: str | None = None,
     **_unused,
 ) -> Signal:
     cfg = merge_rule(rule)
@@ -571,39 +597,45 @@ def recommend(
         )
 
     score = max(0, score)
+    action_base = _action_from_pct(score_to_pct(score), cuts)
+    if str(market or "").upper() == "US" or option_walls is not None:
+        from .options import option_wall_adjust
+
+        opt_pts, opt_detail = option_wall_adjust(action_base, option_walls, wp("option_wall"))
+        add("옵션 월", opt_detail, opt_pts)
+        score = max(0, score)
+
     lo, hi = SCORE_LO, SCORE_HI
     score_pct = score_to_pct(score)
+    action = _action_from_pct(score_pct, cuts)
     reasons.append(
         f"합산 {score_pct}% ({score}점, 범위 {lo}~{hi}) · "
         f"약한매수 {buy_weak}%↑ / 매수 {buy_mid}%↑ / 강한매수 {buy_strong}%↑ · "
         f"약한매도 {sell_weak}%↓ / 매도 {sell_mid}%↓ / 강한매도 {sell_strong}%↓"
         f" · 규칙 v{SIGNAL_RULE_VERSION}"
     )
+    if action != action_base:
+        reasons.append(f"기존 규칙 {action_base} → 옵션 월 반영 후 {action}")
 
     if score_pct >= buy_strong:
-        action = "강한 매수"
         summary = "합산이 높아 강한 매수 구간입니다."
     elif score_pct >= buy_mid:
-        action = "매수"
         summary = "매수 구간에 들어왔습니다."
     elif score_pct >= buy_weak:
-        action = "약한 매수"
         summary = "매수 쪽으로 기울었지만 강도는 약한 구간입니다."
     elif score_pct <= sell_strong:
-        action = "강한 매도"
         summary = "합산이 낮아 강한 매도 구간입니다."
     elif score_pct <= sell_mid:
-        action = "매도"
         summary = "매도 구간에 들어왔습니다."
     elif score_pct <= sell_weak:
-        action = "약한 매도"
         summary = "매도 쪽으로 기울었지만 강도는 약한 구간입니다."
     else:
-        action = "홀딩"
         summary = "지지와 저항 사이이거나 신호가 엇갈려 관망(홀딩)이 낫습니다."
         if bar_count < 50:
             summary = "조회 기간이 짧아 신호가 쉽게 바뀝니다. 지금은 관망(홀딩)이 낫습니다."
 
+    if action != action_base:
+        summary = f"기존 규칙 {action_base}에 옵션 월을 반영해 {action}로 조정했습니다. " + summary
     if action in ("매수", "약한 매수", "강한 매수"):
         if follow_trend:
             summary = "단기 상승 추세 쪽으로 기울었습니다. " + summary
