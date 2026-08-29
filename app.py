@@ -12,7 +12,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 from src.analysis import analyze
-from src.backtest import DEFAULT_SIM, normalize_sim, run_backtest
+from src.backtest import DEFAULT_SIM, normalize_sim, run_backtest, spy_hold_return
 from src.chart import build_chart, build_sim_chart
 from src.data import drop_incomplete_session, fetch_ohlcv, fetch_spot_price, market_today, search_kr
 from src.fundamentals import fetch_fundamentals, fmt_per, fmt_pct, fmt_pp, per_gap_text
@@ -20,6 +20,7 @@ from src.fundamentals import fetch_fundamentals, fmt_per, fmt_pct, fmt_pp, per_g
 from src.prefs import (
     COOKIE_NAME,
     MAX_FAVORITES,
+    QUERY_UID,
     UID_COOKIE_NAME,
     cookie_set_html,
     decode_cookie,
@@ -226,6 +227,29 @@ def _cookie_uid() -> str:
         return ""
 
 
+def _query_uid() -> str:
+    try:
+        raw = st.query_params.get(QUERY_UID)
+        if raw is None:
+            return ""
+        if isinstance(raw, list):
+            raw = raw[0] if raw else ""
+        return normalize_uid(raw)
+    except Exception:
+        return ""
+
+
+def _bind_uid_url(uid: str) -> None:
+    uid = normalize_uid(uid)
+    if not uid:
+        return
+    try:
+        if _query_uid() != uid:
+            st.query_params[QUERY_UID] = uid
+    except Exception:
+        pass
+
+
 def _prefs_payload(rule: dict) -> dict:
     return {
         "uid": normalize_uid(st.session_state.get("prefs_uid")),
@@ -263,8 +287,14 @@ def _bootstrap_prefs() -> None:
     if st.session_state.get("_prefs_boot") and not adopt:
         return
     cookie_data = decode_cookie(_cookie_token())
-    uid = adopt or normalize_uid((cookie_data or {}).get("uid")) or _cookie_uid()
-    uid = uid or normalize_uid(st.session_state.get("prefs_uid")) or new_uid()
+    uid = (
+        adopt
+        or normalize_uid((cookie_data or {}).get("uid"))
+        or _cookie_uid()
+        or _query_uid()
+        or normalize_uid(st.session_state.get("prefs_uid"))
+        or new_uid()
+    )
     sources = []
     if cookie_data and (not cookie_data.get("uid") or cookie_data.get("uid") == uid):
         sources.append(cookie_data)
@@ -274,6 +304,8 @@ def _bootstrap_prefs() -> None:
     loaded["uid"] = uid
     _apply_loaded_prefs(loaded)
     st.session_state.prefs_uid = uid
+    if adopt or _cookie_uid() or _query_uid():
+        _bind_uid_url(uid)
     st.session_state._prefs_snapshot = snapshot_key(loaded)
     st.session_state._prefs_boot = True
     st.session_state._prefs_just_booted = not bool(adopt)
@@ -300,6 +332,7 @@ def _persist_prefs(rule: dict) -> None:
         if (not just_booted) and st.session_state.pop("_prefs_need_cookie", False):
             st.session_state._prefs_cookie_html = cookie_set_html(payload)
             st.session_state._prefs_cookie_dirty = True
+            _bind_uid_url(uid)
         return
     st.session_state._prefs_snapshot = snap
     payload["ts"] = int(time.time())
@@ -312,6 +345,7 @@ def _persist_prefs(rule: dict) -> None:
     st.session_state._prefs_cookie_html = cookie_set_html(payload)
     st.session_state._prefs_cookie_dirty = True
     st.session_state.pop("_prefs_need_cookie", None)
+    _bind_uid_url(uid)
 
 
 def _emit_prefs_cookie() -> None:
@@ -542,20 +576,13 @@ def _quick_signal(market: str, ticker: str, as_of, lookback_days: int, timeframe
             lookback_days,
             rule,
         )
-    except Exception as exc:
+    except Exception as extra:
         return {
             "market": market,
             "ticker": ticker,
             "name": meta.get("name") or ticker,
-            "error": str(exc),
+            "error": str(extra),
         }
-    value_label = ""
-    try:
-        fund = fetch_fundamentals(market, ticker, signal.action)
-        if fund is not None and not fund.error:
-            value_label = fund.value_label or ""
-    except Exception:
-        value_label = ""
     return {
         "market": market,
         "ticker": str(meta.get("ticker") or ticker),
@@ -564,7 +591,6 @@ def _quick_signal(market: str, ticker: str, as_of, lookback_days: int, timeframe
         "score_pct": signal.score_pct,
         "price": analysis.price,
         "price_label": analysis.price_label,
-        "value_label": value_label,
         "error": None,
     }
 
@@ -574,7 +600,7 @@ def _render_favorites(as_of, lookback_days: int, timeframe: str, lookback_label:
     st.subheader("즐겨찾기")
     st.caption(
         f"조회 기간 {lookback_label} · 분석일 {as_of} · 저장해 둔 배점·기준으로 계산합니다. "
-        "결과만 모아서 보여 줍니다."
+        "종목의 **분석**을 누르면 개별 분석 화면으로 갑니다."
     )
     if not favs:
         st.info("아직 즐겨찾기한 종목이 없습니다. 종목 분석 화면에서 별표로 추가하세요.")
@@ -595,7 +621,7 @@ def _render_favorites(as_of, lookback_days: int, timeframe: str, lookback_label:
         results.append(row)
     bar.empty()
     for row in results:
-        cols = st.columns([6, 1])
+        cols = st.columns([5, 1, 1])
         with cols[0]:
             if row.get("error"):
                 st.markdown(
@@ -605,24 +631,32 @@ def _render_favorites(as_of, lookback_days: int, timeframe: str, lookback_label:
                 )
             else:
                 cls = ACTION_CLASS.get(row.get("action"), "action-hold")
-                value_side = f" · 가격 {row['value_label']}" if row.get("value_label") else ""
                 st.markdown(
                     f"<div class='{cls}'>"
                     f"<div style='font-size:0.85rem;opacity:0.8'>"
                     f"{row.get('name') or row.get('ticker')} ({row.get('ticker')}) · "
                     f"{row.get('price_label') or ''} {_fmt(row['price']) if row.get('price') else '-'}"
                     f"</div>"
-                    f"<div style='font-size:1.35rem;font-weight:700'>제안: {row.get('action')}"
-                    f"{value_side} "
+                    f"<div style='font-size:1.35rem;font-weight:700'>제안: {row.get('action')} "
                     f"<span style='font-size:1rem;font-weight:500'>합산 {row.get('score_pct')}%</span>"
                     f"</div></div>",
                     unsafe_allow_html=True,
                 )
         with cols[1]:
+            if st.button("분석", key=f"an_{row['market']}_{row['ticker']}", use_container_width=True):
+                st.session_state._jump_analysis = {
+                    "market": row["market"],
+                    "ticker": row["ticker"],
+                    "name": row.get("name") or row["ticker"],
+                    "as_of": as_of.isoformat(),
+                }
+                st.rerun()
+        with cols[2]:
             st.button(
                 "삭제",
                 key=f"unfav_{row['market']}_{row['ticker']}",
                 on_click=partial(_remove_fav, row["market"], row["ticker"]),
+                use_container_width=True,
             )
 
 
@@ -644,6 +678,105 @@ def _fmt_ccy(amount: float, ccy: str) -> str:
     return f"${amount:+,.2f}"
 
 
+def _strategy_pnl(result) -> tuple[float, float, float]:
+    invested = float(getattr(result, "invested", 0) or 0)
+    pnl = float(result.realized or 0) + float(result.m2m or 0)
+    pct = (pnl / invested * 100.0) if invested else 0.0
+    return invested, pnl, pct
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _cached_spy_hold(start_iso: str, end_iso: str) -> tuple[float | None, str]:
+    return spy_hold_return(date.fromisoformat(start_iso), date.fromisoformat(end_iso))
+
+
+def _show_spy_compare(results: list, start: date, end: date) -> None:
+    spy_pct, spy_err = _cached_spy_hold(start.isoformat(), end.isoformat())
+    st.subheader("S&P 500 (SPY) 비교")
+    if spy_pct is None:
+        st.info(f"SPY 동일기간 수익을 받지 못했습니다: {spy_err or '알 수 없음'}")
+        return
+    rows = []
+    ok = [r for r in results if not getattr(r, "error", None)]
+    if len(ok) == 1:
+        invested, pnl, pct = _strategy_pnl(ok[0])
+        ccy = _sim_currency(getattr(ok[0], "market", "") or "")
+        rows.append(
+            {
+                "구분": f"{ok[0].name} 전략",
+                "투입": _fmt_ccy(invested, ccy) if invested else "-",
+                "손익": _fmt_ccy(pnl, ccy),
+                "수익률": f"{pct:+.2f}%" if invested else "-",
+            }
+        )
+        spy_pnl = invested * spy_pct / 100.0 if invested else 0.0
+        rows.append(
+            {
+                "구분": "SPY 매수 후 보유",
+                "투입": _fmt_ccy(invested, ccy) if invested else "-",
+                "손익": _fmt_ccy(spy_pnl, ccy) if invested else "-",
+                "수익률": f"{spy_pct:+.2f}%",
+            }
+        )
+        if invested:
+            rows.append(
+                {
+                    "구분": "차이 (전략−SPY)",
+                    "투입": "-",
+                    "손익": _fmt_ccy(pnl - spy_pnl, ccy),
+                    "수익률": f"{pct - spy_pct:+.2f}%p",
+                }
+            )
+    else:
+        by_ccy: dict[str, dict] = {}
+        for result in ok:
+            ccy = _sim_currency(getattr(result, "market", "") or "")
+            invested, pnl, _pct = _strategy_pnl(result)
+            bucket = by_ccy.setdefault(ccy, {"invested": 0.0, "pnl": 0.0, "n": 0})
+            bucket["invested"] += invested
+            bucket["pnl"] += pnl
+            bucket["n"] += 1
+        for ccy in ("KRW", "USD"):
+            bucket = by_ccy.get(ccy)
+            if not bucket:
+                continue
+            label = "원 전략" if ccy == "KRW" else "달러 전략 (미국·코인)"
+            invested = bucket["invested"]
+            pnl = bucket["pnl"]
+            pct = (pnl / invested * 100.0) if invested else 0.0
+            spy_pnl = invested * spy_pct / 100.0 if invested else 0.0
+            rows.append(
+                {
+                    "구분": f"{label} {bucket['n']}종목",
+                    "투입": _fmt_ccy(invested, ccy) if invested else "-",
+                    "손익": _fmt_ccy(pnl, ccy),
+                    "수익률": f"{pct:+.2f}%" if invested else "-",
+                }
+            )
+            rows.append(
+                {
+                    "구분": f"SPY 동일 투입 ({'원' if ccy == 'KRW' else '달러'})",
+                    "투입": _fmt_ccy(invested, ccy) if invested else "-",
+                    "손익": _fmt_ccy(spy_pnl, ccy) if invested else "-",
+                    "수익률": f"{spy_pct:+.2f}%",
+                }
+            )
+            if invested:
+                rows.append(
+                    {
+                        "구분": f"차이 ({'원' if ccy == 'KRW' else '달러'})",
+                        "투입": "-",
+                        "손익": _fmt_ccy(pnl - spy_pnl, ccy),
+                        "수익률": f"{pct - spy_pct:+.2f}%p",
+                    }
+                )
+    _show_table(pd.DataFrame(rows))
+    st.caption(
+        f"{start} ~ {end} SPY(SPDR S&P 500 ETF)를 기간 첫날 사서 끝날까지 보유한 수익률과 비교합니다. "
+        "전략 수익률은 매수 투입 금액 대비 (실현+평가) 손익입니다. 원 표시는 환율 없이 같은 %만 견줍니다."
+    )
+
+
 def _sim_qty_caption(start: date, end: date, lookback_label: str, sim: dict) -> str:
     return (
         f"{start} ~ {end} · 조회 {lookback_label} · "
@@ -654,7 +787,7 @@ def _sim_qty_caption(start: date, end: date, lookback_label: str, sim: dict) -> 
     )
 
 
-def _show_sim_result(result) -> None:
+def _show_sim_result(result, *, with_spy: bool = True) -> None:
     if result.error:
         st.error(result.error)
         return
@@ -726,6 +859,8 @@ def _show_sim_result(result) -> None:
             st.caption("잔량 0: " + " · ".join(t["날짜"] for t in skipped))
     else:
         st.info("매도 신호가 없습니다.")
+    if with_spy and not result.error:
+        _show_spy_compare([result], result.start, result.end)
 
 
 def _show_sim_favorites(results: list) -> None:
@@ -787,6 +922,10 @@ def _show_sim_favorites(results: list) -> None:
             )
         _show_table(pd.DataFrame(ccy_rows))
         st.caption("코인은 달러 기준입니다. 원과 달러는 합치지 않습니다.")
+        starts = [r.start for r in results if getattr(r, "start", None)]
+        ends = [r.end for r in results if getattr(r, "end", None)]
+        if starts and ends:
+            _show_spy_compare(results, min(starts), max(ends))
     for result in results:
         title = f"{result.name} ({result.ticker})"
         if result.error:
@@ -795,7 +934,7 @@ def _show_sim_favorites(results: list) -> None:
             ccy = _sim_currency(getattr(result, "market", "") or "")
             title += f" · 평가 {_fmt_ccy(result.m2m, ccy)}"
         with st.expander(title, expanded=False):
-            _show_sim_result(result)
+            _show_sim_result(result, with_spy=False)
 
 
 def _render_simulation(
@@ -897,7 +1036,42 @@ def _render_simulation(
     _show_sim_result(result)
 
 
+def _apply_analysis_jump() -> None:
+    jump = st.session_state.pop("_jump_analysis", None)
+    if not jump:
+        return
+    market = str(jump.get("market") or "")
+    ticker = str(jump.get("ticker") or "")
+    name = str(jump.get("name") or ticker)
+    st.session_state.app_page = "종목 분석"
+    for label, code in MARKETS.items():
+        if code == market:
+            st.session_state.market_pick = label
+            break
+    if market == "KR":
+        preset_map = {_preset_label(c, n): c for c, n in KR_PRESETS}
+        reverse = {code: lab for lab, code in preset_map.items()}
+        if ticker in reverse:
+            st.session_state.kr_preset = reverse[ticker]
+            st.session_state.kr_search = ""
+        else:
+            st.session_state.kr_search = ticker
+    elif market == "US":
+        st.session_state.us_custom = ticker
+    else:
+        st.session_state.crypto_custom = ticker
+    st.session_state._jump_name = name
+    as_of_raw = str(jump.get("as_of") or "")
+    if as_of_raw:
+        try:
+            st.session_state[f"as_of_{market}"] = date.fromisoformat(as_of_raw[:10])
+        except ValueError:
+            pass
+    st.session_state._auto_run = True
+
+
 with st.sidebar:
+    _apply_analysis_jump()
     page = st.radio("화면", ["종목 분석", "즐겨찾기", "시뮬레이션"], horizontal=True, key="app_page")
     st.header("조회 조건")
     sim_scope = "선택한 종목"
@@ -915,13 +1089,13 @@ with st.sidebar:
     ticker = ""
     display_name = ""
     if pick_one:
-        market_label = st.radio("시장", list(MARKETS.keys()), horizontal=False)
+        market_label = st.radio("시장", list(MARKETS.keys()), horizontal=False, key="market_pick")
         market = MARKETS[market_label]
 
     if pick_one and market == "KR":
         preset_map = {_preset_label(c, n): c for c, n in KR_PRESETS}
-        choice = st.selectbox("대표 종목", list(preset_map.keys()))
-        query = st.text_input("종목명 또는 코드 검색", placeholder="예: 삼성전자, 005930")
+        choice = st.selectbox("대표 종목", list(preset_map.keys()), key="kr_preset")
+        query = st.text_input("종목명 또는 코드 검색", placeholder="예: 삼성전자, 005930", key="kr_search")
         if query.strip():
             try:
                 hits = search_kr(query.strip())
@@ -942,8 +1116,8 @@ with st.sidebar:
             display_name = choice
     elif pick_one and market == "US":
         preset_map = {_preset_label(c, n): c for c, n in US_PRESETS}
-        choice = st.selectbox("대표 종목", list(preset_map.keys()))
-        custom = st.text_input("티커 직접 입력", placeholder="예: AAPL, NVDA")
+        choice = st.selectbox("대표 종목", list(preset_map.keys()), key="us_preset")
+        custom = st.text_input("티커 직접 입력", placeholder="예: AAPL, NVDA", key="us_custom")
         if custom.strip():
             ticker = custom.strip().upper()
             display_name = ticker
@@ -953,8 +1127,8 @@ with st.sidebar:
     elif pick_one:
         cmap = {label: key for key, label in crypto_choices()}
         labels = [label for _, label in crypto_choices()]
-        choice = st.selectbox("코인", labels, index=0)
-        custom = st.text_input("심볼 직접 입력", placeholder="예: BTC, ETH, ONDO")
+        choice = st.selectbox("코인", labels, index=0, key="crypto_preset")
+        custom = st.text_input("심볼 직접 입력", placeholder="예: BTC, ETH, ONDO", key="crypto_custom")
         if custom.strip():
             ticker = custom.strip().upper()
             info = CRYPTO.get(ticker)
@@ -1105,6 +1279,8 @@ with st.sidebar:
     run_sim = False
     if page == "종목 분석":
         run = st.button("분석하기", type="primary", use_container_width=True)
+        if st.session_state.pop("_auto_run", False):
+            run = True
     elif page == "시뮬레이션":
         run_sim = st.button("시뮬레이션 실행", type="primary", use_container_width=True)
 

@@ -67,6 +67,7 @@ class BacktestResult:
     signals: list = field(default_factory=list)
     chart_df: pd.DataFrame | None = None
     error: str | None = None
+    invested: float = 0.0
 
 
 def _window(df: pd.DataFrame, as_of: date, days: int) -> pd.DataFrame:
@@ -196,6 +197,7 @@ def run_backtest(
     shares = 0
     avg = 0.0
     realized = 0.0
+    invested = 0.0
     last_px = 0.0
     counts: dict[str, int] = {}
     trades: list[dict] = []
@@ -251,6 +253,7 @@ def run_backtest(
                 cost = avg * shares + px * qty
                 shares += qty
                 avg = cost / shares
+                invested += px * qty
                 row.update(수량=qty, 잔량=shares, 평단=avg, 체결="매수")
                 trades.append(row)
         elif action in sell_pct:
@@ -275,8 +278,34 @@ def run_backtest(
     result.realized = realized
     result.m2m = m2m
     result.m2m_pct = m2m_pct
+    result.invested = invested
     result.days = len(days)
     result.counts = counts
     result.trades = trades
     result.signals = signals
     return result
+
+
+def spy_hold_return(start: date, end: date) -> tuple[float | None, str]:
+    """같은 기간 SPY(S&P 500 SPDR) 매수 후 보유 수익률(%)."""
+    if start > end:
+        return None, "시작일이 종료일보다 뒤입니다."
+    lookback = max((end - start).days + 20, 40)
+    try:
+        df, _meta = fetch_ohlcv("US", "SPY", end, lookback, "1d")
+    except Exception as extra:
+        return None, str(extra)
+    if df is None or df.empty or "close" not in df.columns:
+        return None, "SPY 시세를 받지 못했습니다."
+
+    def _as_date(ts):
+        return ts.date() if hasattr(ts, "date") else ts
+
+    picked = df.loc[[start <= _as_date(ts) <= end for ts in df.index]]
+    if picked.empty:
+        return None, "해당 기간 SPY 봉이 없습니다."
+    first = float(picked["close"].iloc[0])
+    last = float(picked["close"].iloc[-1])
+    if first <= 0:
+        return None, "SPY 가격이 비정상입니다."
+    return (last / first - 1.0) * 100.0, ""

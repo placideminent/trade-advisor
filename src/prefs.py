@@ -25,6 +25,7 @@ from .signals import DEFAULT_CUTS, DEFAULT_WEIGHTS, LEGACY_DEFAULT_CUTS
 
 COOKIE_NAME = "ta_prefs"
 UID_COOKIE_NAME = "ta_uid"
+QUERY_UID = "_u"
 MAX_FAVORITES = 20
 MAX_USERS = 200
 PREFS_VERSION = 1
@@ -263,21 +264,27 @@ def decode_cookie(value: str | None) -> dict | None:
 
 
 def cookie_set_html(data: dict) -> str:
-    """부모 페이지 쿠키에 uid 와 설정을 남긴다. 위치 이동은 하지 않는다."""
-    token = encode_cookie(data).replace("\\", "\\\\").replace('"', '\\"')
+    """부모 페이지에 uid 쿠키를 먼저 남긴다. 설정 쿠키가 너무 크면 uid 만 남긴다."""
     uid = normalize_uid(data.get("uid"))
-    return (
-        "<html><body><script>"
+    token = encode_cookie(data).replace("\\", "\\\\").replace('"', '\\"')
+    script = (
         "(function(){try{"
-        f'var t="{token}";'
         f'var u="{uid}";'
-        f'var c="{COOKIE_NAME}="+t+";path=/;max-age=31536000;SameSite=Lax";'
         f'var d="{UID_COOKIE_NAME}="+u+";path=/;max-age=31536000;SameSite=Lax";'
-        "document.cookie=c;document.cookie=d;"
-        "try{window.parent.document.cookie=c;window.parent.document.cookie=d;}catch(e){}"
-        "}catch(e){}})();"
-        "</script></body></html>"
+        "document.cookie=d;"
+        "try{window.parent.document.cookie=d;}catch(e){}"
+        "try{window.parent.localStorage.setItem('ta_uid',u);}catch(e){}"
+        "try{localStorage.setItem('ta_uid',u);}catch(e){}"
     )
+    if len(token) <= 3500:
+        script += (
+            f'var t="{token}";'
+            f'var c="{COOKIE_NAME}="+t+";path=/;max-age=31536000;SameSite=Lax";'
+            "document.cookie=c;"
+            "try{window.parent.document.cookie=c;}catch(e){}"
+        )
+    script += "}catch(e){}})();"
+    return f"<html><body><script>{script}</script></body></html>"
 
 
 def _get_secret(name: str) -> str:
