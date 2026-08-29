@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
-SIGNAL_RULE_VERSION = 51
+SIGNAL_RULE_VERSION = 52
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 10
 # 합산 %는 조회 기간과 상관없이 같은 눈금(이론상 최저~최고)을 쓴다.
@@ -123,6 +123,9 @@ class Signal:
     score_min: int = 0
     score_max: int = 0
     score_rows: list[dict] = field(default_factory=list)
+    action_base: str = ""
+    score_pct_base: int = 0
+    option_applied: bool = False
 
 
 def score_bounds(_has_6m: bool | None = None) -> tuple[int, int]:
@@ -597,13 +600,16 @@ def recommend(
         )
 
     score = max(0, score)
-    action_base = _action_from_pct(score_to_pct(score), cuts)
-    if str(market or "").upper() == "US" or option_walls is not None:
+    score_pct_base = score_to_pct(score)
+    action_base = _action_from_pct(score_pct_base, cuts)
+    option_applied = False
+    if option_walls is not None and action_base in ("약한 매수", "매수", "강한 매수", "약한 매도", "매도", "강한 매도"):
         from .options import option_wall_adjust
 
         opt_pts, opt_detail = option_wall_adjust(action_base, option_walls, wp("option_wall"))
         add("옵션 월", opt_detail, opt_pts)
         score = max(0, score)
+        option_applied = True
 
     lo, hi = SCORE_LO, SCORE_HI
     score_pct = score_to_pct(score)
@@ -667,4 +673,7 @@ def recommend(
         score_min=lo,
         score_max=hi,
         score_rows=score_rows,
+        action_base=action_base,
+        score_pct_base=score_pct_base,
+        option_applied=option_applied,
     )

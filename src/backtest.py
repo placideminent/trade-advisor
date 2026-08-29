@@ -119,6 +119,7 @@ def run_backtest(
     rule: dict | None,
     sim: dict | None = None,
     progress=None,
+    use_options: bool = False,
 ) -> BacktestResult:
     sim = {**DEFAULT_SIM, **(sim or {})}
     buy_map, sell_pct, sell_fixed, share_cut = _qty_maps(sim)
@@ -160,6 +161,16 @@ def run_backtest(
     df_1d, _ = fetch_ohlcv(market, ticker, end, (end - start).days + 220, "1d")
     result.name = str(meta.get("name") or ticker)
     result.ticker = str(meta.get("ticker") or ticker)
+
+    option_walls = None
+    if use_options and str(market or "").upper() == "US" and df_main is not None and not df_main.empty:
+        try:
+            from .options import fetch_option_walls
+
+            last = float(df_main["close"].iloc[-1])
+            option_walls = fetch_option_walls(ticker, end, last)
+        except Exception as extra:
+            option_walls = {"error": str(extra)[:120], "soon": False}
 
     if df_main is None or df_main.empty:
         result.error = "해당 기간 시세를 받지 못했습니다."
@@ -221,6 +232,8 @@ def run_backtest(
                 six_month_chg=chg6,
                 lookback_days=lookback_days,
                 rule=rule,
+                option_walls=option_walls,
+                market=market,
             )
         except TypeError:
             sig = recommend(an, six_month_chg=chg6)

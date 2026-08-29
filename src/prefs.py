@@ -110,6 +110,7 @@ def _empty() -> dict:
         "weights": dict(DEFAULT_WEIGHTS),
         "cuts": dict(DEFAULT_CUTS),
         "sim": dict(DEFAULT_SIM),
+        "sim_options": 0,
         "favorites": [],
     }
 
@@ -137,6 +138,10 @@ def _normalize(raw: dict | None) -> dict:
     if all(data["cuts"].get(key) == old for key, old in LEGACY_DEFAULT_CUTS.items()):
         data["cuts"] = dict(DEFAULT_CUTS)
     data["sim"] = normalize_sim(sim)
+    try:
+        data["sim_options"] = 1 if int(raw.get("sim_options") or 0) else 0
+    except (TypeError, ValueError):
+        data["sim_options"] = 0
     out_favs = []
     for item in favs:
         if not isinstance(item, dict):
@@ -170,6 +175,7 @@ def snapshot_key(data: dict) -> str:
         "weights": data.get("weights") or {},
         "cuts": data.get("cuts") or {},
         "sim": data.get("sim") or {},
+        "sim_options": int(data.get("sim_options") or 0),
         "favorites": data.get("favorites") or [],
     }
     return json.dumps(payload, sort_keys=True, ensure_ascii=False)

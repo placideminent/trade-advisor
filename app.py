@@ -138,6 +138,7 @@ def _init_rule_widgets() -> None:
         st.session_state.setdefault(f"c_{key}", int(default))
     for key, default in DEFAULT_SIM.items():
         st.session_state.setdefault(f"s_{key}", int(default))
+    st.session_state.setdefault("sim_eval_mode", "기존 규칙만")
 
 
 def _read_rule_from_sidebar() -> dict:
@@ -376,6 +377,7 @@ def _prefs_payload(rule: dict) -> dict:
         "weights": rule["weights"],
         "cuts": rule["cuts"],
         "sim": {key: int(st.session_state.get(f"s_{key}", default)) for key, default in DEFAULT_SIM.items()},
+        "sim_options": 1 if st.session_state.get("sim_eval_mode") == "옵션 월 포함" else 0,
         "favorites": list(st.session_state.get("favorites") or []),
     }
 
@@ -399,6 +401,7 @@ def _apply_loaded_prefs(loaded: dict) -> None:
     sim = loaded.get("sim") or {}
     for key, default in DEFAULT_SIM.items():
         st.session_state[f"s_{key}"] = int(sim.get(key, default))
+    st.session_state.sim_eval_mode = "옵션 월 포함" if loaded.get("sim_options") else "기존 규칙만"
     st.session_state.favorites = list(loaded.get("favorites") or [])
 
 
@@ -926,7 +929,10 @@ def _quick_signal(market: str, ticker: str, as_of, lookback_days: int, timeframe
         "ticker": str(meta.get("ticker") or ticker),
         "name": str(meta.get("name") or ticker),
         "action": signal.action,
+        "action_base": getattr(signal, "action_base", None) or signal.action,
         "score_pct": signal.score_pct,
+        "score_pct_base": int(getattr(signal, "score_pct_base", None) or signal.score_pct),
+        "option_applied": bool(getattr(signal, "option_applied", False)),
         "price": analysis.price,
         "price_label": analysis.price_label,
         "error": None,
@@ -1016,6 +1022,7 @@ def _render_fav_row(row: dict, as_of, *, analyzed: bool) -> None:
         main = f"계산 실패: {row['error']}"
     else:
         action = row.get("action") or "홀딩"
+        action_base = row.get("action_base") or action
         kind = FAVBAR_KIND.get(action, "hold")
         css = ACTION_CLASS.get(action, "action-hold")
         price_txt = _fmt(row["price"]) if row.get("price") else "-"
@@ -1023,13 +1030,19 @@ def _render_fav_row(row: dict, as_of, *, analyzed: bool) -> None:
         clickable = True
     with cols[0]:
         if clickable:
+            if row.get("option_applied"):
+                act_txt = f"기존 {action_base} {row.get('score_pct_base')}%"
+                sc_txt = f"옵션 {action} {row.get('score_pct')}%"
+            else:
+                act_txt = f"제안 {action}"
+                sc_txt = f"합산 {row.get('score_pct')}%"
             st.markdown(
                 _fav_bar_markup(
                     css,
                     meta,
                     price=f"{label} {price_txt}",
-                    action=f"제안 {action}",
-                    score=f"합산 {row.get('score_pct')}%",
+                    action=act_txt,
+                    score=sc_txt,
                 ),
                 unsafe_allow_html=True,
             )
@@ -1528,11 +1541,19 @@ def _render_simulation(
     sim: dict,
     run: bool,
     scope: str = "선택한 종목",
+    use_options: bool = False,
 ) -> None:
     st.subheader("시뮬레이션")
+    eval_txt = "옵션 월 포함" if use_options else "기존 규칙만"
     st.caption(
         "매일 조회 기간만큼만 보고 신호를 낸 뒤, 설정한 수량으로 사고팝니다. "
-        "평가 배점·매수/매도 컷은 왼쪽 값을 그대로 씁니다."
+        f"평가는 **{eval_txt}**. 배점·매수/매도 컷은 왼쪽 값을 그대로 씁니다."
+        + (
+            " 옵션은 미국 주식만, 시뮬 종료일 기준 현재 체인을 전 기간에 같이 씁니다. "
+            "홀딩인 날에는 옵션을 넣지 않습니다."
+            if use_options
+            else ""
+        )
     )
     qty_txt = _sim_qty_caption(start, end, lookback_label, sim)
     favs = _fav_list()
@@ -1542,7 +1563,10 @@ def _render_simulation(
         if not favs:
             st.info("아직 즐겨찾기한 종목이 없습니다. 종목 분석 화면에서 별표로 추가하세요.")
             return
-        st.write(f"**즐겨찾기 {len(favs)}종목** · {start} ~ {end} · 조회 {lookback_label} · 종목별 수량")
+        st.write(
+            f"**즐겨찾기 {len(favs)}종목** · {start} ~ {end} · 조회 {lookback_label} · "
+            f"종목별 수량 · {eval_txt}"
+        )
         if run:
             bar = st.progress(0, text="즐겨찾기 시뮬레이션 중...")
             out = []
@@ -1567,6 +1591,7 @@ def _render_simulation(
                         rule,
                         item_sim,
                         progress=_prog,
+                        use_options=use_options,
                     )
                 if item.get("name"):
                     result.name = item["name"]
@@ -1603,6 +1628,7 @@ def _render_simulation(
                 rule,
                 sim,
                 progress=_prog,
+                use_options=use_options,
             )
         bar.empty()
         st.session_state.sim_fav_results = None
@@ -1662,6 +1688,14 @@ with st.sidebar:
         )
         if sim_scope == "즐겨찾기 전체":
             st.caption(f"즐겨찾기 {len(_fav_list())}종목을 같은 기간·수량으로 각각 돌립니다.")
+        st.radio(
+            "평가",
+            ["기존 규칙만", "옵션 월 포함"],
+            horizontal=True,
+            key="sim_eval_mode",
+            help="옵션 월 포함은 미국 주식만 적용됩니다. 홀딩인 날에는 옵션을 넣지 않습니다. "
+            "옵션 체인은 시뮬 종료일 기준 현재 포지션입니다.",
+        )
     pick_one = page != "시뮬레이션" or sim_scope == "선택한 종목"
     market = "KR"
     ticker = ""
@@ -1899,6 +1933,7 @@ if page == "시뮬레이션":
         sim,
         run_sim,
         sim_scope,
+        use_options=st.session_state.get("sim_eval_mode") == "옵션 월 포함",
     )
     st.stop()
 
@@ -2009,31 +2044,53 @@ value_side = ""
 if fund is not None and not fund.error and fund.value_label:
     value_side = f" · 가격 {fund.value_label}"
 
-action_class = ACTION_CLASS.get(signal.action, "action-hold")
 six_txt = (
     f" · 6개월 가격 {six_month_chg * 100:+.1f}%"
     if six_month_chg is not None
     else ""
 )
-st.markdown(
-    f"""
-    <div class="{action_class}">
-      <div style="font-size:0.85rem;opacity:0.8">{meta.get("name") or display_name} ·
-      분석일 {as_of} · {meta.get("bar", bar_name)} · {analysis.price_label} 기준
-      {(" · " + analysis.price_source) if analysis.price_source else ""}</div>
-      <div style="font-size:1.25rem;font-weight:700;margin:0.25rem 0">제안 {signal.action}{value_side}</div>
-      <div style="font-size:0.95rem">{signal.summary}</div>
-    </div>
-    """,
-    unsafe_allow_html=True,
+head = (
+    f"{meta.get('name') or display_name} · 분석일 {as_of} · "
+    f"{meta.get('bar', bar_name)} · {analysis.price_label} 기준"
+    + (f" · {analysis.price_source}" if analysis.price_source else "")
 )
+opt_on = bool(getattr(signal, "option_applied", False))
+base_action = getattr(signal, "action_base", None) or signal.action
+base_pct = int(getattr(signal, "score_pct_base", None) or signal.score_pct)
+
+
+def _proposal_banner(title: str, action: str, pct: int, note: str = "") -> None:
+    css = ACTION_CLASS.get(action, "action-hold")
+    extra = f'<div style="font-size:0.95rem">{note}</div>' if note else ""
+    st.markdown(
+        f"""
+        <div class="{css}">
+          <div style="font-size:0.85rem;opacity:0.8">{title}</div>
+          <div style="font-size:1.25rem;font-weight:700;margin:0.25rem 0">제안 {action} · {pct}%</div>
+          {extra}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+if opt_on:
+    _proposal_banner(f"기존 규칙 · {head}{value_side}", base_action, base_pct)
+    _proposal_banner("옵션 월 반영", signal.action, signal.score_pct, signal.summary)
+else:
+    _proposal_banner(head + value_side, signal.action, signal.score_pct, signal.summary)
 
 price_cell = _fmt(analysis.price)
 if is_live and last_bar_price and abs(float(analysis.price) - last_bar_price) > 1e-9:
     price_cell = f"{_fmt(analysis.price)} (봉 {_fmt(last_bar_price)})"
-_kv_table(
+_kv_rows = []
+if opt_on:
+    _kv_rows.append(("기존 규칙 제안", f"{base_action} · {base_pct}%"))
+    _kv_rows.append(("옵션 반영 제안", f"{signal.action} · {signal.score_pct}%"))
+else:
+    _kv_rows.append(("제안", signal.action))
+_kv_rows.extend(
     [
-        ("제안", signal.action),
         ("가격 판정", (fund.value_label if fund and not fund.error else None) or "-"),
         ("합산", f"{signal.score_pct}%{six_txt}"),
         ("신뢰", f"{signal.confidence}%"),
@@ -2049,6 +2106,7 @@ _kv_table(
         ("1차 목표", _fmt(signal.target) if signal.target else "-"),
     ]
 )
+_kv_table(_kv_rows)
 
 if _is_fav(market, ticker):
     st.button(
