@@ -322,7 +322,7 @@ def decode_cookie(value: str | None) -> dict | None:
 
 
 def cookie_set_html(data: dict) -> str:
-    """uid 쿠키는 항상 남긴다. 즐겨찾기가 있을 때만 설정·localStorage 를 덮는다."""
+    """저장 코드(uid)는 항상 localStorage·쿠키에 남긴다. 즐겨찾기가 있을 때만 설정 본문을 덮는다."""
     uid = normalize_uid(data.get("uid"))
     token = encode_browser(data).replace("\\", "\\\\").replace('"', '\\"')
     has_data = bool(data.get("favorites") or int(data.get("ts") or 0))
@@ -334,20 +334,39 @@ def cookie_set_html(data: dict) -> str:
         f'var d="{UID_COOKIE_NAME}="+u+";path=/;max-age=31536000;SameSite=Lax";'
         "document.cookie=d;"
         "try{window.parent.document.cookie=d;}catch(e){}"
+        "try{window.parent.localStorage.setItem('ta_uid',u);}catch(e){}"
+        "try{localStorage.setItem('ta_uid',u);}catch(e){}"
         "if(keep){"
         f'var c="{COOKIE_NAME}="+t+";path=/;max-age=31536000;SameSite=Lax";'
         "document.cookie=c;"
         "try{window.parent.document.cookie=c;}catch(e){}"
-        "try{window.parent.localStorage.setItem('ta_uid',u);"
-        "window.parent.localStorage.setItem('ta_prefs',t);"
+        "try{window.parent.localStorage.setItem('ta_prefs',t);"
         "window.parent.localStorage.setItem('ta_prefs_'+u,t);}catch(e){}"
-        "try{localStorage.setItem('ta_uid',u);"
-        "localStorage.setItem('ta_prefs',t);"
+        "try{localStorage.setItem('ta_prefs',t);"
         "localStorage.setItem('ta_prefs_'+u,t);}catch(e){}"
         "}"
         "}catch(e){}})();"
     )
     return f"<html><body><script>{script}</script></body></html>"
+
+
+def localstorage_boot_html() -> str:
+    """주소에 코드가 없으면 이 브라우저에 남은 저장 코드를 주소로 되살린다."""
+    return (
+        "<html><body><script>(function(){try{"
+        "var u=null,t=null;"
+        "try{u=window.parent.localStorage.getItem('ta_uid');}catch(e){}"
+        "if(!u){try{u=localStorage.getItem('ta_uid');}catch(e){}}"
+        "if(!u)return;"
+        "try{t=window.parent.localStorage.getItem('ta_prefs_'+u)||window.parent.localStorage.getItem('ta_prefs');}catch(e){}"
+        "if(!t){try{t=localStorage.getItem('ta_prefs_'+u)||localStorage.getItem('ta_prefs');}catch(e){}}"
+        "var url=new URL(window.parent.location.href);"
+        "if(url.searchParams.get('_u')===u)return;"
+        "url.searchParams.set('_u',u);"
+        "if(t)url.searchParams.set('_p',t);"
+        "window.parent.location.replace(url.toString());"
+        "}catch(e){}})();</script></body></html>"
+    )
 
 
 def localstorage_restore_html(uid: str) -> str:

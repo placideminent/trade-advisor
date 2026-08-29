@@ -46,6 +46,7 @@ try:
         QUERY_PREFS,
         QUERY_UID,
         encode_browser,
+        localstorage_boot_html,
         localstorage_restore_html,
         remote_last_error,
     )
@@ -59,6 +60,9 @@ except ImportError:
         return encode_cookie(data)
 
     def localstorage_restore_html(uid: str) -> str:
+        return ""
+
+    def localstorage_boot_html() -> str:
         return ""
 
     def remote_last_error() -> str:
@@ -375,7 +379,8 @@ def _bootstrap_prefs() -> None:
     _apply_loaded_prefs(loaded)
     st.session_state.prefs_uid = uid
     st.session_state._prefs_ts = int(loaded.get("ts") or 0)
-    if loaded.get("favorites") or adopt or _cookie_uid() or _query_uid() or query_data:
+    _bind_uid_url(uid)
+    if loaded.get("favorites") or adopt or query_data:
         _bind_prefs_url(loaded)
     st.session_state._prefs_snapshot = snapshot_key(loaded)
     st.session_state._prefs_boot = True
@@ -416,9 +421,10 @@ def _persist_prefs(rule: dict) -> None:
         if st.session_state.pop("_prefs_force_remote", False) and uid and remote_enabled():
             st.session_state._prefs_remote_ok = save_user_prefs_remote(uid, payload)
         if (not just_booted) and st.session_state.pop("_prefs_need_cookie", False):
+            st.session_state._prefs_cookie_html = cookie_set_html(payload)
+            st.session_state._prefs_cookie_dirty = True
+            _bind_uid_url(uid)
             if payload.get("favorites") or int(payload.get("ts") or 0):
-                st.session_state._prefs_cookie_html = cookie_set_html(payload)
-                st.session_state._prefs_cookie_dirty = True
                 _bind_prefs_url(payload)
         return
     st.session_state._prefs_snapshot = snap
@@ -434,11 +440,28 @@ def _persist_prefs(rule: dict) -> None:
         return
     if uid and remote_enabled():
         st.session_state._prefs_remote_ok = save_user_prefs_remote(uid, payload)
+    st.session_state._prefs_cookie_html = cookie_set_html(payload)
+    st.session_state._prefs_cookie_dirty = True
+    _bind_uid_url(uid)
     if payload.get("favorites") or int(payload.get("ts") or 0):
-        st.session_state._prefs_cookie_html = cookie_set_html(payload)
-        st.session_state._prefs_cookie_dirty = True
         _bind_prefs_url(payload)
     st.session_state.pop("_prefs_need_cookie", None)
+
+
+def _emit_boot_restore() -> None:
+    """같은 브라우저에 남은 저장 코드가 있으면 주소에 다시 붙인다."""
+    if _query_uid() or _cookie_uid() or _cookie_token():
+        return
+    if st.session_state.get("_prefs_boot_ls_done"):
+        return
+    st.session_state._prefs_boot_ls_done = True
+    html = localstorage_boot_html()
+    if not html:
+        return
+    try:
+        components.html(html, height=1, width=1)
+    except Exception:
+        pass
 
 
 def _emit_ls_restore() -> None:
@@ -539,6 +562,7 @@ def require_login() -> None:
     st.stop()
 
 
+_emit_boot_restore()
 require_login()
 _bootstrap_prefs()
 _emit_ls_restore()
