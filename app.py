@@ -89,6 +89,17 @@ def _cached_option_walls(ticker: str, price_key: str, as_of_iso: str) -> dict:
     return fetch_option_walls(ticker, date.fromisoformat(as_of_iso), float(price_key))
 
 
+def _want_option_walls(market: str, as_of) -> bool:
+    """미국 주식은 당일·시차 하루 안이면 현재 옵션 체인을 쓴다."""
+    if str(market or "").upper() != "US":
+        return False
+    try:
+        day = as_of if isinstance(as_of, date) else date.fromisoformat(str(as_of)[:10])
+    except (TypeError, ValueError):
+        return False
+    return day >= market_today("US") - timedelta(days=1)
+
+
 def _make_signal(
     an,
     six_month_chg=None,
@@ -97,13 +108,18 @@ def _make_signal(
     market=None,
     ticker=None,
     live=False,
+    use_options=None,
 ):
     walls = None
-    if live and str(market or "").upper() == "US" and ticker:
+    if use_options is None:
+        use_options = live
+    if use_options and str(market or "").upper() == "US" and ticker:
         try:
             px = float(getattr(an, "price", 0) or 0)
             as_iso = str(getattr(an, "as_of", "") or "")[:10]
-            if px > 0 and as_iso:
+            if not as_iso:
+                as_iso = date.today().isoformat()
+            if px > 0:
                 walls = _cached_option_walls(str(ticker).strip().upper(), f"{px:.4f}", as_iso)
         except Exception as extra:
             walls = {"error": str(extra)[:120], "soon": False}
@@ -916,6 +932,7 @@ def _quick_signal(market: str, ticker: str, as_of, lookback_days: int, timeframe
             market=market,
             ticker=ticker,
             live=is_live,
+            use_options=_want_option_walls(market, as_of),
         )
     except Exception as extra:
         return {
@@ -1076,7 +1093,8 @@ def _render_favorites(as_of, lookback_days: int, timeframe: str, lookback_label:
     st.caption(
         f"조회 기간 {lookback_label} · 분석일 {as_of} · "
         "추가만 하면 목록에만 들어갑니다. **분석하기**를 눌러야 계산합니다. "
-        "색 막대를 누르면 그 종목 분석으로 갑니다."
+        "색 막대를 누르면 그 종목 분석으로 갑니다. "
+        "미국 종목은 매수/매도일 때 기존 제안과 옵션 반영 제안을 같이 표시합니다."
     )
     _render_fav_add()
     favs = _fav_list()
@@ -1094,8 +1112,17 @@ def _render_favorites(as_of, lookback_days: int, timeframe: str, lookback_label:
         prev_ok = {}
         if reuse:
             for row in prev.get("results") or []:
-                if row and not row.get("error"):
-                    prev_ok[_fav_row_key(row.get("market"), row.get("ticker"))] = row
+                if not row or row.get("error"):
+                    continue
+                market_row = str(row.get("market") or "")
+                base = row.get("action_base") or row.get("action") or "홀딩"
+                if (
+                    market_row == "US"
+                    and base in ("약한 매수", "매수", "강한 매수", "약한 매도", "매도", "강한 매도")
+                    and not row.get("option_applied")
+                ):
+                    continue
+                prev_ok[_fav_row_key(row.get("market"), row.get("ticker"))] = row
         bar = st.progress(0, text="즐겨찾기 계산 중...")
         n_fav = len(favs)
         failed_once = False
@@ -2027,6 +2054,7 @@ try:
         market=market,
         ticker=ticker,
         live=is_live,
+        use_options=_want_option_walls(market, as_of),
     )
 except Exception as exc:
     st.error(f"분석 실패: {exc}")
