@@ -44,6 +44,8 @@ from src.prefs import (
 
 try:
     from src.prefs import (
+        QUERY_ADOPT,
+        QUERY_LS,
         QUERY_PREFS,
         QUERY_UID,
         encode_browser,
@@ -54,6 +56,8 @@ try:
 except ImportError:
     QUERY_PREFS = "_p"
     QUERY_UID = "_u"
+    QUERY_LS = "_ls"
+    QUERY_ADOPT = "_a"
 
     def encode_browser(data: dict) -> str:
         from src.prefs import encode_cookie
@@ -278,25 +282,41 @@ def _cookie_uid() -> str:
         return ""
 
 
-def _query_uid() -> str:
+def _query_flag(name: str) -> str:
     try:
-        raw = st.query_params.get(QUERY_UID)
+        raw = st.query_params.get(name)
         if raw is None:
             return ""
         if isinstance(raw, list):
             raw = raw[0] if raw else ""
-        return normalize_uid(raw)
+        return str(raw or "").strip()
     except Exception:
         return ""
 
 
-def _bind_uid_url(uid: str) -> None:
+def _query_uid() -> str:
+    return normalize_uid(_query_flag(QUERY_UID))
+
+
+def _query_ls_checked() -> bool:
+    return _query_flag(QUERY_LS) == "1"
+
+
+def _query_adopt_flag() -> bool:
+    return _query_flag(QUERY_ADOPT) == "1"
+
+
+def _bind_uid_url(uid: str, *, ls_checked: bool = True, adopted: bool = False) -> None:
     uid = normalize_uid(uid)
     if not uid:
         return
     try:
         if _query_uid() != uid:
             st.query_params[QUERY_UID] = uid
+        if ls_checked and _query_flag(QUERY_LS) != "1":
+            st.query_params[QUERY_LS] = "1"
+        if adopted:
+            st.query_params[QUERY_ADOPT] = "1"
     except Exception:
         pass
 
@@ -375,8 +395,17 @@ def _bootstrap_prefs() -> None:
         or normalize_uid((query_data or {}).get("uid"))
         or _query_uid()
         or normalize_uid(st.session_state.get("prefs_uid"))
-        or new_uid()
     )
+    ls_ready = _query_ls_checked() or _query_adopt_flag() or bool(adopt)
+    if not uid and not ls_ready:
+        st.session_state._prefs_await_ls = True
+        if not st.session_state.get("_prefs_defaults_on"):
+            _apply_loaded_prefs(merge_prefs())
+            st.session_state._prefs_defaults_on = True
+        return
+    st.session_state._prefs_await_ls = False
+    if not uid:
+        uid = new_uid()
     sources = []
     if cookie_data and (not cookie_data.get("uid") or cookie_data.get("uid") == uid):
         sources.append(cookie_data)
@@ -389,13 +418,14 @@ def _bootstrap_prefs() -> None:
     _apply_loaded_prefs(loaded)
     st.session_state.prefs_uid = uid
     st.session_state._prefs_ts = int(loaded.get("ts") or 0)
-    _bind_uid_url(uid)
+    _bind_uid_url(uid, ls_checked=True, adopted=bool(adopt))
     if loaded.get("favorites") or adopt or query_data:
         _bind_prefs_url(loaded)
     st.session_state._prefs_snapshot = snapshot_key(loaded)
     st.session_state._prefs_boot = True
     st.session_state._prefs_just_booted = not bool(adopt)
     st.session_state._prefs_need_cookie = True
+    st.session_state._prefs_cookie_force = bool(adopt)
     st.session_state._prefs_remote_ok = remote_enabled()
     if adopt and _score_empty(loaded):
         st.session_state._prefs_ls_html = localstorage_restore_html(uid)
@@ -417,10 +447,15 @@ def _score_empty(loaded: dict) -> bool:
 
 
 def _persist_prefs(rule: dict) -> None:
+    if st.session_state.get("_prefs_await_ls"):
+        return
     payload = _prefs_payload(rule)
     uid = normalize_uid(payload.get("uid"))
+    if not uid:
+        return
     snap = snapshot_key(payload)
     just_booted = bool(st.session_state.pop("_prefs_just_booted", False))
+    force_cookie = bool(st.session_state.pop("_prefs_cookie_force", False))
     if st.session_state.get("_prefs_snapshot") == snap:
         if just_booted and uid:
             save_user_prefs_file(uid, payload)
@@ -430,41 +465,49 @@ def _persist_prefs(rule: dict) -> None:
                     st.session_state._prefs_remote_ok = save_user_prefs_remote(uid, payload)
         if st.session_state.pop("_prefs_force_remote", False) and uid and remote_enabled():
             st.session_state._prefs_remote_ok = save_user_prefs_remote(uid, payload)
-        if (not just_booted) and st.session_state.pop("_prefs_need_cookie", False):
-            st.session_state._prefs_cookie_html = cookie_set_html(payload)
+        if st.session_state.pop("_prefs_need_cookie", False) or force_cookie:
+            try:
+                st.session_state._prefs_cookie_html = cookie_set_html(payload, force=force_cookie)
+            except TypeError:
+                st.session_state._prefs_cookie_html = cookie_set_html(payload)
             st.session_state._prefs_cookie_dirty = True
-            _bind_uid_url(uid)
+            _bind_uid_url(uid, adopted=force_cookie)
             if payload.get("favorites") or int(payload.get("ts") or 0):
                 _bind_prefs_url(payload)
         return
     st.session_state._prefs_snapshot = snap
     payload["ts"] = int(time.time())
     st.session_state._prefs_ts = payload["ts"]
-    if uid:
-        save_user_prefs_file(uid, payload)
+    save_user_prefs_file(uid, payload)
     if just_booted:
+        try:
+            st.session_state._prefs_cookie_html = cookie_set_html(payload, force=force_cookie)
+        except TypeError:
+            st.session_state._prefs_cookie_html = cookie_set_html(payload)
+        st.session_state._prefs_cookie_dirty = True
+        _bind_uid_url(uid, adopted=force_cookie)
         if payload.get("favorites"):
             _bind_prefs_url(payload)
-            if uid and remote_enabled():
+            if remote_enabled():
                 st.session_state._prefs_remote_ok = save_user_prefs_remote(uid, payload)
         return
-    if uid and remote_enabled():
+    if remote_enabled():
         st.session_state._prefs_remote_ok = save_user_prefs_remote(uid, payload)
-    st.session_state._prefs_cookie_html = cookie_set_html(payload)
+    try:
+        st.session_state._prefs_cookie_html = cookie_set_html(payload, force=force_cookie)
+    except TypeError:
+        st.session_state._prefs_cookie_html = cookie_set_html(payload)
     st.session_state._prefs_cookie_dirty = True
-    _bind_uid_url(uid)
+    _bind_uid_url(uid, adopted=force_cookie)
     if payload.get("favorites") or int(payload.get("ts") or 0):
         _bind_prefs_url(payload)
     st.session_state.pop("_prefs_need_cookie", None)
 
 
 def _emit_boot_restore() -> None:
-    """같은 브라우저에 남은 저장 코드가 있으면 주소에 다시 붙인다."""
-    if _query_uid() or _cookie_uid() or _cookie_token():
+    """같은 브라우저에 남은 저장 코드를 주소에 다시 붙인다. 새 코드를 만들기 전에 탄다."""
+    if _query_ls_checked() or _query_adopt_flag() or st.session_state.get("_prefs_adopt"):
         return
-    if st.session_state.get("_prefs_boot_ls_done"):
-        return
-    st.session_state._prefs_boot_ls_done = True
     html = localstorage_boot_html()
     if not html:
         return
@@ -718,6 +761,19 @@ st.caption(
     "매수 / 매도 / 홀딩을 제안합니다. "
     "1개월은 1시간봉, 2·3개월은 4시간봉, 6개월·1년은 일봉입니다. 투자 자문이 아닙니다."
 )
+if st.session_state.get("_prefs_await_ls"):
+    st.info(
+        "이 브라우저에 저장해 둔 코드를 확인하는 중입니다. "
+        "잠깐 뒤 이전 코드가 다시 붙습니다. 안 되면 왼쪽 **이 코드로 불러오기**에 예전 코드를 넣으세요."
+    )
+    if st.button("저장된 코드가 없으면 새로 시작", key="prefs_skip_ls"):
+        try:
+            st.query_params[QUERY_LS] = "1"
+        except Exception:
+            pass
+        st.session_state._prefs_await_ls = False
+        st.session_state._prefs_boot = False
+        st.rerun()
 
 
 def _preset_label(code: str, name: str) -> str:

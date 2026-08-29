@@ -64,6 +64,8 @@ COOKIE_NAME = "ta_prefs"
 UID_COOKIE_NAME = "ta_uid"
 QUERY_UID = "_u"
 QUERY_PREFS = "_p"
+QUERY_LS = "_ls"
+QUERY_ADOPT = "_a"
 COOKIE_MAX_LEN = 3500
 MAX_FAVORITES = 20
 MAX_USERS = 200
@@ -321,16 +323,34 @@ def decode_cookie(value: str | None) -> dict | None:
         return None
 
 
-def cookie_set_html(data: dict) -> str:
-    """저장 코드(uid)는 항상 localStorage·쿠키에 남긴다. 즐겨찾기가 있을 때만 설정 본문을 덮는다."""
+def cookie_set_html(data: dict, *, force: bool = False) -> str:
+    """저장 코드(uid)는 항상 localStorage·쿠키에 남긴다. 즐겨찾기가 있을 때만 설정 본문을 덮는다.
+
+    force 가 아니면 이 브라우저에 이미 다른 코드가 있으면 덮지 않고 그 코드로 돌아간다.
+    """
     uid = normalize_uid(data.get("uid"))
     token = encode_browser(data).replace("\\", "\\\\").replace('"', '\\"')
     has_data = bool(data.get("favorites") or int(data.get("ts") or 0))
     script = (
         "(function(){try{"
+        "function readUid(){var x=null;"
+        "try{x=window.parent.localStorage.getItem('ta_uid');}catch(e){}"
+        "if(!x){try{x=localStorage.getItem('ta_uid');}catch(e){}}"
+        "if(!x)return '';"
+        "return String(x).toUpperCase().replace(/[^A-Z0-9]/g,'');}"
         f'var u="{uid}";'
         f'var t="{token}";'
         f'var keep={str(has_data).lower()};'
+        f'var force={str(bool(force)).lower()};'
+        "var prev=readUid();"
+        "if(prev && u && prev!==u && !force){"
+        "var url=new URL(window.parent.location.href);"
+        "url.searchParams.set('_u',prev);"
+        "url.searchParams.set('_ls','1');"
+        "url.searchParams.delete('_a');"
+        "window.parent.location.replace(url.toString());"
+        "return;}"
+        "if(!u)return;"
         f'var d="{UID_COOKIE_NAME}="+u+";path=/;max-age=31536000;SameSite=Lax";'
         "document.cookie=d;"
         "try{window.parent.document.cookie=d;}catch(e){}"
@@ -351,18 +371,23 @@ def cookie_set_html(data: dict) -> str:
 
 
 def localstorage_boot_html() -> str:
-    """주소에 코드가 없으면 이 브라우저에 남은 저장 코드를 주소로 되살린다."""
+    """이 브라우저에 남은 저장 코드를 주소로 되살린다. 새 코드를 만들기 전에 반드시 한 번 탄다."""
     return (
         "<html><body><script>(function(){try{"
+        "var url=new URL(window.parent.location.href);"
+        "if(url.searchParams.get('_a')==='1')return;"
+        "if(url.searchParams.get('_ls')==='1')return;"
         "var u=null,t=null;"
         "try{u=window.parent.localStorage.getItem('ta_uid');}catch(e){}"
         "if(!u){try{u=localStorage.getItem('ta_uid');}catch(e){}}"
-        "if(!u)return;"
+        "if(u)u=String(u).toUpperCase().replace(/[^A-Z0-9]/g,'');"
+        "if(u&&u.length!==8)u=null;"
+        "if(u){"
         "try{t=window.parent.localStorage.getItem('ta_prefs_'+u)||window.parent.localStorage.getItem('ta_prefs');}catch(e){}"
         "if(!t){try{t=localStorage.getItem('ta_prefs_'+u)||localStorage.getItem('ta_prefs');}catch(e){}}"
-        "var url=new URL(window.parent.location.href);"
-        "if(url.searchParams.get('_u')===u)return;"
-        "url.searchParams.set('_u',u);"
+        "}"
+        "url.searchParams.set('_ls','1');"
+        "if(u)url.searchParams.set('_u',u);"
         "if(t)url.searchParams.set('_p',t);"
         "window.parent.location.replace(url.toString());"
         "}catch(e){}})();</script></body></html>"
