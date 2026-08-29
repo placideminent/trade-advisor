@@ -344,3 +344,94 @@ def build_sim_chart(df: pd.DataFrame, marks: list[dict], title: str) -> go.Figur
     fig.update_yaxes(title_text="가격", row=1, col=1)
     fig.update_yaxes(title_text="거래량", row=2, col=1)
     return fig
+
+
+def build_return_vs_spy_fig(strat_pct: float, spy_pct: float, strat_name: str = "전략") -> go.Figure:
+    beat = strat_pct >= spy_pct
+    fig = go.Figure()
+    fig.add_trace(
+        go.Bar(
+            x=[strat_name, "SPY 보유"],
+            y=[strat_pct, spy_pct],
+            marker_color=["#16a34a" if beat else "#dc2626", "#2563eb"],
+            text=[f"{strat_pct:+.1f}%", f"{spy_pct:+.1f}%"],
+            textposition="outside",
+            cliponaxis=False,
+        )
+    )
+    fig.add_hline(y=0, line_color="#94a3b8", line_width=1)
+    fig.update_layout(
+        title="수익률 비교",
+        yaxis_title="%",
+        height=340,
+        margin=dict(t=48, b=40, l=48, r=24),
+        showlegend=False,
+        plot_bgcolor="#f8fafc",
+        bargap=0.45,
+    )
+    return fig
+
+
+def build_ticker_vs_spy_fig(names: list[str], pcts: list[float], spy_pct: float) -> go.Figure:
+    names = list(reversed(names))
+    pcts = list(reversed(pcts))
+    colors = ["#16a34a" if p >= spy_pct else "#dc2626" for p in pcts]
+    fig = go.Figure()
+    fig.add_trace(
+        go.Bar(
+            y=names,
+            x=pcts,
+            orientation="h",
+            marker_color=colors,
+            text=[f"{p:+.1f}%" for p in pcts],
+            textposition="auto",
+            name="전략",
+        )
+    )
+    fig.add_vline(
+        x=spy_pct,
+        line_dash="dash",
+        line_color="#2563eb",
+        line_width=2,
+        annotation_text=f"SPY {spy_pct:+.1f}%",
+        annotation_position="top",
+    )
+    fig.add_vline(x=0, line_color="#94a3b8", line_width=1)
+    fig.update_layout(
+        title="종목별 수익률 vs SPY",
+        xaxis_title="수익률 %",
+        height=max(280, 38 * max(len(names), 1) + 90),
+        margin=dict(t=56, b=40, l=16, r=24),
+        plot_bgcolor="#f8fafc",
+        showlegend=False,
+    )
+    return fig
+
+
+def build_pnl_split_fig(realized: float, m2m: float, title: str = "손익 구성") -> go.Figure:
+    total = realized + m2m
+    fig = go.Figure()
+    fig.add_trace(
+        go.Bar(
+            x=["실현", "평가", "합계"],
+            y=[realized, m2m, total],
+            marker_color=[
+                "#16a34a" if realized >= 0 else "#dc2626",
+                "#16a34a" if m2m >= 0 else "#dc2626",
+                "#2563eb",
+            ],
+            text=[f"{realized:+,.0f}", f"{m2m:+,.0f}", f"{total:+,.0f}"],
+            textposition="outside",
+            cliponaxis=False,
+        )
+    )
+    fig.add_hline(y=0, line_color="#94a3b8", line_width=1)
+    fig.update_layout(
+        title=title,
+        height=320,
+        margin=dict(t=48, b=40, l=48, r=24),
+        showlegend=False,
+        plot_bgcolor="#f8fafc",
+        bargap=0.45,
+    )
+    return fig

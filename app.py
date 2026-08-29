@@ -13,7 +13,13 @@ import streamlit.components.v1 as components
 
 from src.analysis import analyze
 from src.backtest import DEFAULT_SIM, normalize_sim, run_backtest, spy_hold_return
-from src.chart import build_chart, build_sim_chart
+from src.chart import (
+    build_chart,
+    build_pnl_split_fig,
+    build_return_vs_spy_fig,
+    build_sim_chart,
+    build_ticker_vs_spy_fig,
+)
 from src.data import drop_incomplete_session, fetch_ohlcv, fetch_spot_price, market_today, search_kr
 from src.fundamentals import fetch_fundamentals, fmt_per, fmt_pct, fmt_pp, per_gap_text
 
@@ -202,6 +208,15 @@ ACTION_CLASS = {
     "매도": "action-sell",
     "약한 매도": "action-sell-weak",
     "홀딩": "action-hold",
+}
+FAVBAR_COLORS = {
+    "강한 매수": ("#86efac", "#14532d"),
+    "매수": ("#dcfce7", "#14532d"),
+    "약한 매수": ("#ecfccb", "#3f6212"),
+    "강한 매도": ("#fca5a5", "#7f1d1d"),
+    "매도": ("#fee2e2", "#7f1d1d"),
+    "약한 매도": ("#fecaca", "#9f1239"),
+    "홀딩": ("#fef9c3", "#713f12"),
 }
 
 
@@ -506,6 +521,14 @@ st.markdown(
       .action-sell { background:#fee2e2; color:#7f1d1d; padding:0.75rem 0.9rem; border-radius:10px; }
       .action-sell-weak { background:#fecaca; color:#9f1239; padding:0.75rem 0.9rem; border-radius:10px; }
       .action-hold { background:#fef9c3; color:#713f12; padding:0.75rem 0.9rem; border-radius:10px; }
+      div[class*="st-key-favbar_"] button {
+        text-align: left !important;
+        white-space: pre-line !important;
+        min-height: 4.4rem;
+        line-height: 1.35;
+        border: none !important;
+        box-shadow: none !important;
+      }
       .ta-table { width:100%; border-collapse:collapse; font-size:0.92rem; table-layout:auto; }
       .ta-table th, .ta-table td {
         border-bottom:1px solid #e5e7eb; padding:0.5rem 0.4rem;
@@ -644,15 +667,55 @@ def _quick_signal(market: str, ticker: str, as_of, lookback_days: int, timeframe
     }
 
 
+def _render_fav_add() -> None:
+    st.markdown("**종목 추가**")
+    mlab = st.radio("시장", list(MARKETS.keys()), horizontal=True, key="favadd_market")
+    market = MARKETS[mlab]
+    ticker = ""
+    name = ""
+    if market == "KR":
+        query = st.text_input("종목명 또는 코드", key="favadd_kr_q", placeholder="예: 삼성전자, 005930")
+        if query.strip():
+            try:
+                hits = search_kr(query.strip())
+            except Exception as extra:
+                st.warning(f"검색 실패: {extra}")
+                hits = None
+            if hits is not None and not hits.empty:
+                options = [f"{r.Name} ({r.Code})" for r in hits.itertuples()]
+                picked = st.selectbox("검색 결과", options, key="favadd_kr_pick")
+                ticker = picked.split("(")[-1].rstrip(")")
+                name = picked.rsplit(" (", 1)[0]
+            else:
+                st.caption("검색 결과가 없습니다.")
+    elif market == "US":
+        ticker = st.text_input("티커", key="favadd_us", placeholder="예: AAPL, NVDA").strip().upper()
+        name = ticker
+    else:
+        ticker = st.text_input("심볼", key="favadd_crypto", placeholder="예: BTC, ETH").strip().upper()
+        info = CRYPTO.get(ticker)
+        name = f"{info['name']} ({ticker})" if info else ticker
+    if ticker and st.button("★ 즐겨찾기 추가", type="primary", key="favadd_btn"):
+        if _is_fav(market, ticker):
+            st.info("이미 즐겨찾기에 있습니다.")
+        else:
+            _add_fav(market, ticker, name or ticker)
+            if st.session_state.pop("_fav_full", False):
+                st.warning(f"즐겨찾기는 {MAX_FAVORITES}개까지입니다.")
+            else:
+                st.rerun()
+    st.markdown("---")
+
+
 def _render_favorites(as_of, lookback_days: int, timeframe: str, lookback_label: str, rule: dict) -> None:
-    favs = _fav_list()
     st.subheader("즐겨찾기")
     st.caption(
-        f"조회 기간 {lookback_label} · 분석일 {as_of} · 저장해 둔 배점·기준으로 계산합니다. "
-        "종목의 **분석**을 누르면 개별 분석 화면으로 갑니다."
+        f"조회 기간 {lookback_label} · 분석일 {as_of} · 색 막대를 누르면 그 종목 분석으로 갑니다."
     )
+    _render_fav_add()
+    favs = _fav_list()
     if not favs:
-        st.info("아직 즐겨찾기한 종목이 없습니다. 종목 분석 화면에서 별표로 추가하세요.")
+        st.info("아직 즐겨찾기한 종목이 없습니다. 위에서 검색해 추가하세요.")
         return
     results = []
     bar = st.progress(0, text="즐겨찾기 계산 중...")
@@ -670,7 +733,8 @@ def _render_favorites(as_of, lookback_days: int, timeframe: str, lookback_label:
         results.append(row)
     bar.empty()
     for row in results:
-        cols = st.columns([5, 1, 1])
+        cols = st.columns([6, 1])
+        safe = f"{row['market']}_{str(row.get('ticker') or '').replace('.', '_')}"
         with cols[0]:
             if row.get("error"):
                 st.markdown(
@@ -679,28 +743,27 @@ def _render_favorites(as_of, lookback_days: int, timeframe: str, lookback_label:
                     unsafe_allow_html=True,
                 )
             else:
-                cls = ACTION_CLASS.get(row.get("action"), "action-hold")
+                action = row.get("action") or "홀딩"
+                bg, fg = FAVBAR_COLORS.get(action, FAVBAR_COLORS["홀딩"])
                 st.markdown(
-                    f"<div class='{cls}'>"
-                    f"<div style='font-size:0.85rem;opacity:0.8'>"
-                    f"{row.get('name') or row.get('ticker')} ({row.get('ticker')}) · "
-                    f"{row.get('price_label') or ''} {_fmt(row['price']) if row.get('price') else '-'}"
-                    f"</div>"
-                    f"<div style='font-size:1.35rem;font-weight:700'>제안: {row.get('action')} "
-                    f"<span style='font-size:1rem;font-weight:500'>합산 {row.get('score_pct')}%</span>"
-                    f"</div></div>",
+                    f"<style>div.st-key-favbar_{safe} button {{"
+                    f"background:{bg} !important; color:{fg} !important;}}</style>",
                     unsafe_allow_html=True,
                 )
+                label = (
+                    f"{row.get('name') or row.get('ticker')} ({row.get('ticker')}) · "
+                    f"{row.get('price_label') or ''} {_fmt(row['price']) if row.get('price') else '-'}\n"
+                    f"제안: {action}   합산 {row.get('score_pct')}%"
+                )
+                if st.button(label, key=f"favbar_{safe}", use_container_width=True):
+                    st.session_state._jump_analysis = {
+                        "market": row["market"],
+                        "ticker": row["ticker"],
+                        "name": row.get("name") or row["ticker"],
+                        "as_of": as_of.isoformat(),
+                    }
+                    st.rerun()
         with cols[1]:
-            if st.button("분석", key=f"an_{row['market']}_{row['ticker']}", use_container_width=True):
-                st.session_state._jump_analysis = {
-                    "market": row["market"],
-                    "ticker": row["ticker"],
-                    "name": row.get("name") or row["ticker"],
-                    "as_of": as_of.isoformat(),
-                }
-                st.rerun()
-        with cols[2]:
             st.button(
                 "삭제",
                 key=f"unfav_{row['market']}_{row['ticker']}",
@@ -820,9 +883,54 @@ def _show_spy_compare(results: list, start: date, end: date) -> None:
                     }
                 )
     _show_table(pd.DataFrame(rows))
+    if len(ok) == 1:
+        invested, pnl, pct = _strategy_pnl(ok[0])
+        c1, c2, c3 = st.columns(3)
+        c1.metric("전략 수익률", f"{pct:+.2f}%" if invested else "-", f"{pct - spy_pct:+.2f}%p vs SPY" if invested else None)
+        c2.metric("SPY 보유", f"{spy_pct:+.2f}%")
+        beat = "지수보다 나음" if invested and pct >= spy_pct else "지수보다 못함"
+        c3.metric("상대평가", beat if invested else "-")
+        g1, g2 = st.columns(2)
+        with g1:
+            st.plotly_chart(
+                build_return_vs_spy_fig(pct, spy_pct, ok[0].name or "전략"),
+                use_container_width=True,
+            )
+        with g2:
+            st.plotly_chart(
+                build_pnl_split_fig(float(ok[0].realized or 0), float(ok[0].m2m or 0), "손익 구성"),
+                use_container_width=True,
+            )
+    else:
+        names, pcts = [], []
+        for result in ok:
+            invested, _pnl, pct = _strategy_pnl(result)
+            if invested:
+                names.append(str(result.name or result.ticker))
+                pcts.append(pct)
+        if names:
+            st.plotly_chart(
+                build_ticker_vs_spy_fig(names, pcts, spy_pct),
+                use_container_width=True,
+            )
+        metric_ccy = [c for c in ("KRW", "USD") if c in by_ccy]
+        if metric_ccy:
+            cards = st.columns(len(metric_ccy))
+            for i, ccy in enumerate(metric_ccy):
+                bucket = by_ccy[ccy]
+                invested = bucket["invested"]
+                pnl = bucket["pnl"]
+                pct = (pnl / invested * 100.0) if invested else 0.0
+                label = "원" if ccy == "KRW" else "달러"
+                cards[i].metric(
+                    f"{label} 전략 vs SPY",
+                    f"{pct:+.2f}%" if invested else "-",
+                    f"{pct - spy_pct:+.2f}%p" if invested else None,
+                )
     st.caption(
         f"{start} ~ {end} SPY(SPDR S&P 500 ETF)를 기간 첫날 사서 끝날까지 보유한 수익률과 비교합니다. "
-        "전략 수익률은 매수 투입 금액 대비 (실현+평가) 손익입니다. 원 표시는 환율 없이 같은 %만 견줍니다."
+        "초록은 지수 이상, 빨강은 지수 미만. 전략 수익률은 매수 투입 대비 (실현+평가) 손익입니다. "
+        "원 표시는 환율 없이 같은 %만 견줍니다."
     )
 
 
