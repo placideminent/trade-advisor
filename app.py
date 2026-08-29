@@ -747,69 +747,108 @@ def _render_fav_add() -> None:
     st.markdown("---")
 
 
+def _fav_row_key(market: str, ticker: str) -> str:
+    return f"{market}|{ticker}"
+
+
+def _render_fav_row(row: dict, as_of, *, analyzed: bool) -> None:
+    cols = st.columns([6, 1])
+    safe = f"{row['market']}_{str(row.get('ticker') or '').replace('.', '_')}"
+    name = row.get("name") or row.get("ticker")
+    with cols[0]:
+        if not analyzed:
+            st.markdown(
+                f"<div class='action-hold'><b>{name}</b> ({row.get('ticker')}) · 아직 분석하지 않음</div>",
+                unsafe_allow_html=True,
+            )
+        elif row.get("error"):
+            st.markdown(
+                f"<div class='action-hold'><b>{name}</b>"
+                f" ({row.get('ticker')}) · 계산 실패: {row['error']}</div>",
+                unsafe_allow_html=True,
+            )
+        else:
+            action = row.get("action") or "홀딩"
+            bg, fg = FAVBAR_COLORS.get(action, FAVBAR_COLORS["홀딩"])
+            st.markdown(
+                f"<style>div.st-key-favbar_{safe} button {{"
+                f"background:{bg} !important; color:{fg} !important;}}</style>",
+                unsafe_allow_html=True,
+            )
+            label = (
+                f"{name} ({row.get('ticker')}) · "
+                f"{row.get('price_label') or ''} {_fmt(row['price']) if row.get('price') else '-'}\n"
+                f"제안: {action}   합산 {row.get('score_pct')}%"
+            )
+            if st.button(label, key=f"favbar_{safe}", use_container_width=True):
+                st.session_state._jump_analysis = {
+                    "market": row["market"],
+                    "ticker": row["ticker"],
+                    "name": name,
+                    "as_of": as_of.isoformat(),
+                }
+                st.rerun()
+    with cols[1]:
+        st.button(
+            "삭제",
+            key=f"unfav_{row['market']}_{row['ticker']}",
+            on_click=partial(_remove_fav, row["market"], row["ticker"]),
+            use_container_width=True,
+        )
+
+
 def _render_favorites(as_of, lookback_days: int, timeframe: str, lookback_label: str, rule: dict) -> None:
     st.subheader("즐겨찾기")
     st.caption(
-        f"조회 기간 {lookback_label} · 분석일 {as_of} · 색 막대를 누르면 그 종목 분석으로 갑니다."
+        f"조회 기간 {lookback_label} · 분석일 {as_of} · "
+        "추가만 하면 목록에만 들어갑니다. **분석하기**를 눌러야 계산합니다. "
+        "색 막대를 누르면 그 종목 분석으로 갑니다."
     )
     _render_fav_add()
     favs = _fav_list()
     if not favs:
         st.info("아직 즐겨찾기한 종목이 없습니다. 위에서 검색해 추가하세요.")
         return
-    results = []
-    bar = st.progress(0, text="즐겨찾기 계산 중...")
-    for i, item in enumerate(favs, 1):
-        bar.progress(i / len(favs), text=f"{item.get('name') or item.get('ticker')} 계산 중...")
-        row = _quick_signal(
-            item["market"],
-            item["ticker"],
-            as_of,
-            lookback_days,
-            timeframe,
-            rule,
-        )
-        row["name"] = item.get("name") or row.get("name") or item["ticker"]
-        results.append(row)
-    bar.empty()
-    for row in results:
-        cols = st.columns([6, 1])
-        safe = f"{row['market']}_{str(row.get('ticker') or '').replace('.', '_')}"
-        with cols[0]:
-            if row.get("error"):
-                st.markdown(
-                    f"<div class='action-hold'><b>{row.get('name') or row.get('ticker')}</b>"
-                    f" ({row.get('ticker')}) · 계산 실패: {row['error']}</div>",
-                    unsafe_allow_html=True,
-                )
-            else:
-                action = row.get("action") or "홀딩"
-                bg, fg = FAVBAR_COLORS.get(action, FAVBAR_COLORS["홀딩"])
-                st.markdown(
-                    f"<style>div.st-key-favbar_{safe} button {{"
-                    f"background:{bg} !important; color:{fg} !important;}}</style>",
-                    unsafe_allow_html=True,
-                )
-                label = (
-                    f"{row.get('name') or row.get('ticker')} ({row.get('ticker')}) · "
-                    f"{row.get('price_label') or ''} {_fmt(row['price']) if row.get('price') else '-'}\n"
-                    f"제안: {action}   합산 {row.get('score_pct')}%"
-                )
-                if st.button(label, key=f"favbar_{safe}", use_container_width=True):
-                    st.session_state._jump_analysis = {
-                        "market": row["market"],
-                        "ticker": row["ticker"],
-                        "name": row.get("name") or row["ticker"],
-                        "as_of": as_of.isoformat(),
-                    }
-                    st.rerun()
-        with cols[1]:
-            st.button(
-                "삭제",
-                key=f"unfav_{row['market']}_{row['ticker']}",
-                on_click=partial(_remove_fav, row["market"], row["ticker"]),
-                use_container_width=True,
+    run = st.button("분석하기", type="primary", use_container_width=True, key="fav_run_btn")
+    if run:
+        results = []
+        bar = st.progress(0, text="즐겨찾기 계산 중...")
+        for i, item in enumerate(favs, 1):
+            bar.progress(i / len(favs), text=f"{item.get('name') or item.get('ticker')} 계산 중...")
+            row = _quick_signal(
+                item["market"],
+                item["ticker"],
+                as_of,
+                lookback_days,
+                timeframe,
+                rule,
             )
+            row["name"] = item.get("name") or row.get("name") or item["ticker"]
+            results.append(row)
+        bar.empty()
+        st.session_state.fav_board = {
+            "as_of": as_of.isoformat(),
+            "lookback": lookback_label,
+            "results": results,
+        }
+    board = st.session_state.get("fav_board") or {}
+    same_ctx = (
+        board.get("as_of") == as_of.isoformat()
+        and board.get("lookback") == lookback_label
+    )
+    by_key = {}
+    if same_ctx:
+        for row in board.get("results") or []:
+            by_key[_fav_row_key(row.get("market"), row.get("ticker"))] = row
+    elif board:
+        st.caption("시점이나 조회 기간이 바뀌었습니다. 다시 **분석하기**를 누르면 이 조건으로 계산합니다.")
+    for item in favs:
+        key = _fav_row_key(item["market"], item["ticker"])
+        row = by_key.get(key)
+        if row:
+            _render_fav_row(row, as_of, analyzed=True)
+        else:
+            _render_fav_row(item, as_of, analyzed=False)
 
 
 def _market_name(code: str) -> str:
