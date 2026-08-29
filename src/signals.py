@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
-SIGNAL_RULE_VERSION = 49
+SIGNAL_RULE_VERSION = 50
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 10
 # 합산 %는 조회 기간과 상관없이 같은 눈금(이론상 최저~최고)을 쓴다.
@@ -65,9 +65,9 @@ WEIGHT_FIELDS = [
     ("trendline_dir_down", "추세선 둘 다 하락", "상승선·하락선이 동시에 하락이면 −2. 하락선 이탈 가점이 있으면 0"),
     ("trendline_dir_up", "추세선 둘 다 상승", "둘 다 상승이면서 벌어질 때만 +1, 모이면 0. 하락선 이탈 가점이 있으면 0"),
     ("trendline_up_near", "상승선 근접", "둘 다 상승이고 현재가가 상승 추세선 근처이면 +1"),
-    ("support_near", "지지 근접", "근접하고 강도 1 초과일 때만 +1"),
+    ("support_near", "지지 근접", "근접하고 강도 4 이상일 때만 +1"),
     ("support_break", "지지 이탈", "지지 아래로 이탈"),
-    ("resist_near", "저항 근접", "근접하고 강도 2 이상일 때만 −1"),
+    ("resist_near", "저항 근접", "근접하고 강도 4 이상일 때만 −1"),
     ("vol_sup_air", "약한 매물대·아래 공백", "지지 매물대 강도 1 미만이고 다음 지지가 10% 이상 아래"),
     ("vol_sup_room", "약한 매물대·위 여유", "지지 매물대 강도 1 미만이고 다음 저항이 10% 이상 위"),
     ("poc", "POC", "최대 매물 부근. 상승 +, 하락 −"),
@@ -390,17 +390,17 @@ def recommend(
         pct_s = dist_s / price * 100
         sup_str = float(nsup.strength)
         if dist_s <= near:
-            if sup_str <= 1:
-                add(
-                    "지지",
-                    f"근접 {_fmt(nsup.price)} ({nsup.note}, 강도 {sup_str:.1f} · 약해 가점 없음, 이격 {pct_s:.2f}%)",
-                    0,
-                )
-            else:
+            if sup_str >= 4:
                 add(
                     "지지",
                     f"근접 {_fmt(nsup.price)} ({nsup.note}, 강도 {sup_str:.1f}, 이격 {pct_s:.2f}%)",
                     wp("support_near"),
+                )
+            else:
+                add(
+                    "지지",
+                    f"근접 {_fmt(nsup.price)} ({nsup.note}, 강도 {sup_str:.1f} · 4 미만 가점 없음, 이격 {pct_s:.2f}%)",
+                    0,
                 )
         else:
             add("지지", f"{_fmt(nsup.price)} 까지 {pct_s:.2f}% (강도 {sup_str:.1f})", 0)
@@ -414,7 +414,7 @@ def recommend(
         pct_r = dist_r / price * 100
         res_str = float(nres.strength)
         if dist_r <= near:
-            if res_str >= 2:
+            if res_str >= 4:
                 add(
                     "저항",
                     f"근접 {_fmt(nres.price)} ({nres.note}, 강도 {res_str:.1f}, 이격 {pct_r:.2f}%)",
@@ -423,7 +423,7 @@ def recommend(
             else:
                 add(
                     "저항",
-                    f"근접 {_fmt(nres.price)} ({nres.note}, 강도 {res_str:.1f} · 약해 감점 없음, 이격 {pct_r:.2f}%)",
+                    f"근접 {_fmt(nres.price)} ({nres.note}, 강도 {res_str:.1f} · 4 미만 감점 없음, 이격 {pct_r:.2f}%)",
                     0,
                 )
         else:
