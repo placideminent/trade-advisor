@@ -746,25 +746,52 @@ def _transpose_records(rows: list[dict], index_key: str = "기간") -> pd.DataFr
     return pd.DataFrame(data)
 
 
+class _EmptyBars(RuntimeError):
+    """빈 봉은 Streamlit 캐시에 넣지 않는다. 예외는 캐시되지 않는다."""
+
+
 @st.cache_data(ttl=600, show_spinner=False)
 def _cached_ohlcv(market: str, ticker: str, as_of_iso: str, lookback_days: int, timeframe: str, _ver: str = "1h1m"):
-    return fetch_ohlcv(
+    df, meta = fetch_ohlcv(
         market,
         ticker,
         date.fromisoformat(as_of_iso),
         lookback_days,
         timeframe=timeframe,
     )
+    if df is None or getattr(df, "empty", True):
+        raise _EmptyBars("봉 없음")
+    return df, meta
+
+
+@st.cache_data(ttl=90, show_spinner=False)
+def _cached_spot(market: str, ticker: str):
+    px, src = fetch_spot_price(market, ticker)
+    if not px:
+        raise RuntimeError("no_spot")
+    return px, src
+
+
+def _load_ohlcv(market: str, ticker: str, as_of, lookback_days: int, timeframe: str, retries: int = 2):
+    last_meta = {"ticker": ticker, "name": ticker, "timeframe": timeframe}
+    as_of_iso = as_of.isoformat() if hasattr(as_of, "isoformat") else str(as_of)
+    tries = 1 + max(0, int(retries))
+    for i in range(tries):
+        if i:
+            time.sleep(min(0.8 * i, 2.4))
+        try:
+            df, meta = _cached_ohlcv(market, ticker, as_of_iso, lookback_days, timeframe)
+            if df is not None and not getattr(df, "empty", True):
+                return df.copy(), dict(meta)
+        except Exception:
+            pass
+    return pd.DataFrame(), last_meta
 
 
 def _quick_signal(market: str, ticker: str, as_of, lookback_days: int, timeframe: str, rule: dict) -> dict:
     as_of = min(as_of, market_today(market))
     try:
-        df, meta = _cached_ohlcv(
-            market, ticker, as_of.isoformat(), lookback_days, timeframe
-        )
-        if df is None or getattr(df, "empty", True):
-            df, meta = fetch_ohlcv(market, ticker, as_of, lookback_days, timeframe)
+        df, meta = _load_ohlcv(market, ticker, as_of, lookback_days, timeframe, retries=2)
         df = df.copy()
         meta = dict(meta)
         tf = str(meta.get("timeframe") or timeframe)
@@ -778,7 +805,7 @@ def _quick_signal(market: str, ticker: str, as_of, lookback_days: int, timeframe
     spot_source = "해당일 종가"
     if is_live:
         try:
-            live_px, live_src = fetch_spot_price(market, ticker)
+            live_px, live_src = _cached_spot(market, ticker)
         except Exception:
             live_px, live_src = None, ""
         if live_px:
@@ -798,8 +825,7 @@ def _quick_signal(market: str, ticker: str, as_of, lookback_days: int, timeframe
         try:
             src_6m = df
             if lookback_days < 180:
-                src_6m, _ = _cached_ohlcv(market, ticker, as_of.isoformat(), 180, "1d")
-                src_6m = src_6m.copy()
+                src_6m, _ = _load_ohlcv(market, ticker, as_of, 180, "1d", retries=1)
             six_month_chg = period_return(src_6m, as_of, spot_price, 180)
         except Exception:
             six_month_chg = None
@@ -968,9 +994,31 @@ def _render_favorites(as_of, lookback_days: int, timeframe: str, lookback_label:
     run = st.button("분석하기", type="primary", use_container_width=True, key="fav_run_btn")
     if run:
         results = []
+        prev = st.session_state.get("fav_board") or {}
+        reuse = (
+            prev.get("as_of") == as_of.isoformat()
+            and prev.get("lookback") == lookback_label
+        )
+        prev_ok = {}
+        if reuse:
+            for row in prev.get("results") or []:
+                if row and not row.get("error"):
+                    prev_ok[_fav_row_key(row.get("market"), row.get("ticker"))] = row
         bar = st.progress(0, text="즐겨찾기 계산 중...")
+        n_fav = len(favs)
+        failed_once = False
         for i, item in enumerate(favs, 1):
-            bar.progress(i / len(favs), text=f"{item.get('name') or item.get('ticker')} 계산 중...")
+            name = item.get("name") or item.get("ticker")
+            key = _fav_row_key(item["market"], item["ticker"])
+            if key in prev_ok:
+                row = dict(prev_ok[key])
+                row["name"] = name or row.get("name") or item["ticker"]
+                results.append(row)
+                bar.progress(i / n_fav, text=f"{name} 유지")
+                continue
+            if i > 1:
+                time.sleep(1.1 if failed_once else 0.35)
+            bar.progress(i / n_fav, text=f"{name} 계산 중...")
             row = _quick_signal(
                 item["market"],
                 item["ticker"],
@@ -979,7 +1027,9 @@ def _render_favorites(as_of, lookback_days: int, timeframe: str, lookback_label:
                 timeframe,
                 rule,
             )
-            row["name"] = item.get("name") or row.get("name") or item["ticker"]
+            row["name"] = name or row.get("name") or item["ticker"]
+            if row.get("error"):
+                failed_once = True
             results.append(row)
         bar.empty()
         st.session_state.fav_board = {
@@ -987,6 +1037,12 @@ def _render_favorites(as_of, lookback_days: int, timeframe: str, lookback_label:
             "lookback": lookback_label,
             "results": results,
         }
+        n_fail = sum(1 for r in results if r.get("error"))
+        if n_fail:
+            st.warning(
+                f"{n_fail}종목은 시세를 받지 못했습니다. "
+                "**분석하기**를 다시 누르면 실패한 종목만 다시 받습니다."
+            )
     board = st.session_state.get("fav_board") or {}
     same_ctx = (
         board.get("as_of") == as_of.isoformat()
@@ -1791,11 +1847,7 @@ if not ticker:
 bar_name = {"1h": "1시간봉", "4h": "4시간봉"}.get(timeframe, "일봉")
 with st.spinner(f"{display_name or ticker} / {as_of} {bar_name} 수집 중..."):
     try:
-        df, meta = _cached_ohlcv(
-            market, ticker, as_of.isoformat(), lookback_days, timeframe
-        )
-        if df is None or getattr(df, "empty", True):
-            df, meta = fetch_ohlcv(market, ticker, as_of, lookback_days, timeframe)
+        df, meta = _load_ohlcv(market, ticker, as_of, lookback_days, timeframe, retries=2)
         df = df.copy()
         meta = dict(meta)
         timeframe = str(meta.get("timeframe") or timeframe)
@@ -1849,10 +1901,7 @@ try:
     try:
         src_6m = df
         if lookback_days < 180:
-            src_6m, _meta_6m = _cached_ohlcv(
-                market, ticker, as_of.isoformat(), 180, "1d"
-            )
-            src_6m = src_6m.copy()
+            src_6m, _meta_6m = _load_ohlcv(market, ticker, as_of, 180, "1d", retries=1)
         six_month_chg = period_return(src_6m, as_of, spot_price, 180)
     except Exception:
         six_month_chg = None

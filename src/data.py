@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+from time import monotonic
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -128,19 +129,51 @@ def _index_naive_wall(idx) -> pd.DatetimeIndex:
     return idx
 
 
+_yahoo_fail_streak = 0
+_yahoo_skip_until = 0.0
+
+
+def _yahoo_blocked() -> bool:
+    return monotonic() < _yahoo_skip_until
+
+
+def _mark_yahoo(ok: bool) -> None:
+    """연속 실패면 잠시 Yahoo를 건너뛰고 FDR/Naver로 넘어가게 한다."""
+    global _yahoo_fail_streak, _yahoo_skip_until
+    if ok:
+        _yahoo_fail_streak = 0
+        return
+    _yahoo_fail_streak += 1
+    if _yahoo_fail_streak >= 2:
+        _yahoo_skip_until = monotonic() + 5.0
+
+
 def _fetch_yf(symbol: str, start: date, end: date, interval: str = "1d") -> pd.DataFrame:
     import yfinance as yf
 
-    raw = yf.download(
-        symbol,
+    if _yahoo_blocked():
+        return pd.DataFrame()
+    kwargs = dict(
         start=start.isoformat(),
         end=(end + timedelta(days=1)).isoformat(),
         interval=interval,
         auto_adjust=True,
         progress=False,
         threads=False,
+        timeout=12,
     )
-    return _normalize_ohlcv(raw)
+    try:
+        try:
+            raw = yf.download(symbol, **kwargs)
+        except TypeError:
+            kwargs.pop("timeout", None)
+            raw = yf.download(symbol, **kwargs)
+        df = _normalize_ohlcv(raw)
+        _mark_yahoo(not df.empty)
+        return df
+    except Exception:
+        _mark_yahoo(False)
+        return pd.DataFrame()
 
 
 def _market_tz(market: str):
@@ -229,7 +262,7 @@ def _fetch_yahoo_chart(symbol: str, start: date, end: date, interval: str = "60m
                 f"https://{host}/v8/finance/chart/{symbol}",
                 params=params,
                 headers=headers,
-                timeout=20,
+                timeout=15,
             )
             resp.raise_for_status()
             result = (resp.json().get("chart") or {}).get("result") or []
@@ -250,10 +283,15 @@ def _fetch_yahoo_chart(symbol: str, start: date, end: date, interval: str = "60m
                 },
                 index=pd.to_datetime(ts, unit="s", utc=True),
             )
-            return _normalize_ohlcv(raw)
+            df = _normalize_ohlcv(raw)
+            _mark_yahoo(not df.empty)
+            if df.empty:
+                continue
+            return df
         except Exception as exc:
             last_err = exc
             continue
+    _mark_yahoo(False)
     if last_err:
         return pd.DataFrame()
     return pd.DataFrame()
@@ -263,10 +301,7 @@ def _fetch_intraday(symbol: str, start: date, end: date) -> pd.DataFrame:
     df = _fetch_yf(symbol, start, end, interval="1h")
     if not df.empty:
         return df
-    df = _fetch_yahoo_chart(symbol, start, end, interval="60m")
-    if not df.empty:
-        return df
-    return _fetch_yahoo_chart(symbol, start, end, interval="30m")
+    return _fetch_yahoo_chart(symbol, start, end, interval="60m")
 
 
 def fetch_intraday_range(market: str, ticker: str, start: date, end: date) -> pd.DataFrame:
@@ -604,7 +639,9 @@ def fetch_ohlcv(
         want_intra = timeframe in ("1h", "4h")
         used_intra = False
         if want_intra:
-            for symbol in _kr_yahoo_symbols(code):
+            for i, symbol in enumerate(_kr_yahoo_symbols(code)):
+                if i and _yahoo_blocked():
+                    break
                 df = _fetch_intraday(symbol, start, as_of)
                 if not df.empty:
                     meta["source"] = f"Yahoo Finance ({symbol})"
@@ -618,15 +655,17 @@ def fetch_ohlcv(
             except Exception:
                 df = pd.DataFrame()
         if df.empty:
-            for symbol in _kr_yahoo_symbols(code):
+            df = _fetch_naver_daily(code, start, as_of)
+            if not df.empty:
+                meta["source"] = "Naver"
+        if df.empty:
+            for i, symbol in enumerate(_kr_yahoo_symbols(code)):
+                if i and _yahoo_blocked():
+                    break
                 df = _fetch_daily(symbol, start, as_of)
                 if not df.empty:
                     meta["source"] = f"Yahoo Finance ({symbol})"
                     break
-        if df.empty:
-            df = _fetch_naver_daily(code, start, as_of)
-            if not df.empty:
-                meta["source"] = "Naver"
         if want_intra and not used_intra and not df.empty:
             timeframe = "1d"
             meta["note"] = "시간봉을 받지 못해 일봉으로 계산합니다."
