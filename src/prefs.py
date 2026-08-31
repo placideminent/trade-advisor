@@ -20,7 +20,7 @@ from pathlib import Path
 
 import requests
 
-from .signals import DEFAULT_CUTS, DEFAULT_WEIGHTS, SIGNAL_RULE_VERSION
+from .signals import DEFAULT_CUTS, DEFAULT_WEIGHTS, SIGNAL_RULE_VERSION, migrate_sell_cuts
 
 BROWSER_PENDING = "__pending__"
 
@@ -121,9 +121,9 @@ PREV_DEFAULT_CUTS = {
     "buy_weak": 70,
     "buy_mid": 75,
     "buy_strong": 79,
-    "sell_weak": 35,
-    "sell_mid": 30,
-    "sell_strong": 25,
+    "sell_weak": 40,
+    "sell_mid": 35,
+    "sell_strong": 30,
 }
 
 COOKIE_NAME = "ta_prefs"
@@ -206,18 +206,7 @@ def _normalize(raw: dict | None) -> dict:
         data["cuts"] = dict(DEFAULT_CUTS)
     if all(data["cuts"].get(key) == old for key, old in PREV_DEFAULT_CUTS.items()):
         data["cuts"] = dict(DEFAULT_CUTS)
-    if all(int(data["cuts"].get(key, 0)) == old for key, old in (
-        ("sell_weak", 35), ("sell_mid", 30), ("sell_strong", 25),
-    )):
-        data["cuts"]["sell_weak"] = 40
-        data["cuts"]["sell_mid"] = 35
-        data["cuts"]["sell_strong"] = 30
-    if all(int(data["cuts"].get(key, 0)) == old for key, old in (
-        ("sell_weak", 27), ("sell_mid", 24), ("sell_strong", 21),
-    )):
-        data["cuts"]["sell_weak"] = 40
-        data["cuts"]["sell_mid"] = 35
-        data["cuts"]["sell_strong"] = 30
+    migrate_sell_cuts(data["cuts"])
     if data["weights"].get("trend") == 2:
         data["weights"]["trend"] = 1
     if data["weights"].get("ma20") == -1:

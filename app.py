@@ -81,6 +81,7 @@ from src.signals import (
     DEFAULT_WEIGHTS,
     SIGNAL_RULE_VERSION,
     WEIGHT_FIELDS,
+    migrate_sell_cuts,
     period_return,
     recommend,
     _fmt,
@@ -216,12 +217,26 @@ def _init_rule_widgets() -> None:
             )) or all(int(st.session_state.get(f"c_{k}", 0)) == v for k, v in (
                 ("sell_weak", 27), ("sell_mid", 24), ("sell_strong", 21),
             )):
-                _safe_set_widget("c_sell_weak", 40)
-                _safe_set_widget("c_sell_mid", 35)
+                _safe_set_widget("c_sell_weak", 45)
+                _safe_set_widget("c_sell_mid", 40)
                 _safe_set_widget("c_sell_strong", 30)
         except Exception:
             pass
         st.session_state._cuts_migrated_v53 = True
+    if not st.session_state.get("_cuts_migrated_v58"):
+        try:
+            cuts = {
+                "sell_weak": int(st.session_state.get("c_sell_weak", 0)),
+                "sell_mid": int(st.session_state.get("c_sell_mid", 0)),
+                "sell_strong": int(st.session_state.get("c_sell_strong", 0)),
+            }
+            migrate_sell_cuts(cuts)
+            _safe_set_widget("c_sell_weak", int(cuts["sell_weak"]))
+            _safe_set_widget("c_sell_mid", int(cuts["sell_mid"]))
+            _safe_set_widget("c_sell_strong", int(cuts["sell_strong"]))
+        except Exception:
+            pass
+        st.session_state._cuts_migrated_v58 = True
     for key, default in DEFAULT_SIM.items():
         st.session_state.setdefault(f"s_{key}", int(default))
     st.session_state.setdefault("sim_eval_mode", "기존 규칙만")
@@ -476,14 +491,15 @@ def _apply_loaded_prefs(loaded: dict) -> None:
         st.session_state["w_chg6_400"] = -4
     for key, default in DEFAULT_CUTS.items():
         st.session_state[f"c_{key}"] = int(loaded["cuts"].get(key, default))
-    if all(int(st.session_state.get(f"c_{k}", 0)) == v for k, v in (
-        ("sell_weak", 35), ("sell_mid", 30), ("sell_strong", 25),
-    )) or all(int(st.session_state.get(f"c_{k}", 0)) == v for k, v in (
-        ("sell_weak", 27), ("sell_mid", 24), ("sell_strong", 21),
-    )):
-        st.session_state["c_sell_weak"] = 40
-        st.session_state["c_sell_mid"] = 35
-        st.session_state["c_sell_strong"] = 30
+    cuts_now = {
+        "sell_weak": int(st.session_state.get("c_sell_weak", 0)),
+        "sell_mid": int(st.session_state.get("c_sell_mid", 0)),
+        "sell_strong": int(st.session_state.get("c_sell_strong", 0)),
+    }
+    migrate_sell_cuts(cuts_now)
+    st.session_state["c_sell_weak"] = int(cuts_now["sell_weak"])
+    st.session_state["c_sell_mid"] = int(cuts_now["sell_mid"])
+    st.session_state["c_sell_strong"] = int(cuts_now["sell_strong"])
     if not st.session_state.get("_rules_v54"):
         for key, default in DEFAULT_WEIGHTS.items():
             st.session_state[f"w_{key}"] = int(default)
@@ -491,6 +507,7 @@ def _apply_loaded_prefs(loaded: dict) -> None:
             st.session_state[f"c_{key}"] = int(default)
         st.session_state._rules_v54 = True
     st.session_state._cuts_migrated_v53 = True
+    st.session_state._cuts_migrated_v58 = True
     sim = loaded.get("sim") or {}
     for key, default in DEFAULT_SIM.items():
         st.session_state[f"s_{key}"] = int(sim.get(key, default))

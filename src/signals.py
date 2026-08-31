@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
-SIGNAL_RULE_VERSION = 57
+SIGNAL_RULE_VERSION = 58
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 10
 # 합산 %는 조회 기간과 상관없이 같은 눈금(이론상 최저~최고)을 쓴다.
@@ -45,8 +45,8 @@ DEFAULT_CUTS = {
     "buy_weak": 70,
     "buy_mid": 75,
     "buy_strong": 79,
-    "sell_weak": 40,
-    "sell_mid": 35,
+    "sell_weak": 45,
+    "sell_mid": 40,
     "sell_strong": 30,
 }
 LEGACY_DEFAULT_CUTS = {
@@ -61,9 +61,9 @@ PREV_DEFAULT_CUTS = {
     "buy_weak": 70,
     "buy_mid": 75,
     "buy_strong": 79,
-    "sell_weak": 35,
-    "sell_mid": 30,
-    "sell_strong": 25,
+    "sell_weak": 40,
+    "sell_mid": 35,
+    "sell_strong": 30,
 }
 
 WEIGHT_FIELDS = [
@@ -93,6 +93,30 @@ WEIGHT_FIELDS = [
     ("rr_penalty", "손익비 부족", "손익비 1.2 미만이고 점수가 높을 때"),
     ("option_wall", "옵션 월", "기존 매수/매도 이후 추가. 만기 14일 안 콜·풋월. 매도 때 근처 콜두껍/풋얇 −1, 반대 +1. 매수 때 근처 풋얇+콜두껍 −1"),
 ]
+
+_OLD_SELL_TRIOS = (
+    (40, 35, 30),
+    (35, 30, 25),
+    (27, 24, 21),
+)
+
+
+def migrate_sell_cuts(cuts: dict) -> dict:
+    """예전 기본 매도 컷을 엑셀 최신값(45/40/30)으로 올린다."""
+    try:
+        trio = (
+            int(cuts.get("sell_weak") or 0),
+            int(cuts.get("sell_mid") or 0),
+            int(cuts.get("sell_strong") or 0),
+        )
+    except (TypeError, ValueError):
+        return cuts
+    if trio in _OLD_SELL_TRIOS:
+        cuts["sell_weak"] = int(DEFAULT_CUTS["sell_weak"])
+        cuts["sell_mid"] = int(DEFAULT_CUTS["sell_mid"])
+        cuts["sell_strong"] = int(DEFAULT_CUTS["sell_strong"])
+    return cuts
+
 
 CUT_FIELDS = [
     ("buy_weak", "약한 매수", "% 이상"),
