@@ -234,6 +234,18 @@ def _normalize(raw: dict | None) -> dict:
         data["cuts"] = dict(DEFAULT_CUTS)
     if all(data["cuts"].get(key) == old for key, old in PREV_DEFAULT_CUTS.items()):
         data["cuts"] = dict(DEFAULT_CUTS)
+    if all(int(data["cuts"].get(key, 0)) == old for key, old in (
+        ("sell_weak", 35), ("sell_mid", 30), ("sell_strong", 25),
+    )):
+        data["cuts"]["sell_weak"] = 40
+        data["cuts"]["sell_mid"] = 35
+        data["cuts"]["sell_strong"] = 30
+    if all(int(data["cuts"].get(key, 0)) == old for key, old in (
+        ("sell_weak", 27), ("sell_mid", 24), ("sell_strong", 21),
+    )):
+        data["cuts"]["sell_weak"] = 40
+        data["cuts"]["sell_mid"] = 35
+        data["cuts"]["sell_strong"] = 30
     if data["weights"].get("trend") == 2:
         data["weights"]["trend"] = 1
     if data["weights"].get("trendline_dir_down") == -2:

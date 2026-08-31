@@ -154,6 +154,16 @@ def _init_rule_widgets() -> None:
             st.session_state[sk] = int(default)
     for key, default in DEFAULT_CUTS.items():
         st.session_state.setdefault(f"c_{key}", int(default))
+    if not st.session_state.get("_cuts_migrated_v53"):
+        if all(int(st.session_state.get(f"c_{k}", 0)) == v for k, v in (
+            ("sell_weak", 35), ("sell_mid", 30), ("sell_strong", 25),
+        )) or all(int(st.session_state.get(f"c_{k}", 0)) == v for k, v in (
+            ("sell_weak", 27), ("sell_mid", 24), ("sell_strong", 21),
+        )):
+            st.session_state["c_sell_weak"] = 40
+            st.session_state["c_sell_mid"] = 35
+            st.session_state["c_sell_strong"] = 30
+        st.session_state._cuts_migrated_v53 = True
     for key, default in DEFAULT_SIM.items():
         st.session_state.setdefault(f"s_{key}", int(default))
     st.session_state.setdefault("sim_eval_mode", "기존 규칙만")
@@ -423,11 +433,14 @@ def _apply_loaded_prefs(loaded: dict) -> None:
     for key, default in DEFAULT_CUTS.items():
         st.session_state[f"c_{key}"] = int(loaded["cuts"].get(key, default))
     if all(int(st.session_state.get(f"c_{k}", 0)) == v for k, v in (
-        ("buy_weak", 70), ("buy_mid", 75), ("buy_strong", 79),
         ("sell_weak", 35), ("sell_mid", 30), ("sell_strong", 25),
+    )) or all(int(st.session_state.get(f"c_{k}", 0)) == v for k, v in (
+        ("sell_weak", 27), ("sell_mid", 24), ("sell_strong", 21),
     )):
-        for key, default in DEFAULT_CUTS.items():
-            st.session_state[f"c_{key}"] = int(default)
+        st.session_state["c_sell_weak"] = 40
+        st.session_state["c_sell_mid"] = 35
+        st.session_state["c_sell_strong"] = 30
+    st.session_state._cuts_migrated_v53 = True
     sim = loaded.get("sim") or {}
     for key, default in DEFAULT_SIM.items():
         st.session_state[f"s_{key}"] = int(sim.get(key, default))
