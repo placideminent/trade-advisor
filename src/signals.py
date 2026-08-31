@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
-SIGNAL_RULE_VERSION = 55
+SIGNAL_RULE_VERSION = 56
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 10
 # 합산 %는 조회 기간과 상관없이 같은 눈금(이론상 최저~최고)을 쓴다.
@@ -18,6 +18,7 @@ DEFAULT_WEIGHTS = {
     "trend": 1,
     "down_line_near": -1,
     "up_line_near": 1,
+    "up_line_break": -1,
     "support_near": 1,
     "support_break": -2,
     "resist_near": -1,
@@ -69,6 +70,7 @@ WEIGHT_FIELDS = [
     ("trend", "추세", "1·2개월은 상승 +, 3개월 이상은 하락 +"),
     ("down_line_near", "하락 추세선 근접", "현재가가 하락 추세선 근처이면 −1"),
     ("up_line_near", "상승 추세선 근접", "현재가가 상승 추세선 근처이면 +1"),
+    ("up_line_break", "상승 추세선 이탈", "현재가가 상승 추세선을 완전 이탈하면 −1"),
     ("support_near", "지지 근접", "근접하고 강도 4 이상일 때만 +1"),
     ("support_break", "지지 이탈", "지지 아래로 이탈"),
     ("resist_near", "저항 근접", "근접하고 강도 4 이상일 때만 −1"),
@@ -298,6 +300,12 @@ def recommend(
                 "상승 추세선 근접",
                 f"상승선 {_fmt(y_up)} 근처 (이격 {_fmt(abs(price - y_up))})",
                 wp("up_line_near"),
+            )
+        elif price < y_up - near:
+            add(
+                "상승 추세선 이탈",
+                f"상승선 {_fmt(y_up)} 아래로 완전 이탈 (이격 {_fmt(y_up - price)})",
+                wp("up_line_break"),
             )
         else:
             add(
