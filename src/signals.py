@@ -229,14 +229,35 @@ def _fmt(price: float) -> str:
 
 
 def period_return(df, as_of, price: float, days: int = 180) -> float | None:
-    """as_of 기준 days일 전 종가 대비 현재가 수익률."""
+    """as_of 기준 days일 전 종가 대비 현재가 수익률.
+
+    조회 창이 딱 days일이면 목표일이 주말·휴장인 경우가 많다.
+    그때는 창의 첫 봉(다음 거래일)을 쓴다.
+    """
     if df is None or getattr(df, "empty", True) or price is None or price <= 0:
         return None
-    start = pd.Timestamp(as_of) - pd.Timedelta(days=days)
-    past = df.loc[df.index <= start]
-    if past.empty:
-        return None
-    base = float(past["close"].iloc[-1])
+    idx = df.index
+    as_ts = pd.Timestamp(as_of)
+    try:
+        if getattr(idx, "tz", None) is not None and as_ts.tzinfo is None:
+            as_ts = as_ts.tz_localize(idx.tz)
+    except (TypeError, ValueError):
+        pass
+    target = as_ts - pd.Timedelta(days=days)
+    past = df.loc[idx <= target]
+    if not past.empty:
+        base = float(past["close"].iloc[-1])
+    else:
+        first = idx[0]
+        try:
+            d0 = pd.Timestamp(pd.Timestamp(first).strftime("%Y-%m-%d"))
+            d1 = pd.Timestamp(pd.Timestamp(target).strftime("%Y-%m-%d"))
+            delta = abs((d0 - d1).days)
+        except (TypeError, ValueError):
+            delta = 99
+        if delta > 14:
+            return None
+        base = float(df["close"].iloc[0])
     if base <= 0:
         return None
     return float(price) / base - 1.0
