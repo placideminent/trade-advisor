@@ -37,10 +37,12 @@ from src.prefs import (
     merge_prefs,
     new_uid,
     normalize_uid,
+    read_browser_store,
     remote_enabled,
     save_user_prefs_file,
     save_user_prefs_remote,
     snapshot_key,
+    write_browser_store,
 )
 
 try:
@@ -427,16 +429,21 @@ def _bootstrap_prefs() -> None:
         return
     cookie_data = decode_cookie(_cookie_token())
     query_data = _query_prefs()
+    browser = read_browser_store()
+    browser_uid = normalize_uid(browser.get("uid"))
+    if browser.get("token") and not query_data:
+        query_data = decode_cookie(browser.get("token"))
     uid = (
         adopt
         or normalize_uid((cookie_data or {}).get("uid"))
         or _cookie_uid()
         or normalize_uid((query_data or {}).get("uid"))
         or _query_uid()
+        or browser_uid
         or normalize_uid(st.session_state.get("prefs_uid"))
     )
-    ls_ready = _query_ls_checked() or _query_adopt_flag() or bool(adopt)
-    if not uid and not ls_ready:
+    skip_wait = bool(adopt or st.session_state.get("_prefs_skip_browser"))
+    if not uid and browser.get("pending") and not skip_wait:
         st.session_state._prefs_await_ls = True
         if not st.session_state.get("_prefs_defaults_on"):
             _apply_loaded_prefs(merge_prefs())
@@ -492,6 +499,10 @@ def _persist_prefs(rule: dict) -> None:
     uid = normalize_uid(payload.get("uid"))
     if not uid:
         return
+    try:
+        write_browser_store(uid, encode_browser(payload))
+    except Exception:
+        write_browser_store(uid, "")
     snap = snapshot_key(payload)
     just_booted = bool(st.session_state.pop("_prefs_just_booted", False))
     force_cookie = bool(st.session_state.pop("_prefs_cookie_force", False))
@@ -544,16 +555,8 @@ def _persist_prefs(rule: dict) -> None:
 
 
 def _emit_boot_restore() -> None:
-    """같은 브라우저에 남은 저장 코드를 주소에 다시 붙인다. 새 코드를 만들기 전에 탄다."""
-    if _query_ls_checked() or _query_adopt_flag() or st.session_state.get("_prefs_adopt"):
-        return
-    html = localstorage_boot_html()
-    if not html:
-        return
-    try:
-        components.html(html, height=1, width=1)
-    except Exception:
-        pass
+    """저장 코드는 read_browser_store 컴포넌트가 복구한다."""
+    return
 
 
 def _emit_ls_restore() -> None:
@@ -561,7 +564,12 @@ def _emit_ls_restore() -> None:
     if not html:
         return
     try:
-        components.html(html, height=1, width=1)
+        st.html(html, unsafe_allow_javascript=True)
+    except TypeError:
+        try:
+            components.html(html, height=1, width=1)
+        except Exception:
+            pass
     except Exception:
         pass
 
@@ -573,7 +581,12 @@ def _emit_prefs_cookie() -> None:
     if not html:
         return
     try:
-        components.html(html, height=1, width=1)
+        st.html(html, unsafe_allow_javascript=True)
+    except TypeError:
+        try:
+            components.html(html, height=1, width=1)
+        except Exception:
+            pass
     except Exception:
         pass
 
@@ -806,10 +819,7 @@ if st.session_state.get("_prefs_await_ls"):
         "잠깐 뒤 이전 코드가 다시 붙습니다. 안 되면 왼쪽 **이 코드로 불러오기**에 예전 코드를 넣으세요."
     )
     if st.button("저장된 코드가 없으면 새로 시작", key="prefs_skip_ls"):
-        try:
-            st.query_params[QUERY_LS] = "1"
-        except Exception:
-            pass
+        st.session_state._prefs_skip_browser = True
         st.session_state._prefs_await_ls = False
         st.session_state._prefs_boot = False
         st.rerun()

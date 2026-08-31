@@ -22,6 +22,93 @@ import requests
 
 from .signals import DEFAULT_CUTS, DEFAULT_WEIGHTS
 
+BROWSER_PENDING = "__pending__"
+
+_TA_STORE_JS = """
+export default function (component) {
+  const { data, setStateValue } = component;
+  const uidKey = "ta_uid";
+  const prefsKey = "ta_prefs";
+  try {
+    if (data && data.mode === "set" && data.uid) {
+      localStorage.setItem(uidKey, data.uid);
+      if (data.token) {
+        localStorage.setItem(prefsKey + "_" + data.uid, data.token);
+        localStorage.setItem(prefsKey, data.token);
+      }
+    }
+    const uid = localStorage.getItem(uidKey) || "";
+    let token = "";
+    if (uid) {
+      token = localStorage.getItem(prefsKey + "_" + uid) || localStorage.getItem(prefsKey) || "";
+    }
+    setStateValue("uid", uid);
+    setStateValue("token", token);
+  } catch (e) {
+    setStateValue("uid", "");
+    setStateValue("token", "");
+  }
+}
+"""
+
+_TA_STORE = None
+
+
+def _browser_store():
+    global _TA_STORE
+    if _TA_STORE is not None:
+        return _TA_STORE
+    try:
+        import streamlit as st
+
+        _TA_STORE = st.components.v2.component(
+            "ta_store",
+            html="<div></div>",
+            js=_TA_STORE_JS,
+        )
+    except Exception:
+        _TA_STORE = False
+    return _TA_STORE
+
+
+def read_browser_store() -> dict:
+    """페이지 localStorage 에서 uid를 읽는다. pending=True 이면 JS가 아직 값을 안 보냈다."""
+    store = _browser_store()
+    if not store:
+        return {"uid": "", "token": "", "pending": False}
+    result = store(
+        data={"mode": "get"},
+        key="ta_store_get",
+        default={"uid": BROWSER_PENDING, "token": ""},
+        on_uid_change=lambda: None,
+        on_token_change=lambda: None,
+    )
+    uid_raw = getattr(result, "uid", None)
+    if uid_raw is None or uid_raw == BROWSER_PENDING:
+        return {"uid": "", "token": "", "pending": True}
+    return {
+        "uid": normalize_uid(uid_raw),
+        "token": str(getattr(result, "token", None) or ""),
+        "pending": False,
+    }
+
+
+def write_browser_store(uid: str, token: str = "") -> None:
+    """같은 브라우저 다음 접속에서 읽히도록 페이지 localStorage 에 uid를 남긴다."""
+    store = _browser_store()
+    if not store:
+        return
+    uid = normalize_uid(uid)
+    if not uid:
+        return
+    store(
+        data={"mode": "set", "uid": uid, "token": str(token or "")},
+        key="ta_store_set",
+        default={"uid": uid, "token": str(token or "")},
+        on_uid_change=lambda: None,
+        on_token_change=lambda: None,
+    )
+
 try:
     from .backtest import DEFAULT_SIM, normalize_sim
 except ImportError:
@@ -330,50 +417,43 @@ def decode_cookie(value: str | None) -> dict | None:
 
 
 def cookie_set_html(data: dict, *, force: bool = False) -> str:
-    """저장 코드(uid)는 항상 localStorage·쿠키에 남긴다. 즐겨찾기가 있을 때만 설정 본문을 덮는다.
+    """페이지 localStorage·쿠키에 저장 코드를 남긴다. 즐겨찾기가 있을 때만 설정 본문을 덮는다.
 
     force 가 아니면 이 브라우저에 이미 다른 코드가 있으면 덮지 않고 그 코드로 돌아간다.
+    st.html(..., unsafe_allow_javascript=True) 로 페이지에서 실행해야 한다.
     """
     uid = normalize_uid(data.get("uid"))
     token = encode_browser(data).replace("\\", "\\\\").replace('"', '\\"')
     has_data = bool(data.get("favorites") or int(data.get("ts") or 0))
     script = (
         "(function(){try{"
-        "function readUid(){var x=null;"
-        "try{x=window.parent.localStorage.getItem('ta_uid');}catch(e){}"
-        "if(!x){try{x=localStorage.getItem('ta_uid');}catch(e){}}"
-        "if(!x)return '';"
-        "return String(x).toUpperCase().replace(/[^A-Z0-9]/g,'');}"
+        "function readUid(){try{var x=localStorage.getItem('ta_uid');"
+        "return x?String(x).toUpperCase().replace(/[^A-Z0-9]/g,''):'';}catch(e){return '';}}"
         f'var u="{uid}";'
         f'var t="{token}";'
         f'var keep={str(has_data).lower()};'
         f'var force={str(bool(force)).lower()};'
         "var prev=readUid();"
         "if(prev && u && prev!==u && !force){"
-        "var url=new URL(window.parent.location.href);"
+        "var url=new URL(window.location.href);"
         "url.searchParams.set('_u',prev);"
         "url.searchParams.set('_ls','1');"
         "url.searchParams.delete('_a');"
-        "window.parent.location.replace(url.toString());"
+        "window.location.replace(url.toString());"
         "return;}"
         "if(!u)return;"
         f'var d="{UID_COOKIE_NAME}="+u+";path=/;max-age=31536000;SameSite=Lax";'
         "document.cookie=d;"
-        "try{window.parent.document.cookie=d;}catch(e){}"
-        "try{window.parent.localStorage.setItem('ta_uid',u);}catch(e){}"
-        "try{localStorage.setItem('ta_uid',u);}catch(e){}"
+        "localStorage.setItem('ta_uid',u);"
         "if(keep){"
         f'var c="{COOKIE_NAME}="+t+";path=/;max-age=31536000;SameSite=Lax";'
         "document.cookie=c;"
-        "try{window.parent.document.cookie=c;}catch(e){}"
-        "try{window.parent.localStorage.setItem('ta_prefs',t);"
-        "window.parent.localStorage.setItem('ta_prefs_'+u,t);}catch(e){}"
-        "try{localStorage.setItem('ta_prefs',t);"
-        "localStorage.setItem('ta_prefs_'+u,t);}catch(e){}"
+        "localStorage.setItem('ta_prefs',t);"
+        "localStorage.setItem('ta_prefs_'+u,t);"
         "}"
         "}catch(e){}})();"
     )
-    return f"<html><body><script>{script}</script></body></html>"
+    return f"<script>{script}</script>"
 
 
 def localstorage_boot_html() -> str:
@@ -404,19 +484,17 @@ def localstorage_restore_html(uid: str) -> str:
     """이어가기 때 이 브라우저 localStorage 에서 해당 코드 설정을 읽어 주소로 넣는다."""
     uid = normalize_uid(uid)
     return (
-        "<html><body><script>(function(){try{"
+        "<script>(function(){try{"
         f'var u="{uid}";'
         "var t=null;"
-        "try{t=window.parent.localStorage.getItem('ta_prefs_'+u);}catch(e){}"
-        "if(!t){try{t=window.parent.localStorage.getItem('ta_prefs');}catch(e){}}"
-        "if(!t){try{t=localStorage.getItem('ta_prefs_'+u)||localStorage.getItem('ta_prefs');}catch(e){}}"
+        "try{t=localStorage.getItem('ta_prefs_'+u)||localStorage.getItem('ta_prefs');}catch(e){}"
         "if(!t)return;"
-        "var url=new URL(window.parent.location.href);"
+        "var url=new URL(window.location.href);"
         "if(url.searchParams.get('_p')===t)return;"
         "url.searchParams.set('_p',t);"
         "url.searchParams.set('_u',u);"
-        "window.parent.location.replace(url.toString());"
-        "}catch(e){}})();</script></body></html>"
+        "window.location.replace(url.toString());"
+        "}catch(e){}})();</script>"
     )
 
 
