@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
-SIGNAL_RULE_VERSION = 67
+SIGNAL_RULE_VERSION = 68
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 10
 # 합산 %는 조회 기간과 상관없이 같은 눈금(이론상 최저~최고)을 쓴다.
@@ -30,6 +30,7 @@ DEFAULT_WEIGHTS = {
     "vah": -1,
     "rsi": 1,
     "ma20": 1,
+    "ma60_near": 1,
     "ma200_near": 1,
     "chg1_50": -1,
     "chg1_down1": 1,
@@ -93,6 +94,7 @@ WEIGHT_FIELDS = [
     ("vah", "VAH", "밸류 상단 위이면 −1"),
     ("rsi", "RSI", "30 이하 +, 70 이상 −"),
     ("ma20", "MA20 아래", "현재가 < MA20. 상승 +1, 하락 −1"),
+    ("ma60_near", "60일(봉)선 근처", "현재가가 60봉 이평 근처이면 +1"),
     ("ma200_near", "장기 이평 근처", "6개월은 180일선, 1년은 200일선 근처이면 +1"),
     ("chg1_50", "1개월 상승 30%", "30일 전 대비 30% 이상 오르면 −1"),
     ("chg1_down1", "1개월 하락 1%", "30일 전 대비 1% 이상 20% 미만 떨어지면 +1"),
@@ -588,6 +590,13 @@ def recommend(
         add("MA20", f"{an.price_label} < MA20 ({_fmt(an.ma20)}) · 하락 추세", -ma_pts)
     else:
         add("MA20", f"{an.price_label} < MA20 ({_fmt(an.ma20)}) · 횡보", 0)
+
+    if getattr(an, "ma60", None) is None:
+        add("60일선", "60봉 이평 없음 (봉 60개 미만)", 0)
+    elif abs(price - an.ma60) <= near:
+        add("60일선", f"60일(봉)선 {_fmt(an.ma60)} 근처 (이격 {_fmt(abs(price - an.ma60))})", wp("ma60_near"))
+    else:
+        add("60일선", f"60일(봉)선 {_fmt(an.ma60)} 과 이격 {_fmt(abs(price - an.ma60))}", 0)
 
     ma_n = int(getattr(an, "ma_long_n", None) or 200)
     ma_name = f"{ma_n}일선"
