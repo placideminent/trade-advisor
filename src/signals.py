@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
-SIGNAL_RULE_VERSION = 71
+SIGNAL_RULE_VERSION = 72
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 10
 # 합산 %는 조회 기간과 상관없이 같은 눈금(이론상 최저~최고)을 쓴다.
@@ -380,7 +380,7 @@ def recommend(
 
     price = an.price
     atr = an.atr if an.atr and an.atr > 0 else price * 0.02
-    near = max(atr * 0.45, price * 0.008)
+    near = max(atr * 0.55, price * 0.010)
 
     nsup = an.supports[0] if an.supports else None
     nres = an.resistances[0] if an.resistances else None

@@ -84,7 +84,7 @@ def main() -> None:
 
     how = wb.active
     how.title = "이렇게 봐요"
-    how["A1"] = "점수 규칙 (쉬운 버전) · 지금 앱 v71"
+    how["A1"] = "점수 규칙 (쉬운 버전) · 지금 앱 v72"
     how["A1"].font = Font(size=18, bold=True, color="1F4E79")
     how.merge_cells("A1:B1")
     how_lines = [
@@ -243,7 +243,7 @@ def main() -> None:
     cuts["A11"] = "점수를 %로 바꾸는 법: 0점이면 21%, 10점(기본)이면 63%, 19점이면 100%."
     cuts["A11"].font = Font(italic=True, color="666666")
     cuts.merge_cells("A11:E11")
-    cuts["A12"] = "가까운 가격: 하루 변동폭의 약 절반, 또는 주가의 0.8% 중 더 큰 값."
+    cuts["A12"] = "가까운 가격: 하루 변동폭의 약 55%, 또는 주가의 1.0% 중 더 큰 값."
     cuts["A12"].font = Font(italic=True, color="666666")
     cuts.merge_cells("A12:E12")
     cuts.column_dimensions["A"].width = 28
