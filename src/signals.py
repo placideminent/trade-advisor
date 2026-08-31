@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
-SIGNAL_RULE_VERSION = 58
+SIGNAL_RULE_VERSION = 59
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 10
 # 합산 %는 조회 기간과 상관없이 같은 눈금(이론상 최저~최고)을 쓴다.
@@ -17,6 +17,7 @@ DEFAULT_WEIGHTS = {
     "base": 10,
     "trend": 1,
     "down_line_near": -1,
+    "trendline_dir_down": -1,
     "up_line_near": 1,
     "up_line_break": -1,
     "support_near": 1,
@@ -70,6 +71,7 @@ WEIGHT_FIELDS = [
     ("base", "기본", "중립 시작점"),
     ("trend", "추세", "1·2개월은 상승 +, 3개월 이상은 하락 +"),
     ("down_line_near", "하락 추세선 근접", "현재가가 하락 추세선 근처이면 −1"),
+    ("trendline_dir_down", "추세선 둘 다 하락", "상승선·하락선이 동시에 하락이면 −1"),
     ("up_line_near", "상승 추세선 근접", "현재가가 상승 추세선 근처이면 +1"),
     ("up_line_break", "상승 추세선 이탈", "현재가가 상승 추세선을 완전 이탈하면 −1"),
     ("support_near", "지지 근접", "근접하고 강도 4 이상일 때만 +1"),
@@ -217,6 +219,19 @@ def _line_y_at(line, x: float) -> float | None:
     return y0 + (y1 - y0) / (x1 - x0) * (x - x0)
 
 
+def _line_dir(line) -> str | None:
+    if line is None:
+        return None
+    x0, y0, x1, y1 = (float(v) for v in line)
+    if x1 == x0:
+        return None
+    dy = y1 - y0
+    scale = max(abs(y0), abs(y1), 1.0)
+    if abs(dy) / scale < 1e-6:
+        return "flat"
+    return "up" if dy > 0 else "down"
+
+
 def _action_from_pct(score_pct: int, cuts: dict) -> str:
     buy_weak = int(cuts["buy_weak"])
     buy_mid = int(cuts["buy_mid"])
@@ -314,6 +329,15 @@ def recommend(
                 f"하락선 {_fmt(y_dn)} 과 이격 {_fmt(abs(price - y_dn))}",
                 0,
             )
+
+    up_dir = _line_dir(up_line)
+    down_dir = _line_dir(down_line)
+    if up_dir == "down" and down_dir == "down":
+        add("추세선 방향", "상승선·하락선 둘 다 하락", wp("trendline_dir_down"))
+    elif not up_line or not down_line:
+        add("추세선 방향", "상승선 또는 하락선 없음", 0)
+    else:
+        add("추세선 방향", f"상승선 {up_dir} · 하락선 {down_dir}", 0)
 
     if not up_line:
         add("상승 추세선 근접", "상승선 없음", 0)
