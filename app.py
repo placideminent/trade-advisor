@@ -814,6 +814,13 @@ st.markdown(
       .action-sell { background:#fee2e2; color:#7f1d1d; padding:0.75rem 0.9rem; border-radius:10px; }
       .action-sell-weak { background:#fecaca; color:#9f1239; padding:0.75rem 0.9rem; border-radius:10px; }
       .action-hold { background:#fef9c3; color:#713f12; padding:0.75rem 0.9rem; border-radius:10px; }
+      .proposal-kicker { font-size:0.85rem; opacity:0.8; }
+      .proposal-row {
+        display:flex; flex-wrap:wrap; align-items:baseline;
+        justify-content:space-between; gap:0.35rem 1.2rem; margin:0.3rem 0 0.1rem;
+      }
+      .proposal-action { font-size:1.25rem; font-weight:700; }
+      .proposal-price { font-size:1.7rem; font-weight:800; letter-spacing:-0.03em; line-height:1.15; }
       .fav-bar {
         min-height: 4.6rem;
         box-sizing: border-box;
@@ -925,6 +932,8 @@ st.markdown(
         .action-sell-strong, .action-sell, .action-sell-weak, .action-hold {
           padding: 0.6rem 0.7rem; font-size: 0.95rem;
         }
+        .proposal-action { font-size: 1.12rem; }
+        .proposal-price { font-size: 1.45rem; }
       }
     </style>
     """,
@@ -2261,14 +2270,20 @@ base_action = getattr(signal, "action_base", None) or signal.action
 base_pct = int(getattr(signal, "score_pct_base", None) or signal.score_pct)
 
 
-def _proposal_banner(title: str, action: str, pct: int, note: str = "") -> None:
+def _proposal_banner(title: str, action: str, pct: int, note: str = "", price_text: str = "") -> None:
     css = ACTION_CLASS.get(action, "action-hold")
-    extra = f'<div style="font-size:0.95rem">{note}</div>' if note else ""
+    extra = f'<div style="font-size:0.95rem">{html.escape(note)}</div>' if note else ""
+    price_html = (
+        f'<div class="proposal-price">{html.escape(price_text)}</div>' if price_text else ""
+    )
     st.markdown(
         f"""
         <div class="{css}">
-          <div style="font-size:0.85rem;opacity:0.8">{title}</div>
-          <div style="font-size:1.25rem;font-weight:700;margin:0.25rem 0">제안 {action} · {pct}%</div>
+          <div class="proposal-kicker">{html.escape(title)}</div>
+          <div class="proposal-row">
+            <div class="proposal-action">제안 {html.escape(action)} · {int(pct)}%</div>
+            {price_html}
+          </div>
           {extra}
         </div>
         """,
@@ -2276,27 +2291,42 @@ def _proposal_banner(title: str, action: str, pct: int, note: str = "") -> None:
     )
 
 
-if opt_on:
-    _proposal_banner(f"기존 규칙 · {head}{value_side}", base_action, base_pct)
-    _proposal_banner("옵션 월 반영", signal.action, signal.score_pct, signal.summary)
-else:
-    _proposal_banner(head + value_side, signal.action, signal.score_pct, signal.summary)
-
-price_cell = _fmt(analysis.price)
+price_now = _fmt(analysis.price)
+price_cell = price_now
 if is_live and last_bar_price and abs(float(analysis.price) - last_bar_price) > 1e-9:
-    price_cell = f"{_fmt(analysis.price)} (봉 {_fmt(last_bar_price)})"
+    price_cell = f"{price_now} (봉 {_fmt(last_bar_price)})"
+price_text = f"{analysis.price_label} {price_now}"
+
+prop_col, px_col = st.columns([2.1, 1], vertical_alignment="center")
+with prop_col:
+    if opt_on:
+        _proposal_banner(f"기존 규칙 · {head}{value_side}", base_action, base_pct, price_text=price_text)
+        _proposal_banner("옵션 월 반영", signal.action, signal.score_pct, signal.summary)
+    else:
+        _proposal_banner(head + value_side, signal.action, signal.score_pct, signal.summary, price_text=price_text)
+with px_col:
+    st.metric(
+        label=analysis.price_label or "현재가",
+        value=price_now,
+        border=True,
+        help=analysis.price_source or None,
+        icon=":material/payments:",
+    )
+    if is_live and last_bar_price and abs(float(analysis.price) - last_bar_price) > 1e-9:
+        st.caption(f"봉 {_fmt(last_bar_price)}")
+
 _kv_rows = []
 if opt_on:
     _kv_rows.append(("기존 규칙 제안", f"{base_action} · {base_pct}%"))
     _kv_rows.append(("옵션 반영 제안", f"{signal.action} · {signal.score_pct}%"))
 else:
     _kv_rows.append(("제안", signal.action))
+_kv_rows.append((analysis.price_label, price_cell))
 _kv_rows.extend(
     [
         ("가격 판정", (fund.value_label if fund and not fund.error else None) or "-"),
         ("합산", f"{signal.score_pct}%{six_txt}"),
         ("신뢰", f"{signal.confidence}%"),
-        (analysis.price_label, price_cell),
         ("지지", _fmt(signal.nearest_support.price) if signal.nearest_support else "-"),
         ("저항", _fmt(signal.nearest_resistance.price) if signal.nearest_resistance else "-"),
         ("POC", _fmt(analysis.poc)),
