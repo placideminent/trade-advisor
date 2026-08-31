@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
-SIGNAL_RULE_VERSION = 74
+SIGNAL_RULE_VERSION = 75
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 10
 # 합산 %는 조회 기간과 상관없이 같은 눈금(이론상 최저~최고)을 쓴다.
@@ -32,6 +32,7 @@ DEFAULT_WEIGHTS = {
     "ma20": 1,
     "ma60_near": 1,
     "ma200_near": 1,
+    "gap_up": -1,
     "chg1_50": -1,
     "chg1_down1": 1,
     "chg1_down20": 2,
@@ -96,6 +97,7 @@ WEIGHT_FIELDS = [
     ("ma20", "MA20 아래", "현재가 < MA20. 상승 +1, 하락 −1"),
     ("ma60_near", "60일(봉)선 근처", "현재가가 60봉 이평 근처이면 +1"),
     ("ma200_near", "장기 이평 근처", "6개월은 180일선, 1년은 200일선 근처이면 +1"),
+    ("gap_up", "갭상승", "6개월 이상 조회에서 최근 봉이 직전 종가 대비 4% 이상 갭상승이면 −1"),
     ("chg1_50", "1개월 상승 30%", "30일 전 대비 30% 이상 오르면 −1"),
     ("chg1_down1", "1개월 하락 1%", "30일 전 대비 1% 이상 20% 미만 떨어지면 +1"),
     ("chg1_down20", "1개월 하락 20%", "30일 전 대비 20% 이상 40% 미만 떨어지면 +2"),
@@ -226,6 +228,22 @@ def _n_day_change(an: Analysis, price: float, days: int) -> float | None:
 
 def _one_month_change(an: Analysis, price: float) -> float | None:
     return _n_day_change(an, price, 30)
+
+
+def _gap_up_pct(df) -> float | None:
+    """최근 봉 시가 / 직전 봉 종가 − 1. 계산 불가면 None."""
+    try:
+        if df is None or getattr(df, "empty", True) or len(df) < 2:
+            return None
+        if "open" not in df.columns or "close" not in df.columns:
+            return None
+        prev_close = float(pd.to_numeric(df["close"], errors="coerce").iloc[-2])
+        last_open = float(pd.to_numeric(df["open"], errors="coerce").iloc[-1])
+        if not (prev_close > 0) or last_open != last_open:
+            return None
+        return last_open / prev_close - 1.0
+    except (TypeError, ValueError, IndexError):
+        return None
 
 
 def _fmt(price: float) -> str:
@@ -636,6 +654,15 @@ def recommend(
         add(ma_name, f"{ma_name} {_fmt(an.ma200)} 근처 (이격 {_fmt(abs(price - an.ma200))})", wp("ma200_near"))
     else:
         add(ma_name, f"{ma_name} {_fmt(an.ma200)} 과 이격 {_fmt(abs(price - an.ma200))}", 0)
+
+    if long_lookback:
+        gap = _gap_up_pct(an.df)
+        if gap is None:
+            add("갭상승", "직전 봉과 비교할 수 없음", 0)
+        elif gap * 100.0 >= 4 - 1e-9:
+            add("갭상승", f"직전 종가 대비 시가 {gap * 100:.1f}% 갭상승", wp("gap_up"))
+        else:
+            add("갭상승", f"직전 종가 대비 시가 {gap * 100:.1f}%", 0)
 
     chg = _one_month_change(an, price)
     if chg is None:
