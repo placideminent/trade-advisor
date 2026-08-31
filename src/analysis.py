@@ -31,6 +31,7 @@ class Analysis:
     vah: float
     val: float
     ma200: float | None = None
+    ma_long_n: int = 200
     supports: list[Level] = field(default_factory=list)
     resistances: list[Level] = field(default_factory=list)
     volume_nodes: list[Level] = field(default_factory=list)
@@ -216,12 +217,20 @@ def cluster_prices(prices: list[float], threshold: float) -> list[tuple[float, i
     return [(sum(c) / len(c), len(c)) for c in clusters]
 
 
+def long_ma_period(lookback_days: int | None) -> int:
+    """6개월(180일) 조회는 180일선, 1년은 200일선."""
+    if lookback_days is not None and lookback_days <= 210:
+        return 180
+    return 200
+
+
 def analyze(
     df: pd.DataFrame,
     as_of=None,
     spot_price: float | None = None,
     price_source: str = "",
     live: bool = False,
+    lookback_days: int | None = None,
 ) -> Analysis:
     if df is None or df.empty:
         raise ValueError("분석할 일봉이 없습니다.")
@@ -236,14 +245,19 @@ def analyze(
     work["ma20"] = work["close"].rolling(20).mean()
     work["ma60"] = work["close"].rolling(60).mean()
     ma200 = None
+    ma_long_n = long_ma_period(lookback_days)
     try:
         daily_close = work["close"].resample("1D").last().dropna()
-        if len(daily_close) >= 200:
-            daily_ma200 = daily_close.rolling(200).mean()
-            work["ma200"] = daily_ma200.reindex(work.index, method="ffill")
-            last_ma200 = daily_ma200.iloc[-1]
-            if pd.notna(last_ma200):
-                ma200 = float(last_ma200)
+        n_daily = len(daily_close)
+        period = ma_long_n
+        if n_daily < period and lookback_days is not None and lookback_days <= 210 and n_daily >= 80:
+            period = n_daily
+        if n_daily >= period:
+            daily_ma = daily_close.rolling(period).mean()
+            work["ma200"] = daily_ma.reindex(work.index, method="ffill")
+            last_ma = daily_ma.iloc[-1]
+            if pd.notna(last_ma):
+                ma200 = float(last_ma)
     except (TypeError, ValueError):
         ma200 = None
     work["rsi"] = rsi(work["close"])
@@ -387,6 +401,7 @@ def analyze(
         ma20=ma20,
         ma60=ma60,
         ma200=ma200,
+        ma_long_n=ma_long_n,
         poc=poc,
         vah=vah,
         val=val,

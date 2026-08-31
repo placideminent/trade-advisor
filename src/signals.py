@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
-SIGNAL_RULE_VERSION = 62
+SIGNAL_RULE_VERSION = 63
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 10
 # 합산 %는 조회 기간과 상관없이 같은 눈금(이론상 최저~최고)을 쓴다.
@@ -94,7 +94,7 @@ WEIGHT_FIELDS = [
     ("vah", "VAH", "밸류 상단 위이면 −1"),
     ("rsi", "RSI", "30 이하 +, 70 이상 −"),
     ("ma20", "MA20 아래", "현재가 < MA20. 상승 +1, 하락 −1"),
-    ("ma200_near", "200일선 근처", "현재가가 200일선 근처이면 +1"),
+    ("ma200_near", "장기 이평 근처", "6개월은 180일선, 1년은 200일선 근처이면 +1"),
     ("chg1_50", "1개월 상승 30%", "30일 전 대비 30% 이상 100% 미만 −1"),
     ("chg1_100", "1개월 상승 100%", "30일 전 대비 100% 이상 −2"),
     ("chg1_down20", "1개월 하락 20%", "30일 전 대비 20% 이상 30% 미만 하락 +1"),
@@ -536,12 +536,14 @@ def recommend(
     else:
         add("MA20", f"{an.price_label} < MA20 ({_fmt(an.ma20)}) · 횡보", 0)
 
+    ma_n = int(getattr(an, "ma_long_n", None) or 200)
+    ma_name = f"{ma_n}일선"
     if getattr(an, "ma200", None) is None:
-        add("200일선", "200일선 없음 (일봉 200개 미만)", 0)
+        add(ma_name, f"{ma_name} 없음 (일봉 {ma_n}개 미만)", 0)
     elif abs(price - an.ma200) <= near:
-        add("200일선", f"200일선 {_fmt(an.ma200)} 근처 (이격 {_fmt(abs(price - an.ma200))})", wp("ma200_near"))
+        add(ma_name, f"{ma_name} {_fmt(an.ma200)} 근처 (이격 {_fmt(abs(price - an.ma200))})", wp("ma200_near"))
     else:
-        add("200일선", f"200일선 {_fmt(an.ma200)} 과 이격 {_fmt(abs(price - an.ma200))}", 0)
+        add(ma_name, f"{ma_name} {_fmt(an.ma200)} 과 이격 {_fmt(abs(price - an.ma200))}", 0)
 
     chg = _one_month_change(an, price)
     if chg is None:

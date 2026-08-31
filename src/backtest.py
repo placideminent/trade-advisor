@@ -222,7 +222,13 @@ def run_backtest(
             continue
         px = float(w["close"].iloc[-1])
         last_px = px
-        an = analyze(w, as_of=as_of, spot_price=px, price_source="해당일 종가")
+        an = analyze(
+            w,
+            as_of=as_of,
+            spot_price=px,
+            price_source="해당일 종가",
+            lookback_days=lookback_days,
+        )
         src_6m = _window(df_1d, as_of, 200) if df_1d is not None and not df_1d.empty else w
         chg6 = period_return(src_6m, as_of, px, 180)
 

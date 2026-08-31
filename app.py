@@ -1019,6 +1019,7 @@ def _quick_signal(market: str, ticker: str, as_of, lookback_days: int, timeframe
             spot_price=spot_price,
             price_source=spot_source,
             live=is_live,
+            lookback_days=lookback_days,
         )
         six_month_chg = None
         try:
@@ -2177,6 +2178,7 @@ try:
         spot_price=spot_price,
         price_source=spot_source,
         live=is_live,
+        lookback_days=lookback_days,
     )
     six_month_chg = None
     try:

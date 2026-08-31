@@ -62,8 +62,14 @@ def build_chart(an: Analysis, sig: Signal, title: str) -> go.Figure:
             col=1,
         )
     if "ma200" in df.columns:
+        ma_n = int(getattr(an, "ma_long_n", None) or 200)
         fig.add_trace(
-            go.Scatter(x=df.index, y=df["ma200"], name="MA200", line=dict(color="#0f766e", width=1.6)),
+            go.Scatter(
+                x=df.index,
+                y=df["ma200"],
+                name=f"MA{ma_n}",
+                line=dict(color="#0f766e", width=1.6),
+            ),
             row=1,
             col=1,
         )
