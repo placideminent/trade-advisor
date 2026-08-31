@@ -1,4 +1,4 @@
-"""현재 점수 규칙을 엑셀로 뽑는다. 나중에 이 파일로 배점을 바꿀 수 있게  Cond/점수 칸을 나눈다."""
+"""점수 규칙을 쉬운 말로 엑셀에 적는다."""
 
 from __future__ import annotations
 
@@ -7,262 +7,216 @@ from pathlib import Path
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
-from openpyxl.worksheet.datavalidation import DataValidation
 
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "규칙_점수표_v52.xlsx"
 
-HEADERS = [
-    "번호",
-    "적용단계",
-    "그룹",
-    "항목키",
-    "항목이름",
-    "조건",
-    "판단기준",
-    "점수",
-    "배점키",
-    "배점기본값",
-    "비고",
-]
+THIN = Border(
+    left=Side(style="thin", color="E5E7EB"),
+    right=Side(style="thin", color="E5E7EB"),
+    top=Side(style="thin", color="E5E7EB"),
+    bottom=Side(style="thin", color="E5E7EB"),
+)
+HEADER_FILL = PatternFill("solid", fgColor="1F4E79")
+HEADER_FONT = Font(color="FFFFFF", bold=True, size=12)
+YELLOW = PatternFill("solid", fgColor="FFF2CC")
+GREEN = PatternFill("solid", fgColor="C6EFCE")
+RED = PatternFill("solid", fgColor="F8CBAD")
+GRAY = PatternFill("solid", fgColor="F3F4F6")
+BLUE = PatternFill("solid", fgColor="DDEBF7")
+WRAP = Alignment(vertical="center", wrap_text=True)
+CENTER = Alignment(horizontal="center", vertical="center")
 
 
-def rows() -> list[list]:
-    w = {
-        "base": 10,
-        "trend": 2,
-        "down_line_break": 1,
-        "up_line_break": -1,
-        "trendline_dir_down": -2,
-        "trendline_dir_up": 1,
-        "trendline_up_near": 1,
-        "support_near": 1,
-        "support_break": -2,
-        "resist_near": -1,
-        "vol_sup_air": -1,
-        "vol_sup_room": 1,
-        "poc": 1,
-        "val": 1,
-        "rsi": 1,
-        "ma20": -1,
-        "chg1_50": -1,
-        "chg1_100": -2,
-        "chg1_down20": 1,
-        "chg1_down30": 2,
-        "chg6_100": -1,
-        "chg6_300": -2,
-        "chg6_400": -3,
-        "rr_penalty": -1,
-        "option_wall": 1,
-    }
-    data = [
-        ["기존규칙", "시작", "base", "기본", "항상", "중립 시작점", w["base"], "base", w["base"], "SCORE_BASE. 합산 전 기본점"],
-        ["기존규칙", "추세", "trend", "추세", "조회 1·2개월(lookback_days≤60) 이고 상승", "추세 추종", w["trend"], "trend", w["trend"], "배점의 절댓값 사용 후 부호 적용"],
-        ["기존규칙", "추세", "trend", "추세", "조회 1·2개월 이고 하락", "추세 추종", -w["trend"], "trend", w["trend"], ""],
-        ["기존규칙", "추세", "trend", "추세", "조회 1·2개월 이고 횡보", "해당 없음", 0, "trend", w["trend"], ""],
-        ["기존규칙", "추세", "trend", "추세", "조회 3개월 이상 이고 상승", "고점 추격 감점", -w["trend"], "trend", w["trend"], "눌림 매수 모드"],
-        ["기존규칙", "추세", "trend", "추세", "조회 3개월 이상 이고 하락", "눌림 매수 가점", w["trend"], "trend", w["trend"], ""],
-        ["기존규칙", "추세", "trend", "추세", "조회 3개월 이상 이고 횡보", "해당 없음", 0, "trend", w["trend"], ""],
-        ["기존규칙", "추세선 이탈", "down_line_break", "하락 추세선 이탈", "하락선 없음 / 계산 실패", "해당 없음", 0, "down_line_break", w["down_line_break"], ""],
-        ["기존규칙", "추세선 이탈", "down_line_break", "하락 추세선 이탈", "하락선 위 연속 봉 수 ≥ 6", "가점 종료", 0, "down_line_break", w["down_line_break"], ""],
-        ["기존규칙", "추세선 이탈", "down_line_break", "하락 추세선 이탈", "하락선 위 연속 봉 수 4~5", "이탈 유지", w["down_line_break"], "down_line_break", w["down_line_break"], ""],
-        ["기존규칙", "추세선 이탈", "down_line_break", "하락 추세선 이탈", "하락선 위 연속 봉 수 1~3", "4봉 미만", 0, "down_line_break", w["down_line_break"], ""],
-        ["기존규칙", "추세선 이탈", "down_line_break", "하락 추세선 이탈", "하락선 아래", "해당 없음", 0, "down_line_break", w["down_line_break"], ""],
-        ["기존규칙", "추세선 이탈", "up_line_break", "상승 추세선 이탈", "상승선 없음 / 계산 실패", "해당 없음", 0, "up_line_break", w["up_line_break"], ""],
-        ["기존규칙", "추세선 이탈", "up_line_break", "상승 추세선 이탈", "상승선 아래 연속 봉 수 ≥ 6", "감점 종료", 0, "up_line_break", w["up_line_break"], ""],
-        ["기존규칙", "추세선 이탈", "up_line_break", "상승 추세선 이탈", "상승선 아래 연속 봉 수 4~5", "이탈 유지", w["up_line_break"], "up_line_break", w["up_line_break"], ""],
-        ["기존규칙", "추세선 이탈", "up_line_break", "상승 추세선 이탈", "상승선 아래 연속 봉 수 1~3", "4봉 미만", 0, "up_line_break", w["up_line_break"], ""],
-        ["기존규칙", "추세선 이탈", "up_line_break", "상승 추세선 이탈", "상승선 위", "해당 없음", 0, "up_line_break", w["up_line_break"], ""],
-        ["기존규칙", "추세선 방향", "trendline_dir_down", "추세선 방향성", "하락선 이탈 가점이 있는 경우", "미적용", 0, "trendline_dir_down", w["trendline_dir_down"], "하락선 이탈 4~5봉 가점 있으면 방향성 전체 0"],
-        ["기존규칙", "추세선 방향", "trendline_dir_down", "추세선 방향성", "상승선 하락 AND 하락선 하락", "둘 다 하락", w["trendline_dir_down"], "trendline_dir_down", w["trendline_dir_down"], ""],
-        ["기존규칙", "추세선 방향", "trendline_dir_up", "추세선 방향성", "상승선 상승 AND 하락선 상승 AND 간격 벌어짐", "둘 다 상승·벌어짐", w["trendline_dir_up"], "trendline_dir_up", w["trendline_dir_up"], ""],
-        ["기존규칙", "추세선 방향", "trendline_dir_up", "추세선 방향성", "상승선 상승 AND 하락선 상승 AND 모임", "둘 다 상승·모임", 0, "trendline_dir_up", w["trendline_dir_up"], ""],
-        ["기존규칙", "추세선 방향", "trendline_dir_up", "추세선 방향성", "상승선 상승 AND 하락선 상승 AND 평행", "둘 다 상승·평행", 0, "trendline_dir_up", w["trendline_dir_up"], ""],
-        ["기존규칙", "추세선 방향", "trendline_dir_up", "추세선 방향성", "상승선 상승 AND 하락선 하락", "해당 없음", 0, "trendline_dir_up", w["trendline_dir_up"], "가점/감점 없음"],
-        ["기존규칙", "추세선 방향", "trendline_dir_up", "추세선 방향성", "선 없음 / 그 외 조합", "해당 없음", 0, "trendline_dir_up", w["trendline_dir_up"], ""],
-        ["기존규칙", "추세선 근접", "trendline_up_near", "상승선 근접", "둘 다 상승 AND |현재가−상승선| ≤ 근처폭", "근처", w["trendline_up_near"], "trendline_up_near", w["trendline_up_near"], "근처폭 = max(ATR×0.45, 가격×0.8%)"],
-        ["기존규칙", "추세선 근접", "trendline_up_near", "상승선 근접", "둘 다 상승이지만 근처가 아님", "이격", 0, "trendline_up_near", w["trendline_up_near"], ""],
-        ["기존규칙", "추세선 근접", "trendline_up_near", "상승선 근접", "둘 다 상승이 아니거나 상승선 없음", "해당 없음", 0, "trendline_up_near", w["trendline_up_near"], ""],
-        ["기존규칙", "지지저항", "support_near", "지지 근접", "현재가−지지 ≤ 근처폭 AND 강도 ≥ 4", "근접·강함", w["support_near"], "support_near", w["support_near"], ""],
-        ["기존규칙", "지지저항", "support_near", "지지 근접", "현재가−지지 ≤ 근처폭 AND 강도 < 4", "근접·약함", 0, "support_near", w["support_near"], ""],
-        ["기존규칙", "지지저항", "support_near", "지지 근접", "지지까지 이격 > 근처폭", "멀리", 0, "support_near", w["support_near"], ""],
-        ["기존규칙", "지지저항", "support_break", "지지 이탈", "현재가 < 지지 − ATR×0.15", "이탈", w["support_break"], "support_break", w["support_break"], ""],
-        ["기존규칙", "지지저항", "resist_near", "저항 근접", "저항−현재가 ≤ 근처폭 AND 강도 ≥ 4", "근접·강함", w["resist_near"], "resist_near", w["resist_near"], ""],
-        ["기존규칙", "지지저항", "resist_near", "저항 근접", "저항−현재가 ≤ 근처폭 AND 강도 < 4", "근접·약함", 0, "resist_near", w["resist_near"], ""],
-        ["기존규칙", "지지저항", "resist_near", "저항 근접", "저항까지 이격 > 근처폭", "멀리", 0, "resist_near", w["resist_near"], ""],
-        ["기존규칙", "매물대", "vol_sup_air", "약한 매물대·아래 공백", "가장 가까운 매물대 지지 강도 ≥ 1", "강함", 0, "vol_sup_air", w["vol_sup_air"], "강도 1 이상이면 매물대 가감 없음"],
-        ["기존규칙", "매물대", "vol_sup_air", "약한 매물대·아래 공백", "매물대 지지 강도 < 1 AND 다음 지지까지 ≥ 10%", "아래 공백", w["vol_sup_air"], "vol_sup_air", w["vol_sup_air"], ""],
-        ["기존규칙", "매물대", "vol_sup_room", "약한 매물대·위 여유", "매물대 지지 강도 < 1 AND 다음 저항까지 ≥ 10% (아래 공백 조건 아닐 때)", "위 여유", w["vol_sup_room"], "vol_sup_room", w["vol_sup_room"], "아래 공백이 우선"],
-        ["기존규칙", "매물대", "vol_sup_room", "약한 매물대", "매물대 지지 강도 < 1 AND 위·아래 이격 둘 다 10% 미만", "해당 없음", 0, "vol_sup_room", w["vol_sup_room"], ""],
-        ["기존규칙", "밸류영역", "poc", "POC", "|현재가−POC| ≤ 근처폭 AND 상승 추세", "POC 부근 상승", w["poc"], "poc", w["poc"], "POC가 맞으면 VAL은 미적용"],
-        ["기존규칙", "밸류영역", "poc", "POC", "|현재가−POC| ≤ 근처폭 AND 하락 추세", "POC 부근 하락", -w["poc"], "poc", w["poc"], ""],
-        ["기존규칙", "밸류영역", "poc", "POC", "|현재가−POC| ≤ 근처폭 AND 횡보", "POC 부근 횡보", 0, "poc", w["poc"], ""],
-        ["기존규칙", "밸류영역", "poc", "POC", "POC 근처가 아님", "해당 없음", 0, "poc", w["poc"], ""],
-        ["기존규칙", "밸류영역", "val", "VAL", "현재가 < VAL AND 하락 추세 AND POC 근처 아님", "VAL 아래 하락", -w["val"], "val", w["val"], ""],
-        ["기존규칙", "밸류영역", "val", "VAL", "현재가 < VAL AND 상승 추세 AND POC 근처 아님", "VAL 아래 상승", w["val"], "val", w["val"], ""],
-        ["기존규칙", "밸류영역", "val", "VAL", "현재가 < VAL AND 횡보 AND POC 근처 아님", "VAL 아래 횡보", 0, "val", w["val"], ""],
-        ["기존규칙", "밸류영역", "val", "VAL", "현재가 > VAH", "VAH 위", 0, "val", w["val"], "감점 없음"],
-        ["기존규칙", "밸류영역", "val", "VAL", "VAL ≤ 현재가 ≤ VAH (밸류 내부, POC 근처 아님)", "구간 내부", 0, "val", w["val"], ""],
-        ["기존규칙", "지표", "rsi", "RSI", "RSI ≥ 60", "과열", -w["rsi"], "rsi", w["rsi"], ""],
-        ["기존규칙", "지표", "rsi", "RSI", "RSI ≤ 40", "과매도", w["rsi"], "rsi", w["rsi"], ""],
-        ["기존규칙", "지표", "rsi", "RSI", "40 < RSI < 60", "중립", 0, "rsi", w["rsi"], ""],
-        ["기존규칙", "지표", "ma20", "MA20 아래", "현재가 > MA20", "이평 위", 0, "ma20", w["ma20"], ""],
-        ["기존규칙", "지표", "ma20", "MA20 아래", "현재가 < MA20 AND 추세 ≠ 상승", "이평 아래", w["ma20"], "ma20", w["ma20"], ""],
-        ["기존규칙", "지표", "ma20", "MA20 아래", "현재가 < MA20 AND 상승 추세", "상승 추세라 감점 없음", 0, "ma20", w["ma20"], ""],
-        ["기존규칙", "기간수익률", "chg1_100", "1개월 상승률", "30일 전 대비 ≥ 100%", "100% 이상", w["chg1_100"], "chg1_100", w["chg1_100"], ""],
-        ["기존규칙", "기간수익률", "chg1_50", "1개월 상승률", "30일 전 대비 ≥ 30% AND < 100%", "30~100%", w["chg1_50"], "chg1_50", w["chg1_50"], ""],
-        ["기존규칙", "기간수익률", "chg1_down30", "1개월 하락률", "30일 전 대비 ≤ −30%", "30% 이상 하락", w["chg1_down30"], "chg1_down30", w["chg1_down30"], ""],
-        ["기존규칙", "기간수익률", "chg1_down20", "1개월 하락률", "30일 전 대비 ≤ −20% AND > −30%", "20~30% 하락", w["chg1_down20"], "chg1_down20", w["chg1_down20"], ""],
-        ["기존규칙", "기간수익률", "chg1_50", "1개월 상승률", "그 외 (−20% ~ +30%)", "해당 없음", 0, "chg1_50", w["chg1_50"], ""],
-        ["기존규칙", "기간수익률", "chg6_400", "6개월 상승률", "6개월 전 대비 ≥ 400%", "400% 이상", w["chg6_400"], "chg6_400", w["chg6_400"], "모든 조회 기간"],
-        ["기존규칙", "기간수익률", "chg6_300", "6개월 상승률", "6개월 전 대비 ≥ 300% AND < 400%", "300~400%", w["chg6_300"], "chg6_300", w["chg6_300"], ""],
-        ["기존규칙", "기간수익률", "chg6_100", "6개월 상승률", "6개월 전 대비 ≥ 100% AND < 300%", "100~300%", w["chg6_100"], "chg6_100", w["chg6_100"], ""],
-        ["기존규칙", "기간수익률", "chg6_100", "6개월 상승률", "6개월 전 대비 < 100%", "해당 없음", 0, "chg6_100", w["chg6_100"], ""],
-        ["기존규칙", "손익비", "rr_penalty", "손익비 부족", "손익비 < 1.2 AND 현재합산 ≥ 기본점+2", "여유 부족", w["rr_penalty"], "rr_penalty", w["rr_penalty"], "손절=지지−ATR×0.35, 목표=저항, RR=보상/위험"],
-        ["기존규칙", "손익비", "rr_penalty", "손익비 부족", "손익비 ≥ 1.2 또는 점수 낮음", "해당 없음", 0, "rr_penalty", w["rr_penalty"], ""],
-        ["옵션추가", "옵션월", "option_wall", "옵션 월", "기존 규칙 결과가 홀딩", "미적용", 0, "option_wall", w["option_wall"], "홀딩이면 옵션 평가 안 함"],
-        ["옵션추가", "옵션월", "option_wall", "옵션 월", "기존 매도(약한/보통/강한) AND 만기≤14일 AND 근처 콜월 두껍 AND 풋월 얇음", "콜두껍/풋얇", -w["option_wall"], "option_wall", w["option_wall"], "근처=현재가±5%, 멀리=>8%, 두꺼움=상대 OI×1.8 또는 체인최대의 25%"],
-        ["옵션추가", "옵션월", "option_wall", "옵션 월", "기존 매도 AND 만기≤14일 AND 근처 풋월 두껍 AND 콜월 얇음", "풋두껍/콜얇", w["option_wall"], "option_wall", w["option_wall"], ""],
-        ["옵션추가", "옵션월", "option_wall", "옵션 월", "기존 매도 AND (콜·풋 멀리 또는 둘 다 얇음 또는 그 외)", "해당 없음", 0, "option_wall", w["option_wall"], "미국 주식 당일만"],
-        ["옵션추가", "옵션월", "option_wall", "옵션 월", "기존 매수(약한/보통/강한) AND 만기≤14일 AND 근처 풋얇 AND 근처 콜두껍", "풋얇/콜두껍", -w["option_wall"], "option_wall", w["option_wall"], ""],
-        ["옵션추가", "옵션월", "option_wall", "옵션 월", "기존 매수 AND 반대이거나 그 외", "해당 없음", 0, "option_wall", w["option_wall"], "매수에서는 +1 없음"],
-        ["제안컷", "합산변환", "score_pct", "합산 %", "점수 < 0", "바닥 0점 후 %", "round((점수−(−5))/(19−(−5))×100)", "", "", "SCORE_LO=-5, SCORE_HI=19. 0~100으로 자름. 0점=21%"],
-        ["제안컷", "합산변환", "score_pct", "합산 %", "점수 ≥ 0", "% 변환", "round((점수+5)/24×100)", "", "", "예: 10점=63%, 19점=100%"],
-        ["제안컷", "매수컷", "buy_strong", "강한 매수", "합산 % ≥ 79", "강한 매수", "", "buy_strong", 79, "기본값. 사이드바에서 변경 가능"],
-        ["제안컷", "매수컷", "buy_mid", "매수", "합산 % ≥ 75 AND < 79", "매수", "", "buy_mid", 75, ""],
-        ["제안컷", "매수컷", "buy_weak", "약한 매수", "합산 % ≥ 70 AND < 75", "약한 매수", "", "buy_weak", 70, ""],
-        ["제안컷", "매도컷", "sell_weak", "약한 매도", "합산 % ≤ 35 AND > 30", "약한 매도", "", "sell_weak", 35, ""],
-        ["제안컷", "매도컷", "sell_mid", "매도", "합산 % ≤ 30 AND > 25", "매도", "", "sell_mid", 30, ""],
-        ["제안컷", "매도컷", "sell_strong", "강한 매도", "합산 % ≤ 25", "강한 매도", "", "sell_strong", 25, ""],
-        ["제안컷", "홀딩", "", "홀딩", "위 매수·매도 컷에 안 들어옴", "홀딩", "", "", "", "옵션 평가 안 함"],
-    ]
-    out = []
-    for i, row in enumerate(data, 1):
-        out.append([i] + row)
-    return out
-
-
-def params() -> list[list]:
-    return [
-        ["이름", "값", "설명"],
-        ["규칙버전", 52, "SIGNAL_RULE_VERSION"],
-        ["기본점 SCORE_BASE", 10, "중립 시작"],
-        ["합산 최저 SCORE_LO", -5, "10−15. % 눈금 하한"],
-        ["합산 최고 SCORE_HI", 19, "10+9. % 눈금 상한"],
-        ["근처폭", "max(ATR×0.45, 가격×0.8%)", "지지/저항/상승선/POC 근처 판정"],
-        ["지지 이탈 여유", "ATR×0.15", "현재가가 지지보다 이만큼 더 아래면 이탈"],
-        ["손절", "지지 − ATR×0.35", "손익비 계산"],
-        ["1차 목표", "가장 가까운 저항", "손익비 계산"],
-        ["손익비 기준", 1.2, "미만이고 점수가 기본+2 이상이면 감점"],
-        ["추세 추종 조회", "lookback_days ≤ 60", "1·2개월. 그 이상은 눌림 매수"],
-        ["RSI 과매도", 40, "이하 +"],
-        ["RSI 과열", 60, "이상 −"],
-        ["지지/저항 강도 기준", 4, "4 미만이면 근접해도 가감 없음"],
-        ["매물대 약함", 1, "강도 1 미만일 때만 공백/여유 규칙"],
-        ["매물대 이격", "10%", "다음 지지 또는 저항까지"],
-        ["옵션 만기", "14일 이내", "그 이상이면 0점"],
-        ["옵션 근처", "현재가 ±5%", "OPTION_NEAR_PCT=0.05"],
-        ["옵션 멀리", "현재가 ±8% 초과", "OPTION_FAR_PCT=0.08"],
-        ["옵션 두꺼움 비율", "상대 OI × 1.8 또는 체인 최대 OI의 25%", ""],
-        ["옵션 얇음", "OI=0 또는 체인 최대의 12% 미만 또는 상대의 1/1.8", ""],
-        ["옵션 적용 시장", "미국 주식 당일(시차 1일 안)", "한국·코인·과거·홀딩은 미적용"],
-        ["합산 후 처리", "음수면 0으로 자름", "max(0, score) 후 %"],
-    ]
-
-
-def style_header(ws, n_cols: int) -> None:
-    fill = PatternFill("solid", fgColor="1F4E79")
-    font = Font(color="FFFFFF", bold=True)
-    thin = Border(
-        left=Side(style="thin", color="D9E2F3"),
-        right=Side(style="thin", color="D9E2F3"),
-        top=Side(style="thin", color="D9E2F3"),
-        bottom=Side(style="thin", color="D9E2F3"),
-    )
+def paint_header(ws, n_cols: int) -> None:
+    ws.row_dimensions[1].height = 24
     for col in range(1, n_cols + 1):
         cell = ws.cell(1, col)
-        cell.fill = fill
-        cell.font = font
-        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-        cell.border = thin
-    ws.auto_filter.ref = ws.dimensions
+        cell.fill = HEADER_FILL
+        cell.font = HEADER_FONT
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+        cell.border = THIN
     ws.freeze_panes = "A2"
-    ws.row_dimensions[1].height = 22
+    ws.auto_filter.ref = ws.dimensions
 
 
-def autosize(ws, widths: dict[int, int]) -> None:
-    for col, width in widths.items():
-        ws.column_dimensions[get_column_letter(col)].width = width
-    align = Alignment(vertical="center", wrap_text=True)
-    thin = Border(
-        left=Side(style="thin", color="D9E2F3"),
-        right=Side(style="thin", color="D9E2F3"),
-        top=Side(style="thin", color="D9E2F3"),
-        bottom=Side(style="thin", color="D9E2F3"),
-    )
+def paint_body(ws, score_col: int | None = None) -> None:
     for row in ws.iter_rows(min_row=2, max_row=ws.max_row, max_col=ws.max_column):
-        for cell in row:
-            cell.alignment = align
-            cell.border = thin
+        for i, cell in enumerate(row, 1):
+            cell.alignment = WRAP
+            cell.border = THIN
+            if score_col and i == score_col:
+                cell.alignment = CENTER
+                cell.font = Font(bold=True, size=12)
+                val = cell.value
+                if isinstance(val, (int, float)):
+                    if val > 0:
+                        cell.fill = GREEN
+                        cell.value = f"+{int(val)}"
+                    elif val < 0:
+                        cell.fill = RED
+                    else:
+                        cell.fill = GRAY
+                elif isinstance(val, str) and val.startswith("+"):
+                    cell.fill = GREEN
+                elif isinstance(val, str) and val.startswith("-"):
+                    cell.fill = RED
+                else:
+                    cell.fill = YELLOW
+
+
+def add_sheet(wb: Workbook, title: str, headers: list[str], rows: list[list], widths: list[int], score_col: int | None = 3):
+    ws = wb.create_sheet(title)
+    ws.append(headers)
+    for row in rows:
+        ws.append(row)
+    paint_header(ws, len(headers))
+    paint_body(ws, score_col)
+    for i, w in enumerate(widths, 1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+    for r in range(2, ws.max_row + 1):
+        ws.row_dimensions[r].height = 32
+    return ws
 
 
 def main() -> None:
     wb = Workbook()
-    guide = wb.active
-    guide.title = "안내"
-    guide["A1"] = "자산 트레이드 분석기 점수 규칙표 (v52)"
-    guide["A1"].font = Font(size=16, bold=True, color="1F4E79")
-    guide.merge_cells("A1:B1")
-    notes = [
+
+    how = wb.active
+    how.title = "이렇게 봐요"
+    how["A1"] = "점수 규칙 (쉬운 버전)"
+    how["A1"].font = Font(size=18, bold=True, color="1F4E79")
+    how.merge_cells("A1:B1")
+    how_lines = [
         "",
-        "이 파일은 지금 코드에 들어 있는 규칙을 풀어 적은 표입니다.",
-        "다음에 점수를 어떻게 매길지 알려주실 때, 「규칙항목」 시트의 「점수」 칸을 고치거나 행을 추가해 주세요.",
+        "점수는 아래 항목을 하나씩 보고, 해당되면 더하거나 뺍니다.",
+        "노란/초록/빨간 칸이 점수입니다. 이 칸만 고쳐서 알려주셔도 됩니다.",
         "",
-        "시트",
-        "안내 — 이 설명",
-        "규칙항목 — 조건별 점수. 한 행이 하나의 판단입니다.",
-        "공통파라미터 — 근처폭, ATR 배수, 옵션 비율 등 숫자.",
+        "순서",
+        "1. 「기본 점수」부터 「손익비」까지 더합니다.",
+        "2. 더한 점수를 %로 바꿉니다. (10점이면 약 63%)",
+        "3. %로 매수 / 매도 / 홀딩을 정합니다.",
+        "4. 홀딩이면 끝입니다. 매수나 매도면 옵션 점수를 더하고 한 번 더 봅니다.",
         "",
-        "점수 매기는 순서",
-        "1) 「기존규칙」 행을 모두 더합니다. 음수면 0으로 자릅니다.",
-        "2) (점수 + 5) / 24 × 100 을 반올림해 합산 %를 만듭니다. (범위 −5~19점)",
-        "3) 합산 %로 약한매수/매수/강한매수/약한매도/매도/강한매도/홀딩을 정합니다.",
-        "4) 홀딩이면 옵션을 넣지 않습니다. 매수·매도면 「옵션추가」 점수를 더하고 %와 제안을 다시 계산합니다.",
-        "",
-        "열 설명 (규칙항목)",
-        "적용단계 — 기존규칙 / 옵션추가 / 제안컷",
-        "항목키 — 코드 식별자. 바꾸지 않는 것이 좋습니다.",
-        "조건 — 언제 이 행이 쓰이는지",
-        "판단기준 — 짧은 이름",
-        "점수 — 실제로 더하는 점수. 이 칸을 고치면 됩니다.",
-        "배점키 / 배점기본값 — 사이드바에서 크기를 바꿀 수 있는 항목",
+        "시트 안내",
+        "기본 점수 — 차트·지표로 매기는 점수",
+        "옵션 점수 — 미국 주식만, 매수/매도일 때 추가",
+        "매수 매도 기준 — 몇 %면 매수이고 몇 %면 매도인지",
     ]
-    for i, line in enumerate(notes, 2):
-        guide[f"A{i}"] = line
-        if line.startswith("시트") or line.startswith("점수 매기는") or line.startswith("열 설명"):
-            guide[f"A{i}"].font = Font(bold=True, color="1F4E79")
-    guide.column_dimensions["A"].width = 88
+    for i, line in enumerate(how_lines, 2):
+        how[f"A{i}"] = line
+        if line in ("순서", "시트 안내"):
+            how[f"A{i}"].font = Font(bold=True, color="1F4E79", size=13)
+        how[f"A{i}"].alignment = WRAP
+    how.column_dimensions["A"].width = 78
 
-    ws = wb.create_sheet("규칙항목")
-    ws.append(HEADERS)
-    yellow = PatternFill("solid", fgColor="FFF2CC")
-    for row in rows():
-        ws.append(row)
-        ws.cell(ws.max_row, 8).fill = yellow
-    style_header(ws, len(HEADERS))
-    autosize(ws, {1: 8, 2: 12, 3: 14, 4: 18, 5: 18, 6: 62, 7: 22, 8: 12, 9: 18, 10: 12, 11: 42})
-    ws["H1"].fill = PatternFill("solid", fgColor="C65911")
-    ws.row_dimensions[1].height = 24
+    add_sheet(
+        wb,
+        "기본 점수",
+        ["항목", "이럴 때", "점수"],
+        [
+            ["기본", "시작할 때 항상 줌", 10],
+            ["추세", "조회 기간이 1~2개월이고, 상승 추세", 2],
+            ["추세", "조회 기간이 1~2개월이고, 하락 추세", -2],
+            ["추세", "조회 기간이 3개월 이상이고, 하락 추세 (눌림)", 2],
+            ["추세", "조회 기간이 3개월 이상이고, 상승 추세 (고점 추격)", -2],
+            ["추세", "횡보일 때", 0],
+            ["하락 추세선 이탈", "가격이 하락선 위에 4~5봉 연속으로 있을 때", 1],
+            ["하락 추세선 이탈", "6봉 이상이거나, 아직 4봉이 안 됐을 때", 0],
+            ["상승 추세선 이탈", "가격이 상승선 아래에 4~5봉 연속으로 있을 때", -1],
+            ["상승 추세선 이탈", "6봉 이상이거나, 아직 4봉이 안 됐을 때", 0],
+            ["추세선 방향", "상승선·하락선이 둘 다 내려갈 때", -2],
+            ["추세선 방향", "둘 다 올라가면서 서로 벌어질 때", 1],
+            ["추세선 방향", "둘 다 올라가지만 모이거나 평행할 때", 0],
+            ["추세선 방향", "하락선을 방금 뚫고 올라가 가점을 받은 상태", 0],
+            ["상승선 근접", "둘 다 상승이고, 현재가가 상승선 바로 옆일 때", 1],
+            ["지지 근접", "지지선 바로 옆이고, 강도 4 이상일 때", 1],
+            ["지지 근접", "지지선 바로 옆이지만 강도가 4보다 약할 때", 0],
+            ["지지 이탈", "현재가가 지지선보다 뚜렷이 아래일 때", -2],
+            ["저항 근접", "저항선 바로 옆이고, 강도 4 이상일 때", -1],
+            ["저항 근접", "저항선 바로 옆이지만 강도가 4보다 약할 때", 0],
+            ["약한 매물대", "아래 지지 매물대가 약하고, 그 아래 다음 지지가 10% 이상 떨어져 있을 때", -1],
+            ["약한 매물대", "아래 지지 매물대가 약하고, 위 저항이 10% 이상 떨어져 있을 때", 1],
+            ["최대 매물 (POC)", "현재가가 거래가 가장 많았던 가격 근처이고, 상승 추세", 1],
+            ["최대 매물 (POC)", "현재가가 그 가격 근처이고, 하락 추세", -1],
+            ["밸류 하단 (VAL)", "현재가가 싼 구간 아래이고, 상승 추세", 1],
+            ["밸류 하단 (VAL)", "현재가가 싼 구간 아래이고, 하락 추세", -1],
+            ["RSI", "40 이하 (너무 많이 떨어짐)", 1],
+            ["RSI", "60 이상 (너무 많이 오름)", -1],
+            ["RSI", "40~60 사이", 0],
+            ["20일선", "현재가가 20일선보다 아래이고, 상승 추세가 아닐 때", -1],
+            ["20일선", "현재가가 20일선보다 위, 또는 상승 추세라서 아래여도 괜찮음", 0],
+            ["1개월 상승률", "한 달 동안 100% 이상 오름", -2],
+            ["1개월 상승률", "한 달 동안 30% 이상 100% 미만 오름", -1],
+            ["1개월 하락률", "한 달 동안 30% 이상 떨어짐", 2],
+            ["1개월 하락률", "한 달 동안 20% 이상 30% 미만 떨어짐", 1],
+            ["6개월 상승률", "6개월 동안 400% 이상 오름", -3],
+            ["6개월 상승률", "6개월 동안 300% 이상 400% 미만 오름", -2],
+            ["6개월 상승률", "6개월 동안 100% 이상 300% 미만 오름", -1],
+            ["손익비", "목표까지 먹을 자리보다 손절이 더 빠듯함 (1.2 미만) 그리고 점수가 이미 높은 편", -1],
+        ],
+        [18, 72, 10],
+    )
 
-    wp = wb.create_sheet("공통파라미터")
-    for row in params():
-        wp.append(row)
-    style_header(wp, 3)
-    autosize(wp, {1: 22, 2: 42, 3: 70})
-    for r in range(2, wp.max_row + 1):
-        wp.cell(r, 2).fill = PatternFill("solid", fgColor="E2EFDA")
+    add_sheet(
+        wb,
+        "옵션 점수",
+        ["항목", "이럴 때", "점수"],
+        [
+            ["옵션", "기존 결과가 홀딩이면 옵션은 보지 않음", 0],
+            ["옵션", "기존이 매도인데, 만기가 14일 안이고, 위쪽에 콜 벽이 두껍고 아래 풋 벽이 얇음", -1],
+            ["옵션", "기존이 매도인데, 반대로 아래 풋 벽이 두껍고 위 콜 벽이 얇음", 1],
+            ["옵션", "기존이 매도인데, 벽이 멀거나 둘 다 얇음", 0],
+            ["옵션", "기존이 매수인데, 아래 풋 벽이 얇고 위 콜 벽이 두꺼움", -1],
+            ["옵션", "기존이 매수인데, 위와 다르면", 0],
+        ],
+        [12, 78, 10],
+    )
+    opt = wb["옵션 점수"]
+    opt["A9"] = "참고: 미국 주식, 오늘 조회만. 근처는 현재가에서 5% 안, 멀면 8% 밖."
+    opt["A9"].font = Font(italic=True, color="666666")
+    opt.merge_cells("A9:C9")
 
-    OUT.parent.mkdir(parents=True, exist_ok=True)
+    add_sheet(
+        wb,
+        "매수 매도 기준",
+        ["합산 %", "제안"],
+        [
+            ["79% 이상", "강한 매수"],
+            ["75% 이상 ~ 79% 미만", "매수"],
+            ["70% 이상 ~ 75% 미만", "약한 매수"],
+            ["35% 초과 ~ 70% 미만", "홀딩"],
+            ["30% 초과 ~ 35% 이하", "약한 매도"],
+            ["25% 초과 ~ 30% 이하", "매도"],
+            ["25% 이하", "강한 매도"],
+        ],
+        [28, 16],
+        score_col=None,
+    )
+    cuts = wb["매수 매도 기준"]
+    for r, fill in (
+        (2, GREEN),
+        (3, GREEN),
+        (4, PatternFill("solid", fgColor="E2EFDA")),
+        (5, YELLOW),
+        (6, RED),
+        (7, RED),
+        (8, PatternFill("solid", fgColor="F4B183")),
+    ):
+        cuts.cell(r, 1).fill = fill
+        cuts.cell(r, 2).fill = fill
+        cuts.cell(r, 2).font = Font(bold=True, size=12)
+        cuts.cell(r, 1).alignment = CENTER
+        cuts.cell(r, 2).alignment = CENTER
+    cuts["A10"] = "점수를 %로 바꾸는 법: 0점이면 21%, 10점(기본)이면 63%, 19점이면 100%."
+    cuts["A10"].font = Font(italic=True, color="666666")
+    cuts.merge_cells("A10:B10")
+    cuts["A11"] = "가까운 가격: 하루 변동폭의 약 절반, 또는 주가의 0.8% 중 더 큰 값."
+    cuts["A11"].font = Font(italic=True, color="666666")
+    cuts.merge_cells("A11:B11")
+
+    if "Sheet" in wb.sheetnames:
+        del wb["Sheet"]
     wb.save(OUT)
     print(OUT)
 
