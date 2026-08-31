@@ -175,43 +175,78 @@ def main() -> None:
     opt["A9"].font = Font(italic=True, color="666666")
     opt.merge_cells("A9:C9")
 
-    add_sheet(
-        wb,
-        "매수 매도 기준",
-        ["합산 %", "제안"],
-        [
-            ["79% 이상", "강한 매수"],
-            ["75% 이상 ~ 79% 미만", "매수"],
-            ["70% 이상 ~ 75% 미만", "약한 매수"],
-            ["45% 초과 ~ 70% 미만", "홀딩"],
-            ["40% 초과 ~ 45% 이하", "약한 매도"],
-            ["30% 초과 ~ 40% 이하", "매도"],
-            ["30% 이하", "강한 매도"],
-        ],
-        [28, 16],
-        score_col=None,
+    cuts = wb.create_sheet("매수 매도 기준")
+    cuts.merge_cells("A1:B1")
+    cuts.merge_cells("D1:E1")
+    cuts["A1"] = "코인"
+    cuts["D1"] = "주식"
+    for cell in (cuts["A1"], cuts["D1"]):
+        cell.fill = HEADER_FILL
+        cell.font = HEADER_FONT
+        cell.alignment = CENTER
+        cell.border = THIN
+    cuts.append([])
+    cuts["A2"] = "합산 %"
+    cuts["B2"] = "제안"
+    cuts["D2"] = "합산 %"
+    cuts["E2"] = "제안"
+    for col in (1, 2, 4, 5):
+        cell = cuts.cell(2, col)
+        cell.fill = HEADER_FILL
+        cell.font = HEADER_FONT
+        cell.alignment = CENTER
+        cell.border = THIN
+    crypto_rows = [
+        ["79% 이상", "강한 매수"],
+        ["75% 이상 ~ 79% 미만", "매수"],
+        ["70% 이상 ~ 75% 미만", "약한 매수"],
+        ["45% 초과 ~ 70% 미만", "홀딩"],
+        ["40% 초과 ~ 45% 이하", "약한 매도"],
+        ["30% 초과 ~ 40% 이하", "매도"],
+        ["30% 이하", "강한 매도"],
+    ]
+    stock_rows = [
+        ["75% 이상", "강한 매수"],
+        ["70% 이상 ~ 75% 미만", "매수"],
+        ["65% 이상 ~ 70% 미만", "약한 매수"],
+        ["35% 초과 ~ 65% 미만", "홀딩"],
+        ["30% 초과 ~ 35% 이하", "약한 매도"],
+        ["25% 초과 ~ 30% 이하", "매도"],
+        ["25% 이하", "강한 매도"],
+    ]
+    fills = (
+        GREEN,
+        GREEN,
+        PatternFill("solid", fgColor="E2EFDA"),
+        YELLOW,
+        RED,
+        RED,
+        PatternFill("solid", fgColor="F4B183"),
     )
-    cuts = wb["매수 매도 기준"]
-    for r, fill in (
-        (2, GREEN),
-        (3, GREEN),
-        (4, PatternFill("solid", fgColor="E2EFDA")),
-        (5, YELLOW),
-        (6, RED),
-        (7, RED),
-        (8, PatternFill("solid", fgColor="F4B183")),
-    ):
-        cuts.cell(r, 1).fill = fill
-        cuts.cell(r, 2).fill = fill
-        cuts.cell(r, 2).font = Font(bold=True, size=12)
-        cuts.cell(r, 1).alignment = CENTER
-        cuts.cell(r, 2).alignment = CENTER
-    cuts["A10"] = "점수를 %로 바꾸는 법: 0점이면 21%, 10점(기본)이면 63%, 19점이면 100%."
-    cuts["A10"].font = Font(italic=True, color="666666")
-    cuts.merge_cells("A10:B10")
-    cuts["A11"] = "가까운 가격: 하루 변동폭의 약 절반, 또는 주가의 0.8% 중 더 큰 값."
+    for i, ((cp, ca), (sp, sa), fill) in enumerate(zip(crypto_rows, stock_rows, fills), 3):
+        cuts.cell(i, 1, cp)
+        cuts.cell(i, 2, ca)
+        cuts.cell(i, 4, sp)
+        cuts.cell(i, 5, sa)
+        for col in (1, 2, 4, 5):
+            cell = cuts.cell(i, col)
+            cell.fill = fill
+            cell.border = THIN
+            cell.alignment = CENTER
+            if col in (2, 5):
+                cell.font = Font(bold=True, size=12)
+        cuts.row_dimensions[i].height = 28
+    cuts["A11"] = "점수를 %로 바꾸는 법: 0점이면 21%, 10점(기본)이면 63%, 19점이면 100%."
     cuts["A11"].font = Font(italic=True, color="666666")
-    cuts.merge_cells("A11:B11")
+    cuts.merge_cells("A11:E11")
+    cuts["A12"] = "가까운 가격: 하루 변동폭의 약 절반, 또는 주가의 0.8% 중 더 큰 값."
+    cuts["A12"].font = Font(italic=True, color="666666")
+    cuts.merge_cells("A12:E12")
+    cuts.column_dimensions["A"].width = 28
+    cuts.column_dimensions["B"].width = 14
+    cuts.column_dimensions["C"].width = 4
+    cuts.column_dimensions["D"].width = 28
+    cuts.column_dimensions["E"].width = 14
 
     if "Sheet" in wb.sheetnames:
         del wb["Sheet"]

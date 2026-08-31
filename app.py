@@ -78,6 +78,8 @@ except ImportError:
 from src.signals import (
     CUT_FIELDS,
     DEFAULT_CUTS,
+    DEFAULT_CUTS_CRYPTO,
+    DEFAULT_CUTS_STOCK,
     DEFAULT_WEIGHTS,
     SIGNAL_RULE_VERSION,
     WEIGHT_FIELDS,
@@ -184,17 +186,32 @@ def _init_rule_widgets() -> None:
             val = int(default)
         if val < lo or val > hi:
             _safe_set_widget(sk, int(default))
-    for key, default in DEFAULT_CUTS.items():
-        sk = f"c_{key}"
+    for key, default in DEFAULT_CUTS_STOCK.items():
+        sk = f"c_stock_{key}"
         if sk not in st.session_state:
             st.session_state[sk] = int(default)
-            continue
-        try:
-            val = int(st.session_state[sk])
-        except (TypeError, ValueError):
-            val = int(default)
-        if val < 0 or val > 100:
-            _safe_set_widget(sk, int(default))
+        else:
+            try:
+                val = int(st.session_state[sk])
+            except (TypeError, ValueError):
+                val = int(default)
+            if val < 0 or val > 100:
+                _safe_set_widget(sk, int(default))
+    for key, default in DEFAULT_CUTS_CRYPTO.items():
+        sk = f"c_crypto_{key}"
+        if sk not in st.session_state:
+            old = st.session_state.get(f"c_{key}")
+            try:
+                st.session_state[sk] = int(old) if old is not None else int(default)
+            except (TypeError, ValueError):
+                st.session_state[sk] = int(default)
+        else:
+            try:
+                val = int(st.session_state[sk])
+            except (TypeError, ValueError):
+                val = int(default)
+            if val < 0 or val > 100:
+                _safe_set_widget(sk, int(default))
     if (
         int(st.session_state.get("w_chg6_100", 0)) == -1
         and int(st.session_state.get("w_chg6_300", 0)) == -2
@@ -207,8 +224,10 @@ def _init_rule_widgets() -> None:
     if not st.session_state.get("_rules_v54"):
         for key, default in DEFAULT_WEIGHTS.items():
             _safe_set_widget(f"w_{key}", int(default))
-        for key, default in DEFAULT_CUTS.items():
-            _safe_set_widget(f"c_{key}", int(default))
+        for key, default in DEFAULT_CUTS_STOCK.items():
+            _safe_set_widget(f"c_stock_{key}", int(default))
+        for key, default in DEFAULT_CUTS_CRYPTO.items():
+            _safe_set_widget(f"c_crypto_{key}", int(default))
         st.session_state._rules_v54 = True
     if not st.session_state.get("_cuts_migrated_v53"):
         try:
@@ -226,17 +245,32 @@ def _init_rule_widgets() -> None:
     if not st.session_state.get("_cuts_migrated_v58"):
         try:
             cuts = {
-                "sell_weak": int(st.session_state.get("c_sell_weak", 0)),
-                "sell_mid": int(st.session_state.get("c_sell_mid", 0)),
-                "sell_strong": int(st.session_state.get("c_sell_strong", 0)),
+                "sell_weak": int(st.session_state.get("c_crypto_sell_weak", st.session_state.get("c_sell_weak", 0))),
+                "sell_mid": int(st.session_state.get("c_crypto_sell_mid", st.session_state.get("c_sell_mid", 0))),
+                "sell_strong": int(st.session_state.get("c_crypto_sell_strong", st.session_state.get("c_sell_strong", 0))),
             }
             migrate_sell_cuts(cuts)
-            _safe_set_widget("c_sell_weak", int(cuts["sell_weak"]))
-            _safe_set_widget("c_sell_mid", int(cuts["sell_mid"]))
-            _safe_set_widget("c_sell_strong", int(cuts["sell_strong"]))
+            _safe_set_widget("c_crypto_sell_weak", int(cuts["sell_weak"]))
+            _safe_set_widget("c_crypto_sell_mid", int(cuts["sell_mid"]))
+            _safe_set_widget("c_crypto_sell_strong", int(cuts["sell_strong"]))
         except Exception:
             pass
         st.session_state._cuts_migrated_v58 = True
+    if not st.session_state.get("_cuts_split_v60"):
+        try:
+            crypto = {
+                key: int(st.session_state.get(f"c_crypto_{key}", DEFAULT_CUTS_CRYPTO[key]))
+                for key in DEFAULT_CUTS_CRYPTO
+            }
+            migrate_sell_cuts(crypto)
+            for key, val in crypto.items():
+                _safe_set_widget(f"c_crypto_{key}", int(val))
+            for key, default in DEFAULT_CUTS_STOCK.items():
+                if f"c_stock_{key}" not in st.session_state:
+                    _safe_set_widget(f"c_stock_{key}", int(default))
+        except Exception:
+            pass
+        st.session_state._cuts_split_v60 = True
     for key, default in DEFAULT_SIM.items():
         st.session_state.setdefault(f"s_{key}", int(default))
     st.session_state.setdefault("sim_eval_mode", "기존 규칙만")
@@ -244,15 +278,20 @@ def _init_rule_widgets() -> None:
 
 def _read_rule_from_sidebar() -> dict:
     weights = {key: int(st.session_state.get(f"w_{key}", default)) for key, default in DEFAULT_WEIGHTS.items()}
-    cuts = {key: int(st.session_state.get(f"c_{key}", default)) for key, default in DEFAULT_CUTS.items()}
-    return {"weights": weights, "cuts": cuts}
+    cuts = {key: int(st.session_state.get(f"c_stock_{key}", default)) for key, default in DEFAULT_CUTS_STOCK.items()}
+    cuts_crypto = {
+        key: int(st.session_state.get(f"c_crypto_{key}", default)) for key, default in DEFAULT_CUTS_CRYPTO.items()
+    }
+    return {"weights": weights, "cuts": cuts, "cuts_crypto": cuts_crypto}
 
 
 def _reset_rule_widgets() -> None:
     for key, default in DEFAULT_WEIGHTS.items():
         st.session_state[f"w_{key}"] = int(default)
-    for key, default in DEFAULT_CUTS.items():
-        st.session_state[f"c_{key}"] = int(default)
+    for key, default in DEFAULT_CUTS_STOCK.items():
+        st.session_state[f"c_stock_{key}"] = int(default)
+    for key, default in DEFAULT_CUTS_CRYPTO.items():
+        st.session_state[f"c_crypto_{key}"] = int(default)
 
 
 def _read_sim_from_sidebar() -> dict:
@@ -455,6 +494,7 @@ def _prefs_payload(rule: dict) -> dict:
         "ts": int(st.session_state.get("_prefs_ts") or 0),
         "weights": rule["weights"],
         "cuts": rule["cuts"],
+        "cuts_crypto": rule.get("cuts_crypto") or dict(DEFAULT_CUTS_CRYPTO),
         "sim": {key: int(st.session_state.get(f"s_{key}", default)) for key, default in DEFAULT_SIM.items()},
         "sim_options": 1 if st.session_state.get("sim_eval_mode") == "옵션 월 포함" else 0,
         "rule_ver": SIGNAL_RULE_VERSION,
@@ -489,25 +529,25 @@ def _apply_loaded_prefs(loaded: dict) -> None:
         st.session_state["w_chg6_100"] = -2
         st.session_state["w_chg6_300"] = -3
         st.session_state["w_chg6_400"] = -4
-    for key, default in DEFAULT_CUTS.items():
-        st.session_state[f"c_{key}"] = int(loaded["cuts"].get(key, default))
-    cuts_now = {
-        "sell_weak": int(st.session_state.get("c_sell_weak", 0)),
-        "sell_mid": int(st.session_state.get("c_sell_mid", 0)),
-        "sell_strong": int(st.session_state.get("c_sell_strong", 0)),
-    }
-    migrate_sell_cuts(cuts_now)
-    st.session_state["c_sell_weak"] = int(cuts_now["sell_weak"])
-    st.session_state["c_sell_mid"] = int(cuts_now["sell_mid"])
-    st.session_state["c_sell_strong"] = int(cuts_now["sell_strong"])
+    stock_cuts = loaded.get("cuts") or DEFAULT_CUTS_STOCK
+    crypto_cuts = loaded.get("cuts_crypto") or DEFAULT_CUTS_CRYPTO
+    for key, default in DEFAULT_CUTS_STOCK.items():
+        st.session_state[f"c_stock_{key}"] = int(stock_cuts.get(key, default))
+    crypto_now = {key: int(crypto_cuts.get(key, default)) for key, default in DEFAULT_CUTS_CRYPTO.items()}
+    migrate_sell_cuts(crypto_now)
+    for key, val in crypto_now.items():
+        st.session_state[f"c_crypto_{key}"] = int(val)
     if not st.session_state.get("_rules_v54"):
         for key, default in DEFAULT_WEIGHTS.items():
             st.session_state[f"w_{key}"] = int(default)
-        for key, default in DEFAULT_CUTS.items():
-            st.session_state[f"c_{key}"] = int(default)
+        for key, default in DEFAULT_CUTS_STOCK.items():
+            st.session_state[f"c_stock_{key}"] = int(default)
+        for key, default in DEFAULT_CUTS_CRYPTO.items():
+            st.session_state[f"c_crypto_{key}"] = int(default)
         st.session_state._rules_v54 = True
     st.session_state._cuts_migrated_v53 = True
     st.session_state._cuts_migrated_v58 = True
+    st.session_state._cuts_split_v60 = True
     sim = loaded.get("sim") or {}
     for key, default in DEFAULT_SIM.items():
         st.session_state[f"s_{key}"] = int(sim.get(key, default))
@@ -1929,16 +1969,27 @@ with st.sidebar:
     try:
         with st.expander("평가 배점·기준", expanded=False):
             st.caption("합산 % 눈금(-5~19점)은 그대로 두고, 항목 점수와 매수/매도 컷만 바꿉니다. 바꾼 값은 리부트 후에도 남깁니다.")
-            st.markdown("**매수 / 매도 기준**")
-            cut_cols = st.columns(2)
+            st.markdown("**매수 / 매도 기준 · 주식**")
+            stock_cols = st.columns(2)
             for i, (key, label, suffix) in enumerate(CUT_FIELDS):
-                with cut_cols[i % 2]:
+                with stock_cols[i % 2]:
                     st.number_input(
-                        f"{label} ({suffix})",
+                        f"주식 {label} ({suffix})",
                         min_value=0,
                         max_value=100,
                         step=1,
-                        key=f"c_{key}",
+                        key=f"c_stock_{key}",
+                    )
+            st.markdown("**매수 / 매도 기준 · 코인**")
+            crypto_cols = st.columns(2)
+            for i, (key, label, suffix) in enumerate(CUT_FIELDS):
+                with crypto_cols[i % 2]:
+                    st.number_input(
+                        f"코인 {label} ({suffix})",
+                        min_value=0,
+                        max_value=100,
+                        step=1,
+                        key=f"c_crypto_{key}",
                     )
             st.markdown("**항목 배점**")
             w_cols = st.columns(2)

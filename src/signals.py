@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
-SIGNAL_RULE_VERSION = 59
+SIGNAL_RULE_VERSION = 60
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 10
 # 합산 %는 조회 기간과 상관없이 같은 눈금(이론상 최저~최고)을 쓴다.
@@ -42,7 +42,15 @@ DEFAULT_WEIGHTS = {
     "option_wall": 1,
 }
 
-DEFAULT_CUTS = {
+DEFAULT_CUTS_STOCK = {
+    "buy_weak": 65,
+    "buy_mid": 70,
+    "buy_strong": 75,
+    "sell_weak": 35,
+    "sell_mid": 30,
+    "sell_strong": 25,
+}
+DEFAULT_CUTS_CRYPTO = {
     "buy_weak": 70,
     "buy_mid": 75,
     "buy_strong": 79,
@@ -50,6 +58,7 @@ DEFAULT_CUTS = {
     "sell_mid": 40,
     "sell_strong": 30,
 }
+DEFAULT_CUTS = dict(DEFAULT_CUTS_STOCK)
 LEGACY_DEFAULT_CUTS = {
     "buy_weak": 65,
     "buy_mid": 70,
@@ -104,7 +113,7 @@ _OLD_SELL_TRIOS = (
 
 
 def migrate_sell_cuts(cuts: dict) -> dict:
-    """예전 기본 매도 컷을 엑셀 최신값(45/40/30)으로 올린다."""
+    """예전 통합 매도 컷을 코인 기본(45/40/30)으로 올린다."""
     try:
         trio = (
             int(cuts.get("sell_weak") or 0),
@@ -114,10 +123,31 @@ def migrate_sell_cuts(cuts: dict) -> dict:
     except (TypeError, ValueError):
         return cuts
     if trio in _OLD_SELL_TRIOS:
-        cuts["sell_weak"] = int(DEFAULT_CUTS["sell_weak"])
-        cuts["sell_mid"] = int(DEFAULT_CUTS["sell_mid"])
-        cuts["sell_strong"] = int(DEFAULT_CUTS["sell_strong"])
+        cuts["sell_weak"] = int(DEFAULT_CUTS_CRYPTO["sell_weak"])
+        cuts["sell_mid"] = int(DEFAULT_CUTS_CRYPTO["sell_mid"])
+        cuts["sell_strong"] = int(DEFAULT_CUTS_CRYPTO["sell_strong"])
     return cuts
+
+
+def _copy_cuts(src: dict | None, defaults: dict) -> dict:
+    data = dict(defaults)
+    if not isinstance(src, dict):
+        return data
+    for key, default in defaults.items():
+        if key not in src:
+            continue
+        try:
+            data[key] = int(src[key])
+        except (TypeError, ValueError):
+            data[key] = default
+    return data
+
+
+def cuts_for_market(rule: dict | None, market: str | None) -> dict:
+    cfg = merge_rule(rule)
+    if str(market or "").upper() == "CRYPTO":
+        return dict(cfg["cuts_crypto"])
+    return dict(cfg["cuts"])
 
 
 CUT_FIELDS = [
@@ -132,11 +162,17 @@ CUT_FIELDS = [
 
 def merge_rule(rule: dict | None) -> dict:
     weights = dict(DEFAULT_WEIGHTS)
-    cuts = dict(DEFAULT_CUTS)
+    cuts = dict(DEFAULT_CUTS_STOCK)
+    cuts_crypto = dict(DEFAULT_CUTS_CRYPTO)
     if isinstance(rule, dict):
         weights.update(rule.get("weights") or {})
-        cuts.update(rule.get("cuts") or {})
-    return {"weights": weights, "cuts": cuts}
+        if rule.get("cuts_crypto"):
+            cuts = _copy_cuts(rule.get("cuts"), DEFAULT_CUTS_STOCK)
+            cuts_crypto = _copy_cuts(rule.get("cuts_crypto"), DEFAULT_CUTS_CRYPTO)
+        elif rule.get("cuts"):
+            cuts_crypto = _copy_cuts(rule.get("cuts"), DEFAULT_CUTS_CRYPTO)
+            migrate_sell_cuts(cuts_crypto)
+    return {"weights": weights, "cuts": cuts, "cuts_crypto": cuts_crypto}
 
 from .analysis import Analysis, Level
 
@@ -265,7 +301,9 @@ def recommend(
 ) -> Signal:
     cfg = merge_rule(rule)
     w = cfg["weights"]
-    cuts = cfg["cuts"]
+    crypto = str(market or "").upper() == "CRYPTO"
+    cuts = dict(cfg["cuts_crypto"] if crypto else cfg["cuts"])
+    cut_kind = "코인" if crypto else "주식"
 
     def wp(key: str) -> int:
         return int(w.get(key, DEFAULT_WEIGHTS[key]))
@@ -569,7 +607,7 @@ def recommend(
     action = _action_from_pct(score_pct, cuts)
     reasons.append(
         f"합산 {score_pct}% ({score}점, 범위 {lo}~{hi}) · "
-        f"약한매수 {buy_weak}%↑ / 매수 {buy_mid}%↑ / 강한매수 {buy_strong}%↑ · "
+        f"{cut_kind} 컷 · 약한매수 {buy_weak}%↑ / 매수 {buy_mid}%↑ / 강한매수 {buy_strong}%↑ · "
         f"약한매도 {sell_weak}%↓ / 매도 {sell_mid}%↓ / 강한매도 {sell_strong}%↓"
         f" · 규칙 v{SIGNAL_RULE_VERSION}"
     )

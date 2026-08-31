@@ -20,7 +20,15 @@ from pathlib import Path
 
 import requests
 
-from .signals import DEFAULT_CUTS, DEFAULT_WEIGHTS, SIGNAL_RULE_VERSION, migrate_sell_cuts
+from .signals import (
+    DEFAULT_CUTS,
+    DEFAULT_CUTS_CRYPTO,
+    DEFAULT_CUTS_STOCK,
+    DEFAULT_WEIGHTS,
+    SIGNAL_RULE_VERSION,
+    _copy_cuts,
+    migrate_sell_cuts,
+)
 
 BROWSER_PENDING = "__pending__"
 
@@ -174,7 +182,8 @@ def _empty() -> dict:
         "uid": "",
         "ts": 0,
         "weights": dict(DEFAULT_WEIGHTS),
-        "cuts": dict(DEFAULT_CUTS),
+        "cuts": dict(DEFAULT_CUTS_STOCK),
+        "cuts_crypto": dict(DEFAULT_CUTS_CRYPTO),
         "sim": dict(DEFAULT_SIM),
         "sim_options": 0,
         "rule_ver": SIGNAL_RULE_VERSION,
@@ -196,17 +205,16 @@ def _normalize(raw: dict | None) -> dict:
                 data["weights"][key] = int(weights[key])
             except (TypeError, ValueError):
                 data["weights"][key] = default
-    for key, default in DEFAULT_CUTS.items():
-        if key in cuts:
-            try:
-                data["cuts"][key] = int(cuts[key])
-            except (TypeError, ValueError):
-                data["cuts"][key] = default
-    if all(data["cuts"].get(key) == old for key, old in LEGACY_DEFAULT_CUTS.items()):
-        data["cuts"] = dict(DEFAULT_CUTS)
-    if all(data["cuts"].get(key) == old for key, old in PREV_DEFAULT_CUTS.items()):
-        data["cuts"] = dict(DEFAULT_CUTS)
-    migrate_sell_cuts(data["cuts"])
+    crypto_src = raw.get("cuts_crypto")
+    if isinstance(crypto_src, dict):
+        data["cuts"] = _copy_cuts(cuts, DEFAULT_CUTS_STOCK)
+        data["cuts_crypto"] = _copy_cuts(crypto_src, DEFAULT_CUTS_CRYPTO)
+        migrate_sell_cuts(data["cuts_crypto"])
+    else:
+        legacy = _copy_cuts(cuts, DEFAULT_CUTS_CRYPTO)
+        migrate_sell_cuts(legacy)
+        data["cuts_crypto"] = legacy
+        data["cuts"] = dict(DEFAULT_CUTS_STOCK)
     if data["weights"].get("trend") == 2:
         data["weights"]["trend"] = 1
     if data["weights"].get("ma20") == -1:
@@ -226,7 +234,8 @@ def _normalize(raw: dict | None) -> dict:
         rule_ver = 0
     if rule_ver < 54:
         data["weights"] = dict(DEFAULT_WEIGHTS)
-        data["cuts"] = dict(DEFAULT_CUTS)
+        data["cuts"] = dict(DEFAULT_CUTS_STOCK)
+        data["cuts_crypto"] = dict(DEFAULT_CUTS_CRYPTO)
         rule_ver = 54
     data["rule_ver"] = rule_ver
     data["sim"] = normalize_sim(sim)
@@ -266,6 +275,7 @@ def snapshot_key(data: dict) -> str:
         "uid": normalize_uid(data.get("uid")),
         "weights": data.get("weights") or {},
         "cuts": data.get("cuts") or {},
+        "cuts_crypto": data.get("cuts_crypto") or {},
         "sim": data.get("sim") or {},
         "sim_options": int(data.get("sim_options") or 0),
         "rule_ver": int(data.get("rule_ver") or 0),
@@ -282,7 +292,9 @@ def _score(data: dict) -> tuple[int, int, int]:
     customized = 0
     if (data.get("weights") or {}) != DEFAULT_WEIGHTS:
         customized += 1
-    if (data.get("cuts") or {}) != DEFAULT_CUTS:
+    if (data.get("cuts") or {}) != DEFAULT_CUTS_STOCK:
+        customized += 1
+    if (data.get("cuts_crypto") or {}) != DEFAULT_CUTS_CRYPTO:
         customized += 1
     if (data.get("sim") or {}) != DEFAULT_SIM:
         customized += 1
