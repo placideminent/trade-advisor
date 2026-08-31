@@ -72,42 +72,49 @@ def _browser_store():
 
 
 def read_browser_store() -> dict:
-    """페이지 localStorage 에서 uid를 읽는다. pending=True 이면 JS가 아직 값을 안 보냈다."""
-    store = _browser_store()
-    if not store:
-        return {"uid": "", "token": "", "pending": False}
-    result = store(
-        data={"mode": "get"},
-        key="ta_store_get",
-        default={"uid": BROWSER_PENDING, "token": ""},
-        on_uid_change=lambda: None,
-        on_token_change=lambda: None,
-    )
-    uid_raw = getattr(result, "uid", None)
-    if uid_raw is None or uid_raw == BROWSER_PENDING:
-        return {"uid": "", "token": "", "pending": True}
-    return {
-        "uid": normalize_uid(uid_raw),
-        "token": str(getattr(result, "token", None) or ""),
-        "pending": False,
-    }
+    """페이지 localStorage 에서 uid를 읽는다. 실패해도 앱은 계속 진행한다."""
+    empty = {"uid": "", "token": "", "pending": False}
+    try:
+        store = _browser_store()
+        if not store:
+            return empty
+        result = store(
+            data={"mode": "get"},
+            key="ta_store_get",
+            default={"uid": BROWSER_PENDING, "token": ""},
+            on_uid_change=lambda: None,
+            on_token_change=lambda: None,
+        )
+        uid_raw = getattr(result, "uid", None)
+        if uid_raw is None or uid_raw == BROWSER_PENDING:
+            return {"uid": "", "token": "", "pending": True}
+        return {
+            "uid": normalize_uid(uid_raw),
+            "token": str(getattr(result, "token", None) or ""),
+            "pending": False,
+        }
+    except Exception:
+        return empty
 
 
 def write_browser_store(uid: str, token: str = "") -> None:
     """같은 브라우저 다음 접속에서 읽히도록 페이지 localStorage 에 uid를 남긴다."""
-    store = _browser_store()
-    if not store:
+    try:
+        store = _browser_store()
+        if not store:
+            return
+        uid = normalize_uid(uid)
+        if not uid:
+            return
+        store(
+            data={"mode": "set", "uid": uid, "token": str(token or "")},
+            key="ta_store_set",
+            default={"uid": uid, "token": str(token or "")},
+            on_uid_change=lambda: None,
+            on_token_change=lambda: None,
+        )
+    except Exception:
         return
-    uid = normalize_uid(uid)
-    if not uid:
-        return
-    store(
-        data={"mode": "set", "uid": uid, "token": str(token or "")},
-        key="ta_store_set",
-        default={"uid": uid, "token": str(token or "")},
-        on_uid_change=lambda: None,
-        on_token_change=lambda: None,
-    )
 
 try:
     from .backtest import DEFAULT_SIM, normalize_sim

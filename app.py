@@ -144,13 +144,27 @@ def _make_signal(
                 return recommend(an)
 
 
+def _weight_bounds(key: str) -> tuple[int, int]:
+    default = int(DEFAULT_WEIGHTS[key])
+    if key == "base":
+        return 0, 30
+    if default >= 0:
+        return 0, 10
+    return -10, 10
+
+
 def _init_rule_widgets() -> None:
     for key, default in DEFAULT_WEIGHTS.items():
         sk = f"w_{key}"
+        lo, hi = _weight_bounds(key)
         if sk not in st.session_state:
             st.session_state[sk] = int(default)
-        # 새로 추가된 +배점 칸이 number_input 최솟값 -10으로 잡히는 경우 바로잡는다.
-        elif int(default) >= 0 and int(st.session_state[sk]) == -10:
+            continue
+        try:
+            val = int(st.session_state[sk])
+        except (TypeError, ValueError):
+            val = int(default)
+        if val < lo or val > hi:
             st.session_state[sk] = int(default)
     for key, default in DEFAULT_CUTS.items():
         st.session_state.setdefault(f"c_{key}", int(default))
@@ -468,7 +482,9 @@ def _bootstrap_prefs() -> None:
         or normalize_uid(st.session_state.get("prefs_uid"))
     )
     skip_wait = bool(adopt or st.session_state.get("_prefs_skip_browser"))
-    if not uid and browser.get("pending") and not skip_wait:
+    waits = int(st.session_state.get("_prefs_await_n", 0))
+    if not uid and browser.get("pending") and not skip_wait and waits < 1:
+        st.session_state._prefs_await_n = waits + 1
         st.session_state._prefs_await_ls = True
         if not st.session_state.get("_prefs_defaults_on"):
             _apply_loaded_prefs(merge_prefs())
@@ -580,8 +596,28 @@ def _persist_prefs(rule: dict) -> None:
 
 
 def _emit_boot_restore() -> None:
-    """저장 코드는 read_browser_store 컴포넌트가 복구한다."""
-    return
+    """페이지 localStorage 에 남은 저장 코드를 주소에 다시 붙인다."""
+    if _query_uid() or _query_ls_checked() or _query_adopt_flag():
+        return
+    html = (
+        "<script>(function(){try{"
+        "var url=new URL(window.location.href);"
+        "if(url.searchParams.get('_ls')==='1')return;"
+        "var u='';try{u=localStorage.getItem('ta_uid')||'';}catch(e){}"
+        "u=String(u).toUpperCase().replace(/[^A-Z0-9]/g,'');"
+        "if(u.length!==8)u='';"
+        "var t='';"
+        "if(u){try{t=localStorage.getItem('ta_prefs_'+u)||localStorage.getItem('ta_prefs')||'';}catch(e){}}"
+        "url.searchParams.set('_ls','1');"
+        "if(u)url.searchParams.set('_u',u);"
+        "if(t)url.searchParams.set('_p',t);"
+        "window.location.replace(url.toString());"
+        "}catch(e){}})();</script>"
+    )
+    try:
+        st.html(html, unsafe_allow_javascript=True)
+    except Exception:
+        return
 
 
 def _emit_ls_restore() -> None:
@@ -1868,13 +1904,7 @@ with st.sidebar:
         w_cols = st.columns(2)
         for i, (key, label, hint) in enumerate(WEIGHT_FIELDS):
             with w_cols[i % 2]:
-                default = int(DEFAULT_WEIGHTS[key])
-                if key == "base":
-                    lo, hi = 0, 30
-                elif default >= 0:
-                    lo, hi = 0, 10
-                else:
-                    lo, hi = -10, 10
+                lo, hi = _weight_bounds(key)
                 st.number_input(
                     label,
                     min_value=lo,
