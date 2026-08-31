@@ -447,12 +447,15 @@ def cookie_set_html(data: dict, *, force: bool = False) -> str:
         "var prev=readUid();"
         "if(prev && u && prev!==u && !force){return;}"
         "if(!u)return;"
-        f'var d="{UID_COOKIE_NAME}="+u+";path=/;max-age=31536000;SameSite=Lax";'
+        "var sec=(location.protocol==='https:')?';Secure':'';"
+        f'var d="{UID_COOKIE_NAME}="+u+";path=/;max-age=31536000;SameSite=Lax"+sec;'
         "document.cookie=d;"
         "localStorage.setItem('ta_uid',u);"
         "if(keep){"
-        f'var c="{COOKIE_NAME}="+t+";path=/;max-age=31536000;SameSite=Lax";'
+        "if(t && t.length<=3200){"
+        f'var c="{COOKIE_NAME}="+t+";path=/;max-age=31536000;SameSite=Lax"+sec;'
         "document.cookie=c;"
+        "}"
         "localStorage.setItem('ta_prefs',t);"
         "localStorage.setItem('ta_prefs_'+u,t);"
         "}"
@@ -462,8 +465,24 @@ def cookie_set_html(data: dict, *, force: bool = False) -> str:
 
 
 def localstorage_boot_html() -> str:
-    """주소 리다이렉트는 화면을 멈추게 해서 비활성화."""
-    return ""
+    """쿠키가 없는 모바일에서 localStorage 저장 코드만 주소로 한 번 붙인다."""
+    return (
+        "<script>(function(){try{"
+        "var url=new URL(window.location.href);"
+        "if(url.searchParams.get('_u'))return;"
+        "if(sessionStorage.getItem('ta_boot')==='1')return;"
+        "sessionStorage.setItem('ta_boot','1');"
+        "var u=null;"
+        "try{u=localStorage.getItem('ta_uid');}catch(e){}"
+        "if(!u)return;"
+        "u=String(u).toUpperCase().replace(/[^A-Z0-9]/g,'');"
+        "if(u.length!==8)return;"
+        "var sec=(location.protocol==='https:')?';Secure':'';"
+        "document.cookie='ta_uid='+u+';path=/;max-age=31536000;SameSite=Lax'+sec;"
+        "url.searchParams.set('_u',u);"
+        "window.location.replace(url.toString());"
+        "}catch(e){}})();</script>"
+    )
 
 
 def localstorage_restore_html(uid: str) -> str:

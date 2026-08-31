@@ -541,8 +541,11 @@ def _apply_loaded_prefs(loaded: dict) -> None:
 
 def _bootstrap_prefs() -> None:
     adopt = normalize_uid(st.session_state.pop("_prefs_adopt", None))
+    q_uid = _query_uid()
     if st.session_state.get("_prefs_boot") and not adopt:
-        return
+        cur = normalize_uid(st.session_state.get("prefs_uid"))
+        if not q_uid or q_uid == cur:
+            return
     cookie_data = decode_cookie(_cookie_token())
     query_data = _query_prefs()
     browser = read_browser_store()
@@ -567,12 +570,13 @@ def _bootstrap_prefs() -> None:
     if query_data and (not query_data.get("uid") or query_data.get("uid") == uid):
         sources.append(query_data)
     sources.append(load_user_prefs_file(uid))
-    if adopt:
+    loaded = merge_prefs(*sources)
+    if remote_enabled() and (adopt or _score_empty(loaded)):
         try:
             sources.append(load_user_prefs_remote(uid))
+            loaded = merge_prefs(*sources)
         except Exception:
             pass
-    loaded = merge_prefs(*sources)
     loaded["uid"] = uid
     _apply_loaded_prefs(loaded)
     st.session_state.prefs_uid = uid
@@ -643,8 +647,16 @@ def _persist_prefs(rule: dict) -> None:
 
 
 def _emit_boot_restore() -> None:
-    """주소에 코드가 있으면 그대로 쓴다. 자동 리다이렉트는 화면을 멈추게 해서 하지 않는다."""
-    return
+    """쿠키가 없을 때만 이 브라우저 localStorage 코드를 한 번 붙인다."""
+    if _cookie_uid() or _query_uid():
+        return
+    html = localstorage_boot_html()
+    if not html:
+        return
+    try:
+        st.html(html, unsafe_allow_javascript=True)
+    except Exception:
+        pass
 
 
 def _emit_ls_restore() -> None:
@@ -661,11 +673,6 @@ def _emit_prefs_cookie() -> None:
         return
     try:
         st.html(html, unsafe_allow_javascript=True)
-    except TypeError:
-        try:
-            components.html(html, height=1, width=1)
-        except Exception:
-            pass
     except Exception:
         pass
 
