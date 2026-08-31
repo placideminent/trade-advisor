@@ -208,8 +208,14 @@ def _init_rule_widgets() -> None:
             st.session_state["w_chg6_800"] = int(st.session_state.get("w_chg6_600"))
         except (TypeError, ValueError):
             pass
-    if int(st.session_state.get("w_chg1_down20", 0)) == 1:
-        _safe_set_widget("w_chg1_down20", 2)
+    if "w_chg1_down30" not in st.session_state and "w_chg1_down20" in st.session_state:
+        try:
+            old = int(st.session_state.get("w_chg1_down20"))
+            if old == 1:
+                old = 2
+            st.session_state["w_chg1_down30"] = old
+        except (TypeError, ValueError):
+            pass
     for key, default in DEFAULT_WEIGHTS.items():
         sk = f"w_{key}"
         lo, hi = _weight_bounds(key)
@@ -546,6 +552,15 @@ def _apply_loaded_prefs(loaded: dict) -> None:
             src_w["chg6_800"] = int(src_w.get("chg6_600"))
         except (TypeError, ValueError):
             pass
+    if "chg1_down30" not in src_w and "chg1_down20" in src_w:
+        try:
+            old = int(src_w.get("chg1_down20"))
+            if old == 1:
+                old = 2
+            src_w = dict(src_w)
+            src_w["chg1_down30"] = old
+        except (TypeError, ValueError):
+            pass
     for key, default in DEFAULT_WEIGHTS.items():
         val = int(src_w.get(key, default))
         if key == "support_near" and val == 2:
@@ -554,8 +569,6 @@ def _apply_loaded_prefs(loaded: dict) -> None:
             val = -1
         if key == "chg1_50" and val == -3:
             val = -1
-        if key == "chg1_down20" and val == 1:
-            val = 2
         if key == "trend" and val == 2:
             val = 1
         if key == "ma20" and val == -1:

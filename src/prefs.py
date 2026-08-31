@@ -235,8 +235,15 @@ def _normalize(raw: dict | None) -> dict:
             old = None
         if old is not None:
             data["weights"]["chg6_800"] = old
-    if int(data["weights"].get("chg1_down20") or 0) == 1:
-        data["weights"]["chg1_down20"] = 2
+    if "chg1_down30" not in weights:
+        try:
+            old = int(weights.get("chg1_down20"))
+        except (TypeError, ValueError):
+            old = None
+        if old == 1:
+            old = 2
+        if old is not None:
+            data["weights"]["chg1_down30"] = old
     try:
         rule_ver = int(raw.get("rule_ver") or 0)
     except (TypeError, ValueError):
