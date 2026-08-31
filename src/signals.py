@@ -231,36 +231,35 @@ def _fmt(price: float) -> str:
 def period_return(df, as_of, price: float, days: int = 180) -> float | None:
     """as_of 기준 days일 전 종가 대비 현재가 수익률.
 
-    조회 창이 딱 days일이면 목표일이 주말·휴장인 경우가 많다.
-    그때는 창의 첫 봉(다음 거래일)을 쓴다.
+    목표일이 주말·휴장이면 그 직전(없으면 직후) 거래일 종가를 쓴다.
     """
-    if df is None or getattr(df, "empty", True) or price is None or price <= 0:
-        return None
-    idx = df.index
-    as_ts = pd.Timestamp(as_of)
     try:
-        if getattr(idx, "tz", None) is not None and as_ts.tzinfo is None:
-            as_ts = as_ts.tz_localize(idx.tz)
-    except (TypeError, ValueError):
-        pass
-    target = as_ts - pd.Timedelta(days=days)
-    past = df.loc[idx <= target]
-    if not past.empty:
-        base = float(past["close"].iloc[-1])
-    else:
-        first = idx[0]
-        try:
-            d0 = pd.Timestamp(pd.Timestamp(first).strftime("%Y-%m-%d"))
-            d1 = pd.Timestamp(pd.Timestamp(target).strftime("%Y-%m-%d"))
-            delta = abs((d0 - d1).days)
-        except (TypeError, ValueError):
-            delta = 99
-        if delta > 14:
+        if df is None or getattr(df, "empty", True) or price is None or float(price) <= 0:
             return None
-        base = float(df["close"].iloc[0])
-    if base <= 0:
+        if "close" not in getattr(df, "columns", []):
+            return None
+        closes = pd.to_numeric(df["close"], errors="coerce")
+        dates = pd.to_datetime(df.index, utc=True, errors="coerce")
+        dates = pd.DatetimeIndex(dates).tz_convert(None).normalize()
+        as_day = pd.Timestamp(str(pd.Timestamp(as_of).date()))
+        target = as_day - pd.Timedelta(days=int(days))
+        ok = dates.notna() & closes.notna()
+        past = ok & (dates <= target)
+        if bool(past.any()):
+            base = float(closes.loc[past].iloc[-1])
+        else:
+            base = float(closes.loc[ok].iloc[0])
+        if not (base > 0):
+            return None
+        return float(price) / base - 1.0
+    except Exception:
+        try:
+            base = float(df["close"].iloc[0])
+            if base > 0:
+                return float(price) / base - 1.0
+        except Exception:
+            return None
         return None
-    return float(price) / base - 1.0
 
 
 def _line_y_at(line, x: float) -> float | None:

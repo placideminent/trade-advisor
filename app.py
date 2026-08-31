@@ -1029,11 +1029,12 @@ def _quick_signal(market: str, ticker: str, as_of, lookback_days: int, timeframe
         six_month_chg = None
         try:
             src_6m = df
-            if lookback_days < 180:
-                src_6m, _ = _load_ohlcv(market, ticker, as_of, 180, "1d", retries=1)
+            src_6m, _ = _load_ohlcv(market, ticker, as_of, 220, "1d", retries=1)
+            if src_6m is None or getattr(src_6m, "empty", True):
+                src_6m = df
             six_month_chg = period_return(src_6m, as_of, spot_price, 180)
         except Exception:
-            six_month_chg = None
+            six_month_chg = period_return(df, as_of, spot_price, 180)
         signal = _make_signal(
             analysis,
             six_month_chg,
@@ -2188,11 +2189,12 @@ try:
     six_month_chg = None
     try:
         src_6m = df
-        if lookback_days < 180:
-            src_6m, _meta_6m = _load_ohlcv(market, ticker, as_of, 180, "1d", retries=1)
+        src_6m, _meta_6m = _load_ohlcv(market, ticker, as_of, 220, "1d", retries=1)
+        if src_6m is None or getattr(src_6m, "empty", True):
+            src_6m = df
         six_month_chg = period_return(src_6m, as_of, spot_price, 180)
     except Exception:
-        six_month_chg = None
+        six_month_chg = period_return(df, as_of, spot_price, 180)
     signal = _make_signal(
         analysis,
         six_month_chg,
