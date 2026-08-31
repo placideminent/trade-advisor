@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
-SIGNAL_RULE_VERSION = 53
+SIGNAL_RULE_VERSION = 54
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 10
 # 합산 %는 조회 기간과 상관없이 같은 눈금(이론상 최저~최고)을 쓴다.
@@ -80,7 +80,7 @@ WEIGHT_FIELDS = [
     ("vol_sup_room", "약한 매물대·위 여유", "지지 매물대 강도 1 미만이고 다음 저항이 10% 이상 위"),
     ("poc", "POC", "최대 매물 부근. 상승 +, 하락 −"),
     ("val", "VAL", "밸류 하단 아래. 상승만 +1, 하락은 0"),
-    ("vah", "VAH", "밸류 상단 위. 횡보면 −1, 상승이면 0"),
+    ("vah", "VAH", "밸류 상단 위. 횡보·하락이면 −1, 상승이면 0"),
     ("rsi", "RSI", "30 이하 +, 70 이상 −"),
     ("ma20", "MA20 아래", "현재가 < MA20. 상승 +1, 하락 −1"),
     ("chg1_50", "1개월 상승 30%", "30일 전 대비 30% 이상 100% 미만 −1"),
@@ -493,10 +493,9 @@ def recommend(
         add("VAL", f"하단 {_fmt(an.val)} · 현재가가 VAL 위", 0)
         if an.trend == "up":
             add("VAH", f"상단 {_fmt(an.vah)} 위 · 상승 추세", 0)
-        elif an.trend == "down":
-            add("VAH", f"상단 {_fmt(an.vah)} 위 · 하락 추세", 0)
         else:
-            add("VAH", f"상단 {_fmt(an.vah)} 위 · 횡보", wp("vah"))
+            tilt = "하락" if an.trend == "down" else "횡보"
+            add("VAH", f"상단 {_fmt(an.vah)} 위 · {tilt} 추세", wp("vah"))
     elif price < an.val:
         add("POC", f"최대 매물 {_fmt(an.poc)} · 현재가가 멀리 있음", 0)
         if an.trend == "up":

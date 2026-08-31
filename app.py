@@ -79,6 +79,7 @@ from src.signals import (
     CUT_FIELDS,
     DEFAULT_CUTS,
     DEFAULT_WEIGHTS,
+    SIGNAL_RULE_VERSION,
     WEIGHT_FIELDS,
     period_return,
     recommend,
@@ -193,6 +194,12 @@ def _init_rule_widgets() -> None:
             val = int(default)
         if val < 0 or val > 100:
             _safe_set_widget(sk, int(default))
+    if not st.session_state.get("_rules_v54"):
+        for key, default in DEFAULT_WEIGHTS.items():
+            _safe_set_widget(f"w_{key}", int(default))
+        for key, default in DEFAULT_CUTS.items():
+            _safe_set_widget(f"c_{key}", int(default))
+        st.session_state._rules_v54 = True
     if not st.session_state.get("_cuts_migrated_v53"):
         try:
             if all(int(st.session_state.get(f"c_{k}", 0)) == v for k, v in (
@@ -426,6 +433,7 @@ def _prefs_payload(rule: dict) -> dict:
         "cuts": rule["cuts"],
         "sim": {key: int(st.session_state.get(f"s_{key}", default)) for key, default in DEFAULT_SIM.items()},
         "sim_options": 1 if st.session_state.get("sim_eval_mode") == "옵션 월 포함" else 0,
+        "rule_ver": SIGNAL_RULE_VERSION,
         "favorites": list(st.session_state.get("favorites") or []),
     }
 
@@ -460,6 +468,12 @@ def _apply_loaded_prefs(loaded: dict) -> None:
         st.session_state["c_sell_weak"] = 40
         st.session_state["c_sell_mid"] = 35
         st.session_state["c_sell_strong"] = 30
+    if not st.session_state.get("_rules_v54"):
+        for key, default in DEFAULT_WEIGHTS.items():
+            st.session_state[f"w_{key}"] = int(default)
+        for key, default in DEFAULT_CUTS.items():
+            st.session_state[f"c_{key}"] = int(default)
+        st.session_state._rules_v54 = True
     st.session_state._cuts_migrated_v53 = True
     sim = loaded.get("sim") or {}
     for key, default in DEFAULT_SIM.items():

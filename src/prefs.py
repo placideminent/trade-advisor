@@ -20,7 +20,7 @@ from pathlib import Path
 
 import requests
 
-from .signals import DEFAULT_CUTS, DEFAULT_WEIGHTS
+from .signals import DEFAULT_CUTS, DEFAULT_WEIGHTS, SIGNAL_RULE_VERSION
 
 BROWSER_PENDING = "__pending__"
 
@@ -177,6 +177,7 @@ def _empty() -> dict:
         "cuts": dict(DEFAULT_CUTS),
         "sim": dict(DEFAULT_SIM),
         "sim_options": 0,
+        "rule_ver": SIGNAL_RULE_VERSION,
         "favorites": [],
     }
 
@@ -223,6 +224,15 @@ def _normalize(raw: dict | None) -> dict:
         data["weights"]["trendline_dir_down"] = -1
     if data["weights"].get("ma20") == -1:
         data["weights"]["ma20"] = 1
+    try:
+        rule_ver = int(raw.get("rule_ver") or 0)
+    except (TypeError, ValueError):
+        rule_ver = 0
+    if rule_ver < 54:
+        data["weights"] = dict(DEFAULT_WEIGHTS)
+        data["cuts"] = dict(DEFAULT_CUTS)
+        rule_ver = 54
+    data["rule_ver"] = rule_ver
     data["sim"] = normalize_sim(sim)
     try:
         data["sim_options"] = 1 if int(raw.get("sim_options") or 0) else 0
@@ -262,6 +272,7 @@ def snapshot_key(data: dict) -> str:
         "cuts": data.get("cuts") or {},
         "sim": data.get("sim") or {},
         "sim_options": int(data.get("sim_options") or 0),
+        "rule_ver": int(data.get("rule_ver") or 0),
         "favorites": data.get("favorites") or [],
     }
     return json.dumps(payload, sort_keys=True, ensure_ascii=False)
