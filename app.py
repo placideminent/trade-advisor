@@ -194,6 +194,15 @@ def _init_rule_widgets() -> None:
             val = int(default)
         if val < 0 or val > 100:
             _safe_set_widget(sk, int(default))
+    if (
+        int(st.session_state.get("w_chg6_100", 0)) == -1
+        and int(st.session_state.get("w_chg6_300", 0)) == -2
+        and int(st.session_state.get("w_chg6_400", 0)) == -3
+    ):
+        _safe_set_widget("w_chg6_50", -1)
+        _safe_set_widget("w_chg6_100", -2)
+        _safe_set_widget("w_chg6_300", -3)
+        _safe_set_widget("w_chg6_400", -4)
     if not st.session_state.get("_rules_v54"):
         for key, default in DEFAULT_WEIGHTS.items():
             _safe_set_widget(f"w_{key}", int(default))
@@ -456,6 +465,15 @@ def _apply_loaded_prefs(loaded: dict) -> None:
         if key == "ma20" and val == -1:
             val = 1
         st.session_state[f"w_{key}"] = val
+    if (
+        int(st.session_state.get("w_chg6_100", 0)) == -1
+        and int(st.session_state.get("w_chg6_300", 0)) == -2
+        and int(st.session_state.get("w_chg6_400", 0)) == -3
+    ):
+        st.session_state["w_chg6_50"] = -1
+        st.session_state["w_chg6_100"] = -2
+        st.session_state["w_chg6_300"] = -3
+        st.session_state["w_chg6_400"] = -4
     for key, default in DEFAULT_CUTS.items():
         st.session_state[f"c_{key}"] = int(loaded["cuts"].get(key, default))
     if all(int(st.session_state.get(f"c_{k}", 0)) == v for k, v in (
