@@ -72,49 +72,13 @@ def _browser_store():
 
 
 def read_browser_store() -> dict:
-    """페이지 localStorage 에서 uid를 읽는다. 실패해도 앱은 계속 진행한다."""
-    empty = {"uid": "", "token": "", "pending": False}
-    try:
-        store = _browser_store()
-        if not store:
-            return empty
-        result = store(
-            data={"mode": "get"},
-            key="ta_store_get",
-            default={"uid": BROWSER_PENDING, "token": ""},
-            on_uid_change=lambda: None,
-            on_token_change=lambda: None,
-        )
-        uid_raw = getattr(result, "uid", None)
-        if uid_raw is None or uid_raw == BROWSER_PENDING:
-            return {"uid": "", "token": "", "pending": True}
-        return {
-            "uid": normalize_uid(uid_raw),
-            "token": str(getattr(result, "token", None) or ""),
-            "pending": False,
-        }
-    except Exception:
-        return empty
+    """컴포넌트 복구는 앱을 멈출 수 있어 여기서는 읽지 않는다. 쿠키·주소·st.html 저장을 쓴다."""
+    return {"uid": "", "token": "", "pending": False}
 
 
 def write_browser_store(uid: str, token: str = "") -> None:
-    """같은 브라우저 다음 접속에서 읽히도록 페이지 localStorage 에 uid를 남긴다."""
-    try:
-        store = _browser_store()
-        if not store:
-            return
-        uid = normalize_uid(uid)
-        if not uid:
-            return
-        store(
-            data={"mode": "set", "uid": uid, "token": str(token or "")},
-            key="ta_store_set",
-            default={"uid": uid, "token": str(token or "")},
-            on_uid_change=lambda: None,
-            on_token_change=lambda: None,
-        )
-    except Exception:
-        return
+    """uid 기록은 cookie_set_html / st.html 이 담당한다."""
+    return
 
 try:
     from .backtest import DEFAULT_SIM, normalize_sim
@@ -469,13 +433,7 @@ def cookie_set_html(data: dict, *, force: bool = False) -> str:
         f'var keep={str(has_data).lower()};'
         f'var force={str(bool(force)).lower()};'
         "var prev=readUid();"
-        "if(prev && u && prev!==u && !force){"
-        "var url=new URL(window.location.href);"
-        "url.searchParams.set('_u',prev);"
-        "url.searchParams.set('_ls','1');"
-        "url.searchParams.delete('_a');"
-        "window.location.replace(url.toString());"
-        "return;}"
+        "if(prev && u && prev!==u && !force){return;}"
         "if(!u)return;"
         f'var d="{UID_COOKIE_NAME}="+u+";path=/;max-age=31536000;SameSite=Lax";'
         "document.cookie=d;"

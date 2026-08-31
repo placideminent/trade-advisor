@@ -165,18 +165,24 @@ def _init_rule_widgets() -> None:
         except (TypeError, ValueError):
             val = int(default)
         if val < lo or val > hi:
-            st.session_state[sk] = int(default)
+            try:
+                st.session_state[sk] = int(default)
+            except Exception:
+                pass
     for key, default in DEFAULT_CUTS.items():
         st.session_state.setdefault(f"c_{key}", int(default))
     if not st.session_state.get("_cuts_migrated_v53"):
-        if all(int(st.session_state.get(f"c_{k}", 0)) == v for k, v in (
-            ("sell_weak", 35), ("sell_mid", 30), ("sell_strong", 25),
-        )) or all(int(st.session_state.get(f"c_{k}", 0)) == v for k, v in (
-            ("sell_weak", 27), ("sell_mid", 24), ("sell_strong", 21),
-        )):
-            st.session_state["c_sell_weak"] = 40
-            st.session_state["c_sell_mid"] = 35
-            st.session_state["c_sell_strong"] = 30
+        try:
+            if all(int(st.session_state.get(f"c_{k}", 0)) == v for k, v in (
+                ("sell_weak", 35), ("sell_mid", 30), ("sell_strong", 25),
+            )) or all(int(st.session_state.get(f"c_{k}", 0)) == v for k, v in (
+                ("sell_weak", 27), ("sell_mid", 24), ("sell_strong", 21),
+            )):
+                st.session_state["c_sell_weak"] = 40
+                st.session_state["c_sell_mid"] = 35
+                st.session_state["c_sell_strong"] = 30
+        except Exception:
+            pass
         st.session_state._cuts_migrated_v53 = True
     for key, default in DEFAULT_SIM.items():
         st.session_state.setdefault(f"s_{key}", int(default))
@@ -481,15 +487,6 @@ def _bootstrap_prefs() -> None:
         or browser_uid
         or normalize_uid(st.session_state.get("prefs_uid"))
     )
-    skip_wait = bool(adopt or st.session_state.get("_prefs_skip_browser"))
-    waits = int(st.session_state.get("_prefs_await_n", 0))
-    if not uid and browser.get("pending") and not skip_wait and waits < 1:
-        st.session_state._prefs_await_n = waits + 1
-        st.session_state._prefs_await_ls = True
-        if not st.session_state.get("_prefs_defaults_on"):
-            _apply_loaded_prefs(merge_prefs())
-            st.session_state._prefs_defaults_on = True
-        return
     st.session_state._prefs_await_ls = False
     if not uid:
         uid = new_uid()
@@ -596,28 +593,8 @@ def _persist_prefs(rule: dict) -> None:
 
 
 def _emit_boot_restore() -> None:
-    """페이지 localStorage 에 남은 저장 코드를 주소에 다시 붙인다."""
-    if _query_uid() or _query_ls_checked() or _query_adopt_flag():
-        return
-    html = (
-        "<script>(function(){try{"
-        "var url=new URL(window.location.href);"
-        "if(url.searchParams.get('_ls')==='1')return;"
-        "var u='';try{u=localStorage.getItem('ta_uid')||'';}catch(e){}"
-        "u=String(u).toUpperCase().replace(/[^A-Z0-9]/g,'');"
-        "if(u.length!==8)u='';"
-        "var t='';"
-        "if(u){try{t=localStorage.getItem('ta_prefs_'+u)||localStorage.getItem('ta_prefs')||'';}catch(e){}}"
-        "url.searchParams.set('_ls','1');"
-        "if(u)url.searchParams.set('_u',u);"
-        "if(t)url.searchParams.set('_p',t);"
-        "window.location.replace(url.toString());"
-        "}catch(e){}})();</script>"
-    )
-    try:
-        st.html(html, unsafe_allow_javascript=True)
-    except Exception:
-        return
+    """주소에 코드가 있으면 그대로 쓴다. 자동 리다이렉트는 화면을 멈추게 해서 하지 않는다."""
+    return
 
 
 def _emit_ls_restore() -> None:
@@ -730,7 +707,20 @@ def require_login() -> None:
 
 _emit_boot_restore()
 require_login()
-_bootstrap_prefs()
+try:
+    _bootstrap_prefs()
+except Exception as _boot_exc:
+    st.session_state._prefs_await_ls = False
+    if not st.session_state.get("prefs_uid"):
+        st.session_state.prefs_uid = new_uid()
+    if not st.session_state.get("_prefs_defaults_on"):
+        try:
+            _apply_loaded_prefs(merge_prefs())
+        except Exception:
+            pass
+        st.session_state._prefs_defaults_on = True
+    st.session_state._prefs_boot = True
+    st.warning(f"저장 불러오기를 건너뛰었습니다: {_boot_exc}")
 _emit_ls_restore()
 
 st.markdown(
