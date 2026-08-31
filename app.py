@@ -106,6 +106,25 @@ def _want_option_walls(market: str, as_of) -> bool:
     return day >= market_today("US") - timedelta(days=1)
 
 
+def _load_df_1m(market, ticker, as_of, lookback_days, timeframe, live=False):
+    """3개월 이상 조회에서 1개월 창은 1개월 조회와 같은 1시간봉 30일을 쓴다."""
+    try:
+        if lookback_days is None or int(lookback_days) <= 60:
+            return None
+        if str(timeframe or "") == "1h":
+            return None
+        df, _meta = _load_ohlcv(market, ticker, as_of, 30, "1h", retries=1)
+        if df is None or getattr(df, "empty", True):
+            return None
+        if live:
+            trimmed = drop_incomplete_session(df, as_of)
+            if trimmed is not None and not trimmed.empty:
+                df = trimmed
+        return df
+    except Exception:
+        return None
+
+
 def _make_signal(
     an,
     six_month_chg=None,
@@ -115,6 +134,7 @@ def _make_signal(
     ticker=None,
     live=False,
     use_options=None,
+    df_1m=None,
 ):
     walls = None
     if use_options is None:
@@ -137,6 +157,7 @@ def _make_signal(
             rule=rule,
             option_walls=walls,
             market=market,
+            df_1m=df_1m,
         )
     except TypeError:
         try:
@@ -1080,6 +1101,7 @@ def _quick_signal(market: str, ticker: str, as_of, lookback_days: int, timeframe
             ticker=ticker,
             live=is_live,
             use_options=_want_option_walls(market, as_of),
+            df_1m=_load_df_1m(market, ticker, as_of, lookback_days, tf, live=is_live),
         )
     except Exception as extra:
         return {
@@ -2240,6 +2262,7 @@ try:
         ticker=ticker,
         live=is_live,
         use_options=_want_option_walls(market, as_of),
+        df_1m=_load_df_1m(market, ticker, as_of, lookback_days, timeframe, live=is_live),
     )
 except Exception as exc:
     st.error(f"분석 실패: {exc}")

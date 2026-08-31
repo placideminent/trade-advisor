@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
-SIGNAL_RULE_VERSION = 72
+SIGNAL_RULE_VERSION = 73
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 10
 # 합산 %는 조회 기간과 상관없이 같은 눈금(이론상 최저~최고)을 쓴다.
@@ -81,10 +81,10 @@ PREV_DEFAULT_CUTS = {
 WEIGHT_FIELDS = [
     ("base", "기본", "중립 시작점"),
     ("trend", "추세", "1·2개월은 상승 +, 3개월 이상은 하락 +"),
-    ("trend_1m", "1개월 상승선 근접(장기)", "3개월 이상 조회에서 전체가 상승·횡보이고, 1개월 창 상승 추세선 근처이면 +1"),
+    ("trend_1m", "1개월 상승선 근접(장기)", "3개월 이상 조회에서 전체가 상승·횡보이고, 1개월 창(1시간봉) 상승 추세선 근처이면 +1"),
     ("down_line_near", "하락 추세선 근접", "현재가가 하락 추세선 근처이면 −1"),
     ("trendline_dir_down", "추세선 둘 다 하락", "상승선·하락선이 동시에 하락이면 −1"),
-    ("trendline_up_1m_down", "추세선 상승·1개월 하락", "6개월·1년 조회에서 상승선·하락선이 둘 다 상승이고 최근 1개월이 하락이면 +1"),
+    ("trendline_up_1m_down", "추세선 상승·1개월 하락", "6개월·1년 조회에서 상승선·하락선이 둘 다 상승이고, 1개월 창(1시간봉)이 하락이면 +1"),
     ("up_line_near", "상승 추세선 근접", "현재가가 상승 추세선 근처이면 +1"),
     ("up_line_break", "상승 추세선 이탈", "완전 이탈 −1. 이탈 후 4봉이 지나면 무효"),
     ("support_near", "지지 근접", "근접하고 강도 4 이상일 때만 +1"),
@@ -367,6 +367,7 @@ def recommend(
     rule: dict | None = None,
     option_walls: dict | None = None,
     market: str | None = None,
+    df_1m=None,
     **_unused,
 ) -> Signal:
     cfg = merge_rule(rule)
@@ -403,12 +404,18 @@ def recommend(
     follow_trend = lookback_days is not None and lookback_days <= 60
     long_lookback = lookback_days is not None and lookback_days >= 180
 
+    def bars_1m():
+        if df_1m is not None and not getattr(df_1m, "empty", True):
+            return df_1m
+        return _window_df(an.df, an.as_of, 30)
+
     def window_trend(days: int) -> str:
-        if an.df is None or getattr(an.df, "empty", True):
+        src = bars_1m() if days == 30 else _window_df(an.df, an.as_of, days)
+        if src is None or getattr(src, "empty", True):
             return "sideways"
-        start = pd.Timestamp(an.as_of) - pd.Timedelta(days=days)
-        w = an.df.loc[an.df.index >= start]
-        return classify_trend(w, price)
+        return classify_trend(src, price)
+
+    one_m_label = "1개월 1시간봉" if df_1m is not None and not getattr(df_1m, "empty", True) else "1개월 창"
 
     trend_pts = abs(wp("trend"))
     if follow_trend:
@@ -426,22 +433,22 @@ def recommend(
         else:
             add("추세", f"횡보. {an.price_label} {_fmt(price)}", 0)
         if an.trend in ("up", "sideways"):
-            w1 = _window_df(an.df, an.as_of, 30)
+            w1 = bars_1m()
             line_1m = _up_line_from_df(w1)
             y_1m = _line_y_at(line_1m, float(line_1m[2])) if line_1m else None
             if y_1m is not None and abs(price - y_1m) <= near:
                 kind = "상승" if an.trend == "up" else "횡보"
                 add(
                     "추세",
-                    f"전체 {kind} · 1개월 창 상승선 {_fmt(y_1m)} 근처 (이격 {_fmt(abs(price - y_1m))})",
+                    f"전체 {kind} · {one_m_label} 상승선 {_fmt(y_1m)} 근처 (이격 {_fmt(abs(price - y_1m))})",
                     abs(wp("trend_1m")),
                 )
             elif y_1m is None:
-                add("추세", "1개월 창 상승선을 잡지 못함", 0)
+                add("추세", f"{one_m_label} 상승선을 잡지 못함", 0)
             else:
                 add(
                     "추세",
-                    f"1개월 창 상승선 {_fmt(y_1m)} 과 이격 {_fmt(abs(price - y_1m))}",
+                    f"{one_m_label} 상승선 {_fmt(y_1m)} 과 이격 {_fmt(abs(price - y_1m))}",
                     0,
                 )
         else:
@@ -480,7 +487,7 @@ def recommend(
     ):
         add(
             "추세선 방향",
-            "상승선·하락선 둘 다 상승 · 최근 1개월 하락",
+            f"상승선·하락선 둘 다 상승 · {one_m_label} 하락",
             wp("trendline_up_1m_down"),
         )
     elif not up_line or not down_line:

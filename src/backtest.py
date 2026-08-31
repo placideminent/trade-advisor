@@ -159,6 +159,14 @@ def run_backtest(
         df_main, meta = fetch_ohlcv(market, ticker, end, (end - start).days + lookback_days + 15, "1d")
 
     df_1d, _ = fetch_ohlcv(market, ticker, end, (end - start).days + 220, "1d")
+    df_1m_src = pd.DataFrame()
+    if str(timeframe or "") != "1h" and int(lookback_days) > 60:
+        try:
+            df_1m_src, _ = fetch_ohlcv(
+                market, ticker, end, (end - start).days + 45, "1h"
+            )
+        except Exception:
+            df_1m_src = pd.DataFrame()
     result.name = str(meta.get("name") or ticker)
     result.ticker = str(meta.get("ticker") or ticker)
 
@@ -232,6 +240,11 @@ def run_backtest(
         src_6m = _window(df_1d, as_of, 200) if df_1d is not None and not df_1d.empty else w
         chg6 = period_return(src_6m, as_of, px, 180)
 
+        w1m = None
+        if df_1m_src is not None and not df_1m_src.empty:
+            w1m = _window(df_1m_src, as_of, 30)
+            if w1m is None or w1m.empty:
+                w1m = None
         try:
             sig = recommend(
                 an,
@@ -240,6 +253,7 @@ def run_backtest(
                 rule=rule,
                 option_walls=option_walls,
                 market=market,
+                df_1m=w1m,
             )
         except TypeError:
             sig = recommend(an, six_month_chg=chg6)
