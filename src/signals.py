@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
-SIGNAL_RULE_VERSION = 66
+SIGNAL_RULE_VERSION = 67
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 10
 # 합산 %는 조회 기간과 상관없이 같은 눈금(이론상 최저~최고)을 쓴다.
@@ -32,7 +32,9 @@ DEFAULT_WEIGHTS = {
     "ma20": 1,
     "ma200_near": 1,
     "chg1_50": -1,
-    "chg1_down20": 1,
+    "chg1_down1": 1,
+    "chg1_down20": 2,
+    "chg1_down40": 3,
     "chg6_50": -1,
     "chg6_200": -2,
     "chg6_800": -3,
@@ -81,7 +83,7 @@ WEIGHT_FIELDS = [
     ("down_line_near", "하락 추세선 근접", "현재가가 하락 추세선 근처이면 −1"),
     ("trendline_dir_down", "추세선 둘 다 하락", "상승선·하락선이 동시에 하락이면 −1"),
     ("up_line_near", "상승 추세선 근접", "현재가가 상승 추세선 근처이면 +1"),
-    ("up_line_break", "상승 추세선 이탈", "현재가가 상승 추세선을 완전 이탈하면 −1"),
+    ("up_line_break", "상승 추세선 이탈", "완전 이탈 −1. 이탈 후 4봉이 지나면 무효"),
     ("support_near", "지지 근접", "근접하고 강도 4 이상일 때만 +1"),
     ("support_break", "지지 이탈", "지지 아래로 이탈"),
     ("resist_near", "저항 근접", "근접하고 강도 4 이상일 때만 −1"),
@@ -93,7 +95,9 @@ WEIGHT_FIELDS = [
     ("ma20", "MA20 아래", "현재가 < MA20. 상승 +1, 하락 −1"),
     ("ma200_near", "장기 이평 근처", "6개월은 180일선, 1년은 200일선 근처이면 +1"),
     ("chg1_50", "1개월 상승 30%", "30일 전 대비 30% 이상 오르면 −1"),
-    ("chg1_down20", "1개월 하락 20%", "30일 전 대비 20% 이상 떨어지면 +1"),
+    ("chg1_down1", "1개월 하락 1%", "30일 전 대비 1% 이상 20% 미만 떨어지면 +1"),
+    ("chg1_down20", "1개월 하락 20%", "30일 전 대비 20% 이상 40% 미만 떨어지면 +2"),
+    ("chg1_down40", "1개월 하락 40%", "30일 전 대비 40% 이상 떨어지면 +3"),
     ("chg6_50", "6개월 상승 50%", "6개월 전 대비 50% 이상 200% 미만 −1 (모든 조회)"),
     ("chg6_200", "6개월 상승 200%", "6개월 전 대비 200% 이상 800% 미만 −2 (모든 조회)"),
     ("chg6_800", "6개월 상승 800%", "6개월 전 대비 800% 이상 −3 (모든 조회)"),
@@ -264,6 +268,36 @@ def period_return(df, as_of, price: float, days: int = 180) -> float | None:
         return None
 
 
+UP_LINE_BREAK_BARS = 4
+
+
+def _bars_below_line(df, line, near: float, last_price: float | None = None) -> int:
+    """끝에서부터 추세선 아래로 완전히 이탈한 연속 봉 수."""
+    if df is None or getattr(df, "empty", True) or line is None:
+        return 0
+    if "close" not in getattr(df, "columns", []):
+        return 0
+    closes = pd.to_numeric(df["close"], errors="coerce")
+    n = len(closes)
+    count = 0
+    for i in range(n - 1, -1, -1):
+        y = _line_y_at(line, float(i))
+        if y is None:
+            break
+        if i == n - 1 and last_price is not None:
+            px = float(last_price)
+        else:
+            px = closes.iloc[i]
+            if pd.isna(px):
+                break
+            px = float(px)
+        if px < y - near:
+            count += 1
+        else:
+            break
+    return count
+
+
 def _line_y_at(line, x: float) -> float | None:
     x0, y0, x1, y1 = (float(v) for v in line)
     if x1 == x0:
@@ -415,11 +449,21 @@ def recommend(
                 wp("up_line_near"),
             )
         elif price < y_up - near:
-            add(
-                "상승 추세선 이탈",
-                f"상승선 {_fmt(y_up)} 아래로 완전 이탈 (이격 {_fmt(y_up - price)})",
-                wp("up_line_break"),
-            )
+            n_below = _bars_below_line(an.df, up_line, near, last_price=price)
+            if n_below <= 0:
+                n_below = 1
+            if n_below > UP_LINE_BREAK_BARS:
+                add(
+                    "상승 추세선 이탈",
+                    f"상승선 {_fmt(y_up)} 아래 이탈 (이격 {_fmt(y_up - price)}) · {n_below}봉 지나 무효",
+                    0,
+                )
+            else:
+                add(
+                    "상승 추세선 이탈",
+                    f"상승선 {_fmt(y_up)} 아래로 완전 이탈 (이격 {_fmt(y_up - price)}, {n_below}봉)",
+                    wp("up_line_break"),
+                )
         else:
             add(
                 "상승 추세선 근접",
@@ -557,12 +601,18 @@ def recommend(
     chg = _one_month_change(an, price)
     if chg is None:
         add("1개월 상승률", "계산 불가", 0)
-    elif chg >= 0.30:
-        add("1개월 상승률", f"{chg * 100:.1f}% (30% 이상 상승)", wp("chg1_50"))
-    elif chg <= -0.20:
-        add("1개월 상승률", f"{chg * 100:.1f}% (20% 이상 하락)", wp("chg1_down20"))
     else:
-        add("1개월 상승률", f"{chg * 100:.1f}%", 0)
+        chg_pct = chg * 100.0
+        if chg_pct >= 30 - 1e-9:
+            add("1개월 상승률", f"{chg_pct:.1f}% (30% 이상 상승)", wp("chg1_50"))
+        elif chg_pct <= -40 + 1e-9:
+            add("1개월 하락률", f"{chg_pct:.1f}% (40% 이상 하락)", wp("chg1_down40"))
+        elif chg_pct <= -20 + 1e-9:
+            add("1개월 하락률", f"{chg_pct:.1f}% (20% 이상 40% 미만 하락)", wp("chg1_down20"))
+        elif chg_pct <= -1 + 1e-9:
+            add("1개월 하락률", f"{chg_pct:.1f}% (1% 이상 20% 미만 하락)", wp("chg1_down1"))
+        else:
+            add("1개월 상승률", f"{chg_pct:.1f}%", 0)
 
     chg6 = six_month_chg
     if chg6 is None:

@@ -187,6 +187,8 @@ def _init_rule_widgets() -> None:
             st.session_state["w_chg6_800"] = int(st.session_state.get("w_chg6_600"))
         except (TypeError, ValueError):
             pass
+    if int(st.session_state.get("w_chg1_down20", 0)) == 1:
+        _safe_set_widget("w_chg1_down20", 2)
     for key, default in DEFAULT_WEIGHTS.items():
         sk = f"w_{key}"
         lo, hi = _weight_bounds(key)
@@ -531,8 +533,8 @@ def _apply_loaded_prefs(loaded: dict) -> None:
             val = -1
         if key == "chg1_50" and val == -3:
             val = -1
-        if key == "chg1_down20" and val == 2:
-            val = 1
+        if key == "chg1_down20" and val == 1:
+            val = 2
         if key == "trend" and val == 2:
             val = 1
         if key == "ma20" and val == -1:
