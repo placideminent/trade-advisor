@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
-SIGNAL_RULE_VERSION = 73
+SIGNAL_RULE_VERSION = 74
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 10
 # 합산 %는 조회 기간과 상관없이 같은 눈금(이론상 최저~최고)을 쓴다.
@@ -25,7 +25,6 @@ DEFAULT_WEIGHTS = {
     "support_near": 1,
     "support_break": -2,
     "resist_near": -1,
-    "vol_sup_air": -1,
     "poc": 1,
     "val": 1,
     "vah": -1,
@@ -90,7 +89,6 @@ WEIGHT_FIELDS = [
     ("support_near", "지지 근접", "근접하고 강도 4 이상일 때만 +1"),
     ("support_break", "지지 이탈", "지지 아래로 이탈"),
     ("resist_near", "저항 근접", "근접하고 강도 4 이상일 때만 −1"),
-    ("vol_sup_air", "약한 매물대·아래 공백", "지지 매물대 강도 1 미만이고 다음 지지가 10% 이상 아래"),
     ("poc", "POC", "최대 매물 부근. 상승 +, 하락 −"),
     ("val", "VAL", "밸류 하단 아래. 상승만 +1, 하락은 0"),
     ("vah", "VAH", "밸류 상단 위이면 −1"),
@@ -575,31 +573,6 @@ def recommend(
             add("저항", f"{_fmt(nres.price)} 까지 {pct_r:.2f}% (강도 {res_str:.1f})", 0)
     else:
         add("저항", "없음", 0)
-
-    vol_sups = [s for s in (an.supports or []) if "매물대" in (s.note or "")]
-    if not vol_sups:
-        add("지지 매물대", "매물대 지지 없음", 0)
-    else:
-        vs = min(vol_sups, key=lambda s: abs(price - s.price))
-        vs_str = float(vs.strength)
-        if vs_str >= 1:
-            add("지지 매물대", f"{_fmt(vs.price)} 강도 {vs_str:.2f} (1 이상)", 0)
-        else:
-            lower = [s for s in (an.supports or []) if s.price < vs.price]
-            next_sup = min(lower, key=lambda s: vs.price - s.price) if lower else None
-            gap_sup = ((vs.price - next_sup.price) / price) if next_sup and price else None
-            if next_sup and gap_sup is not None and gap_sup >= 0.10:
-                add(
-                    "지지 매물대",
-                    f"강도 {vs_str:.2f} · 다음 지지 {_fmt(next_sup.price)} 까지 {gap_sup * 100:.1f}%",
-                    wp("vol_sup_air"),
-                )
-            else:
-                add(
-                    "지지 매물대",
-                    f"강도 {vs_str:.2f} · 다음 지지 이격 10% 미만이거나 아래 지지 없음",
-                    0,
-                )
 
     poc_pts = abs(wp("poc"))
     val_pts = abs(wp("val"))
