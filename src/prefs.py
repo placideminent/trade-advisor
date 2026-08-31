@@ -450,45 +450,13 @@ def cookie_set_html(data: dict, *, force: bool = False) -> str:
 
 
 def localstorage_boot_html() -> str:
-    """이 브라우저에 남은 저장 코드를 주소로 되살린다. 새 코드를 만들기 전에 반드시 한 번 탄다."""
-    return (
-        "<html><body><script>(function(){try{"
-        "var url=new URL(window.parent.location.href);"
-        "if(url.searchParams.get('_a')==='1')return;"
-        "if(url.searchParams.get('_ls')==='1')return;"
-        "var u=null,t=null;"
-        "try{u=window.parent.localStorage.getItem('ta_uid');}catch(e){}"
-        "if(!u){try{u=localStorage.getItem('ta_uid');}catch(e){}}"
-        "if(u)u=String(u).toUpperCase().replace(/[^A-Z0-9]/g,'');"
-        "if(u&&u.length!==8)u=null;"
-        "if(u){"
-        "try{t=window.parent.localStorage.getItem('ta_prefs_'+u)||window.parent.localStorage.getItem('ta_prefs');}catch(e){}"
-        "if(!t){try{t=localStorage.getItem('ta_prefs_'+u)||localStorage.getItem('ta_prefs');}catch(e){}}"
-        "}"
-        "url.searchParams.set('_ls','1');"
-        "if(u)url.searchParams.set('_u',u);"
-        "if(t)url.searchParams.set('_p',t);"
-        "window.parent.location.replace(url.toString());"
-        "}catch(e){}})();</script></body></html>"
-    )
+    """주소 리다이렉트는 화면을 멈추게 해서 비활성화."""
+    return ""
 
 
 def localstorage_restore_html(uid: str) -> str:
-    """이어가기 때 이 브라우저 localStorage 에서 해당 코드 설정을 읽어 주소로 넣는다."""
-    uid = normalize_uid(uid)
-    return (
-        "<script>(function(){try{"
-        f'var u="{uid}";'
-        "var t=null;"
-        "try{t=localStorage.getItem('ta_prefs_'+u)||localStorage.getItem('ta_prefs');}catch(e){}"
-        "if(!t)return;"
-        "var url=new URL(window.location.href);"
-        "if(url.searchParams.get('_p')===t)return;"
-        "url.searchParams.set('_p',t);"
-        "url.searchParams.set('_u',u);"
-        "window.location.replace(url.toString());"
-        "}catch(e){}})();</script>"
-    )
+    """주소 리다이렉트는 화면을 멈추게 해서 비활성화."""
+    return ""
 
 
 def _get_secret(name: str) -> str:

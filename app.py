@@ -153,6 +153,22 @@ def _weight_bounds(key: str) -> tuple[int, int]:
     return -10, 10
 
 
+def _safe_set_widget(key: str, value: int) -> None:
+    try:
+        if key in st.session_state and st.session_state[key] == value:
+            return
+        st.session_state[key] = int(value)
+    except Exception:
+        try:
+            del st.session_state[key]
+        except Exception:
+            pass
+        try:
+            st.session_state[key] = int(value)
+        except Exception:
+            pass
+
+
 def _init_rule_widgets() -> None:
     for key, default in DEFAULT_WEIGHTS.items():
         sk = f"w_{key}"
@@ -165,12 +181,18 @@ def _init_rule_widgets() -> None:
         except (TypeError, ValueError):
             val = int(default)
         if val < lo or val > hi:
-            try:
-                st.session_state[sk] = int(default)
-            except Exception:
-                pass
+            _safe_set_widget(sk, int(default))
     for key, default in DEFAULT_CUTS.items():
-        st.session_state.setdefault(f"c_{key}", int(default))
+        sk = f"c_{key}"
+        if sk not in st.session_state:
+            st.session_state[sk] = int(default)
+            continue
+        try:
+            val = int(st.session_state[sk])
+        except (TypeError, ValueError):
+            val = int(default)
+        if val < 0 or val > 100:
+            _safe_set_widget(sk, int(default))
     if not st.session_state.get("_cuts_migrated_v53"):
         try:
             if all(int(st.session_state.get(f"c_{k}", 0)) == v for k, v in (
@@ -178,9 +200,9 @@ def _init_rule_widgets() -> None:
             )) or all(int(st.session_state.get(f"c_{k}", 0)) == v for k, v in (
                 ("sell_weak", 27), ("sell_mid", 24), ("sell_strong", 21),
             )):
-                st.session_state["c_sell_weak"] = 40
-                st.session_state["c_sell_mid"] = 35
-                st.session_state["c_sell_strong"] = 30
+                _safe_set_widget("c_sell_weak", 40)
+                _safe_set_widget("c_sell_mid", 35)
+                _safe_set_widget("c_sell_strong", 30)
         except Exception:
             pass
         st.session_state._cuts_migrated_v53 = True
@@ -376,18 +398,8 @@ def _query_adopt_flag() -> bool:
 
 
 def _bind_uid_url(uid: str, *, ls_checked: bool = True, adopted: bool = False) -> None:
-    uid = normalize_uid(uid)
-    if not uid:
-        return
-    try:
-        if _query_uid() != uid:
-            st.query_params[QUERY_UID] = uid
-        if ls_checked and _query_flag(QUERY_LS) != "1":
-            st.query_params[QUERY_LS] = "1"
-        if adopted:
-            st.query_params[QUERY_ADOPT] = "1"
-    except Exception:
-        pass
+    """주소 쓰기는 화면을 다시 돌려 분석/시뮬 클릭이 무시된다."""
+    return
 
 
 def _query_prefs() -> dict | None:
@@ -403,19 +415,7 @@ def _query_prefs() -> dict | None:
 
 
 def _bind_prefs_url(payload: dict) -> None:
-    uid = normalize_uid(payload.get("uid"))
-    _bind_uid_url(uid)
-    if not payload.get("favorites") and not int(payload.get("ts") or 0):
-        return
-    try:
-        token = encode_browser(payload)
-        current = st.query_params.get(QUERY_PREFS)
-        if isinstance(current, list):
-            current = current[0] if current else None
-        if current != token:
-            st.query_params[QUERY_PREFS] = token
-    except Exception:
-        pass
+    return
 
 
 def _prefs_payload(rule: dict) -> dict:
@@ -496,15 +496,16 @@ def _bootstrap_prefs() -> None:
     if query_data and (not query_data.get("uid") or query_data.get("uid") == uid):
         sources.append(query_data)
     sources.append(load_user_prefs_file(uid))
-    sources.append(load_user_prefs_remote(uid))
+    if adopt:
+        try:
+            sources.append(load_user_prefs_remote(uid))
+        except Exception:
+            pass
     loaded = merge_prefs(*sources)
     loaded["uid"] = uid
     _apply_loaded_prefs(loaded)
     st.session_state.prefs_uid = uid
     st.session_state._prefs_ts = int(loaded.get("ts") or 0)
-    _bind_uid_url(uid, ls_checked=True, adopted=bool(adopt))
-    if loaded.get("favorites") or adopt or query_data:
-        _bind_prefs_url(loaded)
     st.session_state._prefs_snapshot = snapshot_key(loaded)
     st.session_state._prefs_boot = True
     st.session_state._prefs_just_booted = not bool(adopt)
@@ -512,7 +513,6 @@ def _bootstrap_prefs() -> None:
     st.session_state._prefs_cookie_force = bool(adopt)
     st.session_state._prefs_remote_ok = remote_enabled()
     if adopt and _score_empty(loaded):
-        st.session_state._prefs_ls_html = localstorage_restore_html(uid)
         if remote_enabled():
             st.session_state._prefs_adopt_msg = (
                 f"{format_uid(uid)} 클라우드 기록이 없습니다. "
@@ -544,14 +544,11 @@ def _persist_prefs(rule: dict) -> None:
     snap = snapshot_key(payload)
     just_booted = bool(st.session_state.pop("_prefs_just_booted", False))
     force_cookie = bool(st.session_state.pop("_prefs_cookie_force", False))
+    force_remote = bool(st.session_state.pop("_prefs_force_remote", False))
     if st.session_state.get("_prefs_snapshot") == snap:
         if just_booted and uid:
             save_user_prefs_file(uid, payload)
-            if payload.get("favorites"):
-                _bind_prefs_url(payload)
-                if remote_enabled():
-                    st.session_state._prefs_remote_ok = save_user_prefs_remote(uid, payload)
-        if st.session_state.pop("_prefs_force_remote", False) and uid and remote_enabled():
+        if force_remote and uid and remote_enabled():
             st.session_state._prefs_remote_ok = save_user_prefs_remote(uid, payload)
         if st.session_state.pop("_prefs_need_cookie", False) or force_cookie:
             try:
@@ -559,36 +556,18 @@ def _persist_prefs(rule: dict) -> None:
             except TypeError:
                 st.session_state._prefs_cookie_html = cookie_set_html(payload)
             st.session_state._prefs_cookie_dirty = True
-            _bind_uid_url(uid, adopted=force_cookie)
-            if payload.get("favorites") or int(payload.get("ts") or 0):
-                _bind_prefs_url(payload)
         return
     st.session_state._prefs_snapshot = snap
     payload["ts"] = int(time.time())
     st.session_state._prefs_ts = payload["ts"]
     save_user_prefs_file(uid, payload)
-    if just_booted:
-        try:
-            st.session_state._prefs_cookie_html = cookie_set_html(payload, force=force_cookie)
-        except TypeError:
-            st.session_state._prefs_cookie_html = cookie_set_html(payload)
-        st.session_state._prefs_cookie_dirty = True
-        _bind_uid_url(uid, adopted=force_cookie)
-        if payload.get("favorites"):
-            _bind_prefs_url(payload)
-            if remote_enabled():
-                st.session_state._prefs_remote_ok = save_user_prefs_remote(uid, payload)
-        return
-    if remote_enabled():
+    if force_remote and uid and remote_enabled():
         st.session_state._prefs_remote_ok = save_user_prefs_remote(uid, payload)
     try:
         st.session_state._prefs_cookie_html = cookie_set_html(payload, force=force_cookie)
     except TypeError:
         st.session_state._prefs_cookie_html = cookie_set_html(payload)
     st.session_state._prefs_cookie_dirty = True
-    _bind_uid_url(uid, adopted=force_cookie)
-    if payload.get("favorites") or int(payload.get("ts") or 0):
-        _bind_prefs_url(payload)
     st.session_state.pop("_prefs_need_cookie", None)
 
 
@@ -598,18 +577,9 @@ def _emit_boot_restore() -> None:
 
 
 def _emit_ls_restore() -> None:
-    html = st.session_state.pop("_prefs_ls_html", None)
-    if not html:
-        return
-    try:
-        st.html(html, unsafe_allow_javascript=True)
-    except TypeError:
-        try:
-            components.html(html, height=1, width=1)
-        except Exception:
-            pass
-    except Exception:
-        pass
+    """localStorage → 주소 리다이렉트는 분석 클릭을 삼켜서 쓰지 않는다."""
+    st.session_state.pop("_prefs_ls_html", None)
+    return
 
 
 def _emit_prefs_cookie() -> None:
@@ -1776,6 +1746,8 @@ with st.sidebar:
         )
         if sim_scope == "즐겨찾기 전체":
             st.caption(f"즐겨찾기 {len(_fav_list())}종목을 같은 기간·수량으로 각각 돌립니다.")
+        if st.session_state.get("sim_eval_mode") not in ("기존 규칙만", "옵션 월 포함"):
+            st.session_state.sim_eval_mode = "기존 규칙만"
         st.radio(
             "평가",
             ["기존 규칙만", "옵션 월 포함"],
@@ -1841,9 +1813,24 @@ with st.sidebar:
     as_of = today_m
     sim_start = today_m - timedelta(days=150)
     sim_end = today_m
+
+    def _clamp_date_key(key: str, fallback: date) -> None:
+        raw = st.session_state.get(key)
+        if raw is None:
+            return
+        try:
+            cur = raw if isinstance(raw, date) else date.fromisoformat(str(raw)[:10])
+        except (TypeError, ValueError):
+            st.session_state[key] = fallback
+            return
+        if cur > today_m:
+            st.session_state[key] = today_m
+
     if page == "시뮬레이션":
         d1, d2 = st.columns(2)
         date_key = market if pick_one else "fav"
+        _clamp_date_key(f"sim_start_{date_key}", sim_start)
+        _clamp_date_key(f"sim_end_{date_key}", today_m)
         with d1:
             sim_start = st.date_input(
                 "시작일",
@@ -1859,6 +1846,7 @@ with st.sidebar:
                 key=f"sim_end_{date_key}",
             )
     else:
+        _clamp_date_key(f"as_of_{market}", today_m)
         as_of = st.date_input(
             "분석 시점",
             value=today_m,
@@ -1866,85 +1854,106 @@ with st.sidebar:
             key=f"as_of_{market}",
         )
     lookback_keys = list(LOOKBACK_OPTIONS.keys())
+    lb_key = "lookback_sim" if page == "시뮬레이션" else "lookback_v2"
+    if st.session_state.get(lb_key) not in lookback_keys:
+        st.session_state.pop(lb_key, None)
     lookback_label = st.selectbox(
         "조회 기간",
         lookback_keys,
         index=lookback_keys.index("3개월" if page == "시뮬레이션" else "1년"),
-        key="lookback_sim" if page == "시뮬레이션" else "lookback_v2",
+        key=lb_key,
     )
     lookback_spec = resolve_lookback(lookback_label)
     lookback_days = int(lookback_spec["days"])
     timeframe = str(lookback_spec["timeframe"])
 
     _init_rule_widgets()
-    with st.expander("평가 배점·기준", expanded=False):
-        st.caption("합산 % 눈금(-5~19점)은 그대로 두고, 항목 점수와 매수/매도 컷만 바꿉니다. 바꾼 값은 리부트 후에도 남깁니다.")
-        st.markdown("**매수 / 매도 기준**")
-        cut_cols = st.columns(2)
-        for i, (key, label, suffix) in enumerate(CUT_FIELDS):
-            with cut_cols[i % 2]:
-                st.number_input(
-                    f"{label} ({suffix})",
-                    min_value=0,
-                    max_value=100,
-                    step=1,
-                    key=f"c_{key}",
-                )
-        st.markdown("**항목 배점**")
-        w_cols = st.columns(2)
-        for i, (key, label, hint) in enumerate(WEIGHT_FIELDS):
-            with w_cols[i % 2]:
-                lo, hi = _weight_bounds(key)
-                st.number_input(
-                    label,
-                    min_value=lo,
-                    max_value=hi,
-                    step=1,
-                    key=f"w_{key}",
-                    help=hint,
-                )
-        st.button(
-            "기본값으로 되돌리기",
-            use_container_width=True,
-            on_click=_reset_rule_widgets,
-        )
-    sim = dict(DEFAULT_SIM)
-    if page == "시뮬레이션":
-        with st.expander("기본 매매 수량", expanded=sim_scope != "즐겨찾기 전체"):
-            st.caption(
-                "약한 매수 / 매수 / 강한 매수 주 수, 잔량 기준 이상이면 % 매도, 미만이면 주 수. "
-                "바꾼 값은 저장됩니다."
-            )
-            _sim_qty_fields("s_")
-            st.button("수량 기본값", use_container_width=True, on_click=_reset_sim_widgets)
-        sim = _read_sim_from_sidebar()
-        if sim_scope == "즐겨찾기 전체":
-            favs_now = _fav_list()
-            _init_fav_sim_widgets(sim)
-            with st.expander("종목별 매매 수량", expanded=True):
-                if not favs_now:
-                    st.caption("즐겨찾기가 없습니다.")
-                else:
-                    st.caption("종목마다 따로 정한 수량으로 시뮬레이션하고, 즐겨찾기와 같이 저장됩니다.")
-                    st.button(
-                        "위 기본 수량을 모든 종목에 넣기",
-                        use_container_width=True,
-                        on_click=_copy_global_sim_to_favs,
-                    )
-                    for item in favs_now:
-                        label = f"{item.get('name') or item['ticker']} ({item['ticker']})"
-                        with st.expander(label, expanded=False):
-                            _sim_qty_fields(_fav_sim_prefix(item["market"], item["ticker"]))
-                            st.button(
-                                "이 종목 기본값",
-                                key=f"reset_sim_{item['market']}_{item['ticker']}",
-                                use_container_width=True,
-                                on_click=partial(_reset_one_fav_sim, item["market"], item["ticker"]),
-                            )
-            _sync_fav_sims()
     rule = _read_rule_from_sidebar()
-    _persist_prefs(rule)
-    _emit_prefs_cookie()
+    sim = dict(DEFAULT_SIM)
+    run = False
+    run_sim = False
+    if page == "종목 분석":
+        run = st.button("분석하기", type="primary", use_container_width=True)
+        if st.session_state.pop("_auto_run", False):
+            run = True
+    elif page == "시뮬레이션":
+        run_sim = st.button("시뮬레이션 실행", type="primary", use_container_width=True)
+
+    try:
+        with st.expander("평가 배점·기준", expanded=False):
+            st.caption("합산 % 눈금(-5~19점)은 그대로 두고, 항목 점수와 매수/매도 컷만 바꿉니다. 바꾼 값은 리부트 후에도 남깁니다.")
+            st.markdown("**매수 / 매도 기준**")
+            cut_cols = st.columns(2)
+            for i, (key, label, suffix) in enumerate(CUT_FIELDS):
+                with cut_cols[i % 2]:
+                    st.number_input(
+                        f"{label} ({suffix})",
+                        min_value=0,
+                        max_value=100,
+                        step=1,
+                        key=f"c_{key}",
+                    )
+            st.markdown("**항목 배점**")
+            w_cols = st.columns(2)
+            for i, (key, label, hint) in enumerate(WEIGHT_FIELDS):
+                with w_cols[i % 2]:
+                    lo, hi = _weight_bounds(key)
+                    st.number_input(
+                        label,
+                        min_value=lo,
+                        max_value=hi,
+                        step=1,
+                        key=f"w_{key}",
+                        help=hint,
+                    )
+            st.button(
+                "기본값으로 되돌리기",
+                use_container_width=True,
+                on_click=_reset_rule_widgets,
+            )
+        sim = dict(DEFAULT_SIM)
+        if page == "시뮬레이션":
+            with st.expander("기본 매매 수량", expanded=sim_scope != "즐겨찾기 전체"):
+                st.caption(
+                    "약한 매수 / 매수 / 강한 매수 주 수, 잔량 기준 이상이면 % 매도, 미만이면 주 수. "
+                    "바꾼 값은 저장됩니다."
+                )
+                _sim_qty_fields("s_")
+                st.button("수량 기본값", use_container_width=True, on_click=_reset_sim_widgets)
+            sim = _read_sim_from_sidebar()
+            if sim_scope == "즐겨찾기 전체":
+                favs_now = _fav_list()
+                _init_fav_sim_widgets(sim)
+                with st.expander("종목별 매매 수량", expanded=True):
+                    if not favs_now:
+                        st.caption("즐겨찾기가 없습니다.")
+                    else:
+                        st.caption("종목마다 따로 정한 수량으로 시뮬레이션하고, 즐겨찾기와 같이 저장됩니다.")
+                        st.button(
+                            "위 기본 수량을 모든 종목에 넣기",
+                            use_container_width=True,
+                            on_click=_copy_global_sim_to_favs,
+                        )
+                        for item in favs_now:
+                            label = f"{item.get('name') or item['ticker']} ({item['ticker']})"
+                            with st.expander(label, expanded=False):
+                                _sim_qty_fields(_fav_sim_prefix(item["market"], item["ticker"]))
+                                st.button(
+                                    "이 종목 기본값",
+                                    key=f"reset_sim_{item['market']}_{item['ticker']}",
+                                    use_container_width=True,
+                                    on_click=partial(_reset_one_fav_sim, item["market"], item["ticker"]),
+                                )
+                _sync_fav_sims()
+        rule = _read_rule_from_sidebar()
+        _persist_prefs(rule)
+        _emit_prefs_cookie()
+    except Exception as _set_exc:
+        st.error(f"설정 칸을 건너뛰었습니다: {_set_exc}")
+        try:
+            _persist_prefs(rule)
+        except Exception:
+            pass
     uid_show = format_uid(st.session_state.get("prefs_uid") or "")
     st.caption(f"내 저장 코드: **{uid_show or '-'}**")
     with st.expander(
@@ -1987,14 +1996,6 @@ with st.sidebar:
         msg = st.session_state.get("_prefs_adopt_msg")
         if msg:
             st.info(msg)
-    run = False
-    run_sim = False
-    if page == "종목 분석":
-        run = st.button("분석하기", type="primary", use_container_width=True)
-        if st.session_state.pop("_auto_run", False):
-            run = True
-    elif page == "시뮬레이션":
-        run_sim = st.button("시뮬레이션 실행", type="primary", use_container_width=True)
 
 
 if page == "즐겨찾기":
