@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
-SIGNAL_RULE_VERSION = 54
+SIGNAL_RULE_VERSION = 55
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 10
 # 합산 %는 조회 기간과 상관없이 같은 눈금(이론상 최저~최고)을 쓴다.
@@ -18,8 +18,6 @@ DEFAULT_WEIGHTS = {
     "trend": 1,
     "down_line_near": -1,
     "up_line_near": 1,
-    "trendline_dir_down": -1,
-    "trendline_dir_up": 1,
     "support_near": 1,
     "support_break": -2,
     "resist_near": -1,
@@ -71,8 +69,6 @@ WEIGHT_FIELDS = [
     ("trend", "추세", "1·2개월은 상승 +, 3개월 이상은 하락 +"),
     ("down_line_near", "하락 추세선 근접", "현재가가 하락 추세선 근처이면 −1"),
     ("up_line_near", "상승 추세선 근접", "현재가가 상승 추세선 근처이면 +1"),
-    ("trendline_dir_down", "추세선 둘 다 하락", "상승선·하락선이 동시에 하락이면 −1"),
-    ("trendline_dir_up", "추세선 둘 다 상승", "둘 다 오르고 하락선이 더 가파르면 +1, 모이거나 평행하면 0"),
     ("support_near", "지지 근접", "근접하고 강도 4 이상일 때만 +1"),
     ("support_break", "지지 이탈", "지지 아래로 이탈"),
     ("resist_near", "저항 근접", "근접하고 강도 4 이상일 때만 −1"),
@@ -186,79 +182,11 @@ def period_return(df, as_of, price: float, days: int = 180) -> float | None:
     return float(price) / base - 1.0
 
 
-def _line_slope(line) -> float | None:
-    if line is None:
-        return None
-    x0, y0, x1, y1 = (float(v) for v in line)
-    if x1 == x0:
-        return None
-    return (y1 - y0) / (x1 - x0)
-
-
-def _lines_spreading(up_line, down_line) -> bool | None:
-    """마지막 봉에서 두 선 간격이 앞으로 벌어지면 True, 모이면 False."""
-    su = _line_slope(up_line)
-    sd = _line_slope(down_line)
-    if su is None or sd is None:
-        return None
-    x_end = max(float(up_line[2]), float(down_line[2]))
-    yu = _line_y_at(up_line, x_end)
-    yd = _line_y_at(down_line, x_end)
-    if yu is None or yd is None:
-        return None
-    gap = yd - yu
-    gap_slope = sd - su
-    if abs(gap_slope) < 1e-12:
-        return None
-    return gap * gap_slope > 0
-
-
-def _line_dir(line) -> str | None:
-    """선의 기울기. up / down / flat. 없으면 None."""
-    if line is None:
-        return None
-    x0, y0, x1, y1 = (float(v) for v in line)
-    if x1 == x0:
-        return None
-    dy = y1 - y0
-    scale = max(abs(y0), abs(y1), 1.0)
-    if abs(dy) / scale < 1e-6:
-        return "flat"
-    return "up" if dy > 0 else "down"
-
-
 def _line_y_at(line, x: float) -> float | None:
     x0, y0, x1, y1 = (float(v) for v in line)
     if x1 == x0:
         return None
     return y0 + (y1 - y0) / (x1 - x0) * (x - x0)
-
-
-def _bars_aside_line(df, line, last_price: float, *, below: bool) -> int | None:
-    """마지막 봉부터 종가(현재가)가 선 아래(또는 위)인 연속 봉 수."""
-    if df is None or getattr(df, "empty", True) or line is None:
-        return None
-    if "close" not in getattr(df, "columns", []):
-        return None
-    n = len(df)
-    if n < 1:
-        return None
-    closes = df["close"].to_numpy()
-    count = 0
-    for i in range(n - 1, -1, -1):
-        line_y = _line_y_at(line, float(i))
-        if line_y is None:
-            return None
-        px = float(last_price) if i == n - 1 else float(closes[i])
-        if below:
-            hit = px < line_y
-        else:
-            hit = px > line_y
-        if hit:
-            count += 1
-        else:
-            break
-    return count
 
 
 def _action_from_pct(score_pct: int, cuts: dict) -> str:
@@ -377,27 +305,6 @@ def recommend(
                 f"상승선 {_fmt(y_up)} 과 이격 {_fmt(abs(price - y_up))}",
                 0,
             )
-
-    up_dir = _line_dir(up_line)
-    down_dir = _line_dir(down_line)
-    if up_dir is None or down_dir is None:
-        add("추세선 방향성", "상승선 또는 하락선 없음", 0)
-    elif up_dir == "down" and down_dir == "down":
-        add("추세선 방향성", "상승선·하락선 둘 다 하락", wp("trendline_dir_down"))
-    elif up_dir == "up" and down_dir == "down":
-        add("추세선 방향성", "상승선 상승 · 하락선 하락", 0)
-    elif up_dir == "down" and down_dir == "up":
-        add("추세선 방향성", "상승선 하락 · 하락선 상승", 0)
-    elif up_dir == "up" and down_dir == "up":
-        spreading = _lines_spreading(up_line, down_line)
-        if spreading:
-            add("추세선 방향성", "둘 다 상승 · 하락선이 더 가파름", wp("trendline_dir_up"))
-        elif spreading is False:
-            add("추세선 방향성", "둘 다 상승 · 모임(교차에 가까워짐)", 0)
-        else:
-            add("추세선 방향성", "둘 다 상승 · 평행", 0)
-    else:
-        add("추세선 방향성", f"상승선 {up_dir} · 하락선 {down_dir}", 0)
 
     if nsup:
         dist_s = price - nsup.price

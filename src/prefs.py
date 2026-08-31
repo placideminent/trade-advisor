@@ -220,8 +220,6 @@ def _normalize(raw: dict | None) -> dict:
         data["cuts"]["sell_strong"] = 30
     if data["weights"].get("trend") == 2:
         data["weights"]["trend"] = 1
-    if data["weights"].get("trendline_dir_down") == -2:
-        data["weights"]["trendline_dir_down"] = -1
     if data["weights"].get("ma20") == -1:
         data["weights"]["ma20"] = 1
     try:

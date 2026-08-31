@@ -453,8 +453,6 @@ def _apply_loaded_prefs(loaded: dict) -> None:
             val = 1
         if key == "trend" and val == 2:
             val = 1
-        if key == "trendline_dir_down" and val == -2:
-            val = -1
         if key == "ma20" and val == -1:
             val = 1
         st.session_state[f"w_{key}"] = val
