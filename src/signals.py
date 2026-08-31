@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
-SIGNAL_RULE_VERSION = 52
+SIGNAL_RULE_VERSION = 53
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 10
 # 합산 %는 조회 기간과 상관없이 같은 눈금(이론상 최저~최고)을 쓴다.
@@ -15,12 +15,11 @@ SCORE_HI = SCORE_BASE + 9  # 19
 
 DEFAULT_WEIGHTS = {
     "base": 10,
-    "trend": 2,
-    "down_line_break": 1,
-    "up_line_break": -1,
-    "trendline_dir_down": -2,
+    "trend": 1,
+    "down_line_near": -1,
+    "up_line_near": 1,
+    "trendline_dir_down": -1,
     "trendline_dir_up": 1,
-    "trendline_up_near": 1,
     "support_near": 1,
     "support_break": -2,
     "resist_near": -1,
@@ -28,8 +27,9 @@ DEFAULT_WEIGHTS = {
     "vol_sup_room": 1,
     "poc": 1,
     "val": 1,
+    "vah": -1,
     "rsi": 1,
-    "ma20": -1,
+    "ma20": 1,
     "chg1_50": -1,
     "chg1_100": -2,
     "chg1_down20": 1,
@@ -45,9 +45,9 @@ DEFAULT_CUTS = {
     "buy_weak": 70,
     "buy_mid": 75,
     "buy_strong": 79,
-    "sell_weak": 35,
-    "sell_mid": 30,
-    "sell_strong": 25,
+    "sell_weak": 40,
+    "sell_mid": 35,
+    "sell_strong": 30,
 }
 LEGACY_DEFAULT_CUTS = {
     "buy_weak": 65,
@@ -57,24 +57,32 @@ LEGACY_DEFAULT_CUTS = {
     "sell_mid": 24,
     "sell_strong": 21,
 }
+PREV_DEFAULT_CUTS = {
+    "buy_weak": 70,
+    "buy_mid": 75,
+    "buy_strong": 79,
+    "sell_weak": 35,
+    "sell_mid": 30,
+    "sell_strong": 25,
+}
 
 WEIGHT_FIELDS = [
     ("base", "기본", "중립 시작점"),
-    ("trend", "추세", "가점/감점 크기. 1·2개월은 상승 +, 3개월 이상은 하락 +"),
-    ("down_line_break", "하락 추세선 이탈", "하락선 위를 4~5봉 지키면 +1, 6봉부터 0"),
-    ("up_line_break", "상승 추세선 이탈", "상승선 아래를 4~5봉 지키면 −1, 6봉부터 0"),
-    ("trendline_dir_down", "추세선 둘 다 하락", "상승선·하락선이 동시에 하락이면 −2. 하락선 이탈 가점이 있으면 0"),
-    ("trendline_dir_up", "추세선 둘 다 상승", "둘 다 상승이면서 벌어질 때만 +1, 모이면 0. 하락선 이탈 가점이 있으면 0"),
-    ("trendline_up_near", "상승선 근접", "둘 다 상승이고 현재가가 상승 추세선 근처이면 +1"),
+    ("trend", "추세", "1·2개월은 상승 +, 3개월 이상은 하락 +"),
+    ("down_line_near", "하락 추세선 근접", "현재가가 하락 추세선 근처이면 −1"),
+    ("up_line_near", "상승 추세선 근접", "현재가가 상승 추세선 근처이면 +1"),
+    ("trendline_dir_down", "추세선 둘 다 하락", "상승선·하락선이 동시에 하락이면 −1"),
+    ("trendline_dir_up", "추세선 둘 다 상승", "둘 다 오르고 하락선이 더 가파르면 +1, 모이거나 평행하면 0"),
     ("support_near", "지지 근접", "근접하고 강도 4 이상일 때만 +1"),
     ("support_break", "지지 이탈", "지지 아래로 이탈"),
     ("resist_near", "저항 근접", "근접하고 강도 4 이상일 때만 −1"),
     ("vol_sup_air", "약한 매물대·아래 공백", "지지 매물대 강도 1 미만이고 다음 지지가 10% 이상 아래"),
     ("vol_sup_room", "약한 매물대·위 여유", "지지 매물대 강도 1 미만이고 다음 저항이 10% 이상 위"),
     ("poc", "POC", "최대 매물 부근. 상승 +, 하락 −"),
-    ("val", "VAL", "밸류 하단 아래. 상승 +, 하락 −"),
-    ("rsi", "RSI", "40 이하 +, 60 이상 −"),
-    ("ma20", "MA20 아래", "현재가 < MA20 (상승 추세면 0)"),
+    ("val", "VAL", "밸류 하단 아래. 상승만 +1, 하락은 0"),
+    ("vah", "VAH", "밸류 상단 위. 횡보면 −1, 상승이면 0"),
+    ("rsi", "RSI", "30 이하 +, 70 이상 −"),
+    ("ma20", "MA20 아래", "현재가 < MA20. 상승 +1, 하락 −1"),
     ("chg1_50", "1개월 상승 30%", "30일 전 대비 30% 이상 100% 미만 −1"),
     ("chg1_100", "1개월 상승 100%", "30일 전 대비 100% 이상 −2"),
     ("chg1_down20", "1개월 하락 20%", "30일 전 대비 20% 이상 30% 미만 하락 +1"),
@@ -332,51 +340,47 @@ def recommend(
 
     up_line = an.up_line
     down_line = an.down_line
-    down_break_pts = 0
     if not down_line:
-        add("하락 추세선 이탈", "하락선 없음", 0)
+        add("하락 추세선 근접", "하락선 없음", 0)
     else:
-        above = _bars_aside_line(an.df, down_line, price, below=False)
-        if above is None:
-            add("하락 추세선 이탈", "이탈 봉 수를 계산하지 못함", 0)
-        elif above >= 6:
-            add("하락 추세선 이탈", f"하락선 위 {above}봉 연속 (6봉 이상 · 가점 종료)", 0)
-        elif above >= 4:
-            down_break_pts = wp("down_line_break")
+        y_dn = _line_y_at(down_line, float(down_line[2]))
+        if y_dn is None:
+            add("하락 추세선 근접", "하락선 위치를 계산하지 못함", 0)
+        elif abs(price - y_dn) <= near:
             add(
-                "하락 추세선 이탈",
-                f"하락선 위 {above}봉 연속 (4~5봉)",
-                down_break_pts,
+                "하락 추세선 근접",
+                f"하락선 {_fmt(y_dn)} 근처 (이격 {_fmt(abs(price - y_dn))})",
+                wp("down_line_near"),
             )
-        elif above > 0:
-            add("하락 추세선 이탈", f"하락선 위 {above}봉 연속 (4봉 미만)", 0)
         else:
-            add("하락 추세선 이탈", "하락선 아래", 0)
+            add(
+                "하락 추세선 근접",
+                f"하락선 {_fmt(y_dn)} 과 이격 {_fmt(abs(price - y_dn))}",
+                0,
+            )
 
     if not up_line:
-        add("상승 추세선 이탈", "상승선 없음", 0)
+        add("상승 추세선 근접", "상승선 없음", 0)
     else:
-        below = _bars_aside_line(an.df, up_line, price, below=True)
-        if below is None:
-            add("상승 추세선 이탈", "이탈 봉 수를 계산하지 못함", 0)
-        elif below >= 6:
-            add("상승 추세선 이탈", f"상승선 아래 {below}봉 연속 (6봉 이상 · 감점 종료)", 0)
-        elif below >= 4:
+        y_up = _line_y_at(up_line, float(up_line[2]))
+        if y_up is None:
+            add("상승 추세선 근접", "상승선 위치를 계산하지 못함", 0)
+        elif abs(price - y_up) <= near:
             add(
-                "상승 추세선 이탈",
-                f"상승선 아래 {below}봉 연속 (4~5봉)",
-                wp("up_line_break"),
+                "상승 추세선 근접",
+                f"상승선 {_fmt(y_up)} 근처 (이격 {_fmt(abs(price - y_up))})",
+                wp("up_line_near"),
             )
-        elif below > 0:
-            add("상승 추세선 이탈", f"상승선 아래 {below}봉 연속 (4봉 미만)", 0)
         else:
-            add("상승 추세선 이탈", "상승선 위", 0)
+            add(
+                "상승 추세선 근접",
+                f"상승선 {_fmt(y_up)} 과 이격 {_fmt(abs(price - y_up))}",
+                0,
+            )
 
     up_dir = _line_dir(up_line)
     down_dir = _line_dir(down_line)
-    if down_break_pts > 0:
-        add("추세선 방향성", "하락 추세선 이탈 가점이 있어 미적용", 0)
-    elif up_dir is None or down_dir is None:
+    if up_dir is None or down_dir is None:
         add("추세선 방향성", "상승선 또는 하락선 없음", 0)
     elif up_dir == "down" and down_dir == "down":
         add("추세선 방향성", "상승선·하락선 둘 다 하락", wp("trendline_dir_down"))
@@ -387,32 +391,13 @@ def recommend(
     elif up_dir == "up" and down_dir == "up":
         spreading = _lines_spreading(up_line, down_line)
         if spreading:
-            add("추세선 방향성", "둘 다 상승 · 벌어짐", wp("trendline_dir_up"))
+            add("추세선 방향성", "둘 다 상승 · 하락선이 더 가파름", wp("trendline_dir_up"))
         elif spreading is False:
             add("추세선 방향성", "둘 다 상승 · 모임(교차에 가까워짐)", 0)
         else:
             add("추세선 방향성", "둘 다 상승 · 평행", 0)
     else:
         add("추세선 방향성", f"상승선 {up_dir} · 하락선 {down_dir}", 0)
-
-    if up_dir == "up" and down_dir == "up" and up_line:
-        y_up = _line_y_at(up_line, float(up_line[2]))
-        if y_up is None:
-            add("상승선 근접", "상승선 위치를 계산하지 못함", 0)
-        elif abs(price - y_up) <= near:
-            add(
-                "상승선 근접",
-                f"둘 다 상승 · 상승선 {_fmt(y_up)} 근처 (이격 {_fmt(abs(price - y_up))})",
-                wp("trendline_up_near"),
-            )
-        else:
-            add(
-                "상승선 근접",
-                f"둘 다 상승 · 상승선 {_fmt(y_up)} 과 이격 {_fmt(abs(price - y_up))}",
-                0,
-            )
-    else:
-        add("상승선 근접", "둘 다 상승이 아니거나 상승선 없음", 0)
 
     if nsup:
         dist_s = price - nsup.price
@@ -502,41 +487,47 @@ def recommend(
         else:
             add("POC", f"최대 매물 {_fmt(an.poc)} 부근 · 횡보", 0)
         add("VAL", f"하단 {_fmt(an.val)} (POC가 우선이라 미적용)", 0)
-        add("VAH", f"상단 {_fmt(an.vah)} (강세 구간 정상 · 감점 없음)", 0)
+        add("VAH", f"상단 {_fmt(an.vah)} (POC가 우선이라 미적용)", 0)
     elif price > an.vah:
         add("POC", f"최대 매물 {_fmt(an.poc)} · 현재가가 멀리 있음", 0)
         add("VAL", f"하단 {_fmt(an.val)} · 현재가가 VAL 위", 0)
-        add("VAH", f"상단 {_fmt(an.vah)} 위 (강세 구간 정상 · 감점 없음)", 0)
+        if an.trend == "up":
+            add("VAH", f"상단 {_fmt(an.vah)} 위 · 상승 추세", 0)
+        elif an.trend == "down":
+            add("VAH", f"상단 {_fmt(an.vah)} 위 · 하락 추세", 0)
+        else:
+            add("VAH", f"상단 {_fmt(an.vah)} 위 · 횡보", wp("vah"))
     elif price < an.val:
         add("POC", f"최대 매물 {_fmt(an.poc)} · 현재가가 멀리 있음", 0)
-        if an.trend == "down":
-            add("VAL", f"하단 {_fmt(an.val)} 아래 · 하락 추세", -val_pts)
-        elif an.trend == "up":
+        if an.trend == "up":
             add("VAL", f"하단 {_fmt(an.val)} 아래 · 상승 추세", val_pts)
         else:
-            add("VAL", f"하단 {_fmt(an.val)} 아래 · 횡보", 0)
-        add("VAH", f"상단 {_fmt(an.vah)} (감점 없음)", 0)
+            add("VAL", f"하단 {_fmt(an.val)} 아래 · {('하락' if an.trend == 'down' else '횡보')} 추세", 0)
+        add("VAH", f"상단 {_fmt(an.vah)} (해당 없음)", 0)
     else:
         add("POC", f"최대 매물 {_fmt(an.poc)} · 밸류 구간 내부", 0)
         add("VAL", f"하단 {_fmt(an.val)} ~ 현재가 사이", 0)
-        add("VAH", f"상단 {_fmt(an.vah)} (감점 없음)", 0)
+        add("VAH", f"상단 {_fmt(an.vah)} (해당 없음)", 0)
 
     rsi_pts = abs(wp("rsi"))
-    if an.rsi >= 60:
-        add("RSI", f"{an.rsi:.1f} (60 이상)", -rsi_pts)
-    elif an.rsi <= 40:
-        add("RSI", f"{an.rsi:.1f} (40 이하)", rsi_pts)
+    if an.rsi >= 70:
+        add("RSI", f"{an.rsi:.1f} (70 이상)", -rsi_pts)
+    elif an.rsi <= 30:
+        add("RSI", f"{an.rsi:.1f} (30 이하)", rsi_pts)
     else:
         add("RSI", f"{an.rsi:.1f} 중립", 0)
 
+    ma_pts = abs(wp("ma20"))
     if an.ma20 is None:
         add("MA20", "이동평균 없음", 0)
     elif price > an.ma20:
         add("MA20", f"{an.price_label} > MA20 ({_fmt(an.ma20)})", 0)
-    elif an.trend != "up":
-        add("MA20", f"{an.price_label} < MA20 ({_fmt(an.ma20)})", wp("ma20"))
+    elif an.trend == "up":
+        add("MA20", f"{an.price_label} < MA20 ({_fmt(an.ma20)}) · 상승 추세", ma_pts)
+    elif an.trend == "down":
+        add("MA20", f"{an.price_label} < MA20 ({_fmt(an.ma20)}) · 하락 추세", -ma_pts)
     else:
-        add("MA20", f"{an.price_label} < MA20 ({_fmt(an.ma20)}) · 상승 추세라 감점 없음", 0)
+        add("MA20", f"{an.price_label} < MA20 ({_fmt(an.ma20)}) · 횡보", 0)
 
     chg = _one_month_change(an, price)
     if chg is None:

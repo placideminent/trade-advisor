@@ -413,9 +413,21 @@ def _apply_loaded_prefs(loaded: dict) -> None:
             val = -2
         if key == "chg1_down20" and val == 2:
             val = 1
+        if key == "trend" and val == 2:
+            val = 1
+        if key == "trendline_dir_down" and val == -2:
+            val = -1
+        if key == "ma20" and val == -1:
+            val = 1
         st.session_state[f"w_{key}"] = val
     for key, default in DEFAULT_CUTS.items():
         st.session_state[f"c_{key}"] = int(loaded["cuts"].get(key, default))
+    if all(int(st.session_state.get(f"c_{k}", 0)) == v for k, v in (
+        ("buy_weak", 70), ("buy_mid", 75), ("buy_strong", 79),
+        ("sell_weak", 35), ("sell_mid", 30), ("sell_strong", 25),
+    )):
+        for key, default in DEFAULT_CUTS.items():
+            st.session_state[f"c_{key}"] = int(default)
     sim = loaded.get("sim") or {}
     for key, default in DEFAULT_SIM.items():
         st.session_state[f"s_{key}"] = int(sim.get(key, default))

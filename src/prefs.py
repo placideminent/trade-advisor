@@ -146,6 +146,14 @@ LEGACY_DEFAULT_CUTS = {
     "sell_mid": 24,
     "sell_strong": 21,
 }
+PREV_DEFAULT_CUTS = {
+    "buy_weak": 70,
+    "buy_mid": 75,
+    "buy_strong": 79,
+    "sell_weak": 35,
+    "sell_mid": 30,
+    "sell_strong": 25,
+}
 
 COOKIE_NAME = "ta_prefs"
 UID_COOKIE_NAME = "ta_uid"
@@ -224,6 +232,14 @@ def _normalize(raw: dict | None) -> dict:
                 data["cuts"][key] = default
     if all(data["cuts"].get(key) == old for key, old in LEGACY_DEFAULT_CUTS.items()):
         data["cuts"] = dict(DEFAULT_CUTS)
+    if all(data["cuts"].get(key) == old for key, old in PREV_DEFAULT_CUTS.items()):
+        data["cuts"] = dict(DEFAULT_CUTS)
+    if data["weights"].get("trend") == 2:
+        data["weights"]["trend"] = 1
+    if data["weights"].get("trendline_dir_down") == -2:
+        data["weights"]["trendline_dir_down"] = -1
+    if data["weights"].get("ma20") == -1:
+        data["weights"]["ma20"] = 1
     data["sim"] = normalize_sim(sim)
     try:
         data["sim_options"] = 1 if int(raw.get("sim_options") or 0) else 0
