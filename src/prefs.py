@@ -219,8 +219,22 @@ def _normalize(raw: dict | None) -> dict:
         data["weights"]["trend"] = 1
     if data["weights"].get("ma20") == -1:
         data["weights"]["ma20"] = 1
-    if int(data["weights"].get("chg6_100") or 0) == -1:
-        data["weights"]["chg6_100"] = -2
+    if "chg6_200" not in weights:
+        try:
+            old = int(weights.get("chg6_100"))
+        except (TypeError, ValueError):
+            old = None
+        if old == -1:
+            old = -2
+        if old is not None:
+            data["weights"]["chg6_200"] = old
+    if "chg6_800" not in weights:
+        try:
+            old = int(weights.get("chg6_600"))
+        except (TypeError, ValueError):
+            old = None
+        if old is not None:
+            data["weights"]["chg6_800"] = old
     try:
         rule_ver = int(raw.get("rule_ver") or 0)
     except (TypeError, ValueError):

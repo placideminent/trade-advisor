@@ -174,6 +174,19 @@ def _safe_set_widget(key: str, value: int) -> None:
 
 
 def _init_rule_widgets() -> None:
+    if "w_chg6_200" not in st.session_state and "w_chg6_100" in st.session_state:
+        try:
+            old = int(st.session_state.get("w_chg6_100"))
+            if old == -1:
+                old = -2
+            st.session_state["w_chg6_200"] = old
+        except (TypeError, ValueError):
+            pass
+    if "w_chg6_800" not in st.session_state and "w_chg6_600" in st.session_state:
+        try:
+            st.session_state["w_chg6_800"] = int(st.session_state.get("w_chg6_600"))
+        except (TypeError, ValueError):
+            pass
     for key, default in DEFAULT_WEIGHTS.items():
         sk = f"w_{key}"
         lo, hi = _weight_bounds(key)
@@ -212,8 +225,6 @@ def _init_rule_widgets() -> None:
                 val = int(default)
             if val < 0 or val > 100:
                 _safe_set_widget(sk, int(default))
-    if int(st.session_state.get("w_chg6_100", 0)) == -1:
-        _safe_set_widget("w_chg6_100", -2)
     if not st.session_state.get("_rules_v54"):
         for key, default in DEFAULT_WEIGHTS.items():
             _safe_set_widget(f"w_{key}", int(default))
@@ -496,8 +507,24 @@ def _prefs_payload(rule: dict) -> dict:
 
 
 def _apply_loaded_prefs(loaded: dict) -> None:
+    src_w = loaded.get("weights") or {}
+    if "chg6_200" not in src_w and "chg6_100" in src_w:
+        try:
+            old = int(src_w.get("chg6_100"))
+            if old == -1:
+                old = -2
+            src_w = dict(src_w)
+            src_w["chg6_200"] = old
+        except (TypeError, ValueError):
+            pass
+    if "chg6_800" not in src_w and "chg6_600" in src_w:
+        try:
+            src_w = dict(src_w)
+            src_w["chg6_800"] = int(src_w.get("chg6_600"))
+        except (TypeError, ValueError):
+            pass
     for key, default in DEFAULT_WEIGHTS.items():
-        val = int(loaded["weights"].get(key, default))
+        val = int(src_w.get(key, default))
         if key == "support_near" and val == 2:
             val = 1
         if key == "resist_near" and val == -2:
@@ -511,8 +538,6 @@ def _apply_loaded_prefs(loaded: dict) -> None:
         if key == "ma20" and val == -1:
             val = 1
         st.session_state[f"w_{key}"] = val
-    if int(st.session_state.get("w_chg6_100", 0)) == -1:
-        st.session_state["w_chg6_100"] = -2
     stock_cuts = loaded.get("cuts") or DEFAULT_CUTS_STOCK
     crypto_cuts = loaded.get("cuts_crypto") or DEFAULT_CUTS_CRYPTO
     for key, default in DEFAULT_CUTS_STOCK.items():
