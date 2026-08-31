@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
-SIGNAL_RULE_VERSION = 63
+SIGNAL_RULE_VERSION = 64
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 10
 # 합산 %는 조회 기간과 상관없이 같은 눈금(이론상 최저~최고)을 쓴다.
@@ -25,7 +25,6 @@ DEFAULT_WEIGHTS = {
     "support_break": -2,
     "resist_near": -1,
     "vol_sup_air": -1,
-    "vol_sup_room": 1,
     "poc": 1,
     "val": 1,
     "vah": -1,
@@ -33,9 +32,7 @@ DEFAULT_WEIGHTS = {
     "ma20": 1,
     "ma200_near": 1,
     "chg1_50": -1,
-    "chg1_100": -2,
     "chg1_down20": 1,
-    "chg1_down30": 2,
     "chg6_50": -1,
     "chg6_100": -2,
     "rr_penalty": -1,
@@ -88,17 +85,14 @@ WEIGHT_FIELDS = [
     ("support_break", "지지 이탈", "지지 아래로 이탈"),
     ("resist_near", "저항 근접", "근접하고 강도 4 이상일 때만 −1"),
     ("vol_sup_air", "약한 매물대·아래 공백", "지지 매물대 강도 1 미만이고 다음 지지가 10% 이상 아래"),
-    ("vol_sup_room", "약한 매물대·위 여유", "지지 매물대 강도 1 미만이고 다음 저항이 10% 이상 위"),
     ("poc", "POC", "최대 매물 부근. 상승 +, 하락 −"),
     ("val", "VAL", "밸류 하단 아래. 상승만 +1, 하락은 0"),
     ("vah", "VAH", "밸류 상단 위이면 −1"),
     ("rsi", "RSI", "30 이하 +, 70 이상 −"),
     ("ma20", "MA20 아래", "현재가 < MA20. 상승 +1, 하락 −1"),
     ("ma200_near", "장기 이평 근처", "6개월은 180일선, 1년은 200일선 근처이면 +1"),
-    ("chg1_50", "1개월 상승 30%", "30일 전 대비 30% 이상 100% 미만 −1"),
-    ("chg1_100", "1개월 상승 100%", "30일 전 대비 100% 이상 −2"),
-    ("chg1_down20", "1개월 하락 20%", "30일 전 대비 20% 이상 30% 미만 하락 +1"),
-    ("chg1_down30", "1개월 하락 30%", "30일 전 대비 30% 이상 하락 +2"),
+    ("chg1_50", "1개월 상승 30%", "30일 전 대비 30% 이상 오르면 −1"),
+    ("chg1_down20", "1개월 하락 20%", "30일 전 대비 20% 이상 떨어지면 +1"),
     ("chg6_50", "6개월 상승 50%", "6개월 전 대비 50% 이상 100% 미만 −1 (모든 조회)"),
     ("chg6_100", "6개월 상승 100%", "6개월 전 대비 100% 이상 −2 (모든 조회)"),
     ("rr_penalty", "손익비 부족", "손익비 1.2 미만이고 점수가 높을 때"),
@@ -469,23 +463,16 @@ def recommend(
             lower = [s for s in (an.supports or []) if s.price < vs.price]
             next_sup = min(lower, key=lambda s: vs.price - s.price) if lower else None
             gap_sup = ((vs.price - next_sup.price) / price) if next_sup and price else None
-            gap_res = ((nres.price - price) / price) if nres and price else None
             if next_sup and gap_sup is not None and gap_sup >= 0.10:
                 add(
                     "지지 매물대",
                     f"강도 {vs_str:.2f} · 다음 지지 {_fmt(next_sup.price)} 까지 {gap_sup * 100:.1f}%",
                     wp("vol_sup_air"),
                 )
-            elif nres and gap_res is not None and gap_res >= 0.10:
-                add(
-                    "지지 매물대",
-                    f"강도 {vs_str:.2f} · 다음 저항 {_fmt(nres.price)} 까지 {gap_res * 100:.1f}%",
-                    wp("vol_sup_room"),
-                )
             else:
                 add(
                     "지지 매물대",
-                    f"강도 {vs_str:.2f} · 다음 지지/저항 이격 10% 미만이거나 저항 없음",
+                    f"강도 {vs_str:.2f} · 다음 지지 이격 10% 미만이거나 아래 지지 없음",
                     0,
                 )
 
@@ -548,14 +535,10 @@ def recommend(
     chg = _one_month_change(an, price)
     if chg is None:
         add("1개월 상승률", "계산 불가", 0)
-    elif chg >= 1.0:
-        add("1개월 상승률", f"{chg * 100:.1f}% (100% 이상)", wp("chg1_100"))
     elif chg >= 0.30:
-        add("1개월 상승률", f"{chg * 100:.1f}% (30% 이상 100% 미만)", wp("chg1_50"))
-    elif chg <= -0.30:
-        add("1개월 상승률", f"{chg * 100:.1f}% (30% 이상 하락)", wp("chg1_down30"))
+        add("1개월 상승률", f"{chg * 100:.1f}% (30% 이상 상승)", wp("chg1_50"))
     elif chg <= -0.20:
-        add("1개월 상승률", f"{chg * 100:.1f}% (20% 이상 30% 미만 하락)", wp("chg1_down20"))
+        add("1개월 상승률", f"{chg * 100:.1f}% (20% 이상 하락)", wp("chg1_down20"))
     else:
         add("1개월 상승률", f"{chg * 100:.1f}%", 0)
 

@@ -504,8 +504,6 @@ def _apply_loaded_prefs(loaded: dict) -> None:
             val = -1
         if key == "chg1_50" and val == -3:
             val = -1
-        if key == "chg1_100" and val == -4:
-            val = -2
         if key == "chg1_down20" and val == 2:
             val = 1
         if key == "trend" and val == 2:
