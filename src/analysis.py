@@ -30,6 +30,7 @@ class Analysis:
     poc: float
     vah: float
     val: float
+    ma200: float | None = None
     supports: list[Level] = field(default_factory=list)
     resistances: list[Level] = field(default_factory=list)
     volume_nodes: list[Level] = field(default_factory=list)
@@ -64,6 +65,51 @@ def atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
         axis=1,
     ).max(axis=1)
     return tr.rolling(period).mean()
+
+
+def classify_trend(df: pd.DataFrame, price: float) -> str:
+    """스윙·이평으로 상승/하락/횡보를 본다. 봉이 짧으면 횡보."""
+    if df is None or getattr(df, "empty", True) or len(df) < 9 or price is None or price <= 0:
+        return "sideways"
+    highs, lows = find_swings(df)
+    close = df["close"]
+    ma20_s = close.rolling(20).mean()
+    ma60_s = close.rolling(60).mean()
+    ma20 = float(ma20_s.iloc[-1]) if len(ma20_s) and pd.notna(ma20_s.iloc[-1]) else None
+    ma60 = float(ma60_s.iloc[-1]) if len(ma60_s) and pd.notna(ma60_s.iloc[-1]) else None
+    structure = "sideways"
+    if len(lows) >= 2 and len(highs) >= 2:
+        hl = lows[-1][1] > lows[-2][1]
+        hh = highs[-1][1] > highs[-2][1]
+        ll = lows[-1][1] < lows[-2][1]
+        lh = highs[-1][1] < highs[-2][1]
+        if hl and hh:
+            structure = "up"
+        elif ll and lh:
+            structure = "down"
+    ma_trend = "sideways"
+    if ma20 is not None and ma60 is not None:
+        if ma20 > ma60 * 1.005 and price > ma20:
+            ma_trend = "up"
+        elif ma20 < ma60 * 0.995 and price < ma20:
+            ma_trend = "down"
+    if ma60 is None:
+        if structure == "up" and ma20 is not None and price > ma20:
+            return "up"
+        if structure == "down" and ma20 is not None and price < ma20:
+            return "down"
+        first = float(close.iloc[0])
+        last = float(close.iloc[-1])
+        if first > 0 and ma20 is not None and last > first and price > ma20:
+            return "up"
+        if first > 0 and ma20 is not None and last < first and price < ma20:
+            return "down"
+        return "sideways"
+    if structure == ma_trend:
+        return structure
+    if structure != "sideways":
+        return structure
+    return ma_trend
 
 
 def find_swings(df: pd.DataFrame, left: int = 4, right: int = 4) -> tuple[list, list]:
@@ -189,6 +235,17 @@ def analyze(
 
     work["ma20"] = work["close"].rolling(20).mean()
     work["ma60"] = work["close"].rolling(60).mean()
+    ma200 = None
+    try:
+        daily_close = work["close"].resample("1D").last().dropna()
+        if len(daily_close) >= 200:
+            daily_ma200 = daily_close.rolling(200).mean()
+            work["ma200"] = daily_ma200.reindex(work.index, method="ffill")
+            last_ma200 = daily_ma200.iloc[-1]
+            if pd.notna(last_ma200):
+                ma200 = float(last_ma200)
+    except (TypeError, ValueError):
+        ma200 = None
     work["rsi"] = rsi(work["close"])
     work["atr"] = atr(work)
 
@@ -329,6 +386,7 @@ def analyze(
         atr=last_atr,
         ma20=ma20,
         ma60=ma60,
+        ma200=ma200,
         poc=poc,
         vah=vah,
         val=val,

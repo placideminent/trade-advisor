@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
-SIGNAL_RULE_VERSION = 61
+SIGNAL_RULE_VERSION = 62
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 10
 # 합산 %는 조회 기간과 상관없이 같은 눈금(이론상 최저~최고)을 쓴다.
@@ -16,6 +16,7 @@ SCORE_HI = SCORE_BASE + 9  # 19
 DEFAULT_WEIGHTS = {
     "base": 10,
     "trend": 1,
+    "trend_1m": 1,
     "down_line_near": -1,
     "trendline_dir_down": -1,
     "up_line_near": 1,
@@ -30,6 +31,7 @@ DEFAULT_WEIGHTS = {
     "vah": -1,
     "rsi": 1,
     "ma20": 1,
+    "ma200_near": 1,
     "chg1_50": -1,
     "chg1_100": -2,
     "chg1_down20": 1,
@@ -77,6 +79,7 @@ PREV_DEFAULT_CUTS = {
 WEIGHT_FIELDS = [
     ("base", "기본", "중립 시작점"),
     ("trend", "추세", "1·2개월은 상승 +, 3개월 이상은 하락 +"),
+    ("trend_1m", "1개월 상승(장기)", "3개월 이상 조회에서 최근 1개월이 상승이면 +1"),
     ("down_line_near", "하락 추세선 근접", "현재가가 하락 추세선 근처이면 −1"),
     ("trendline_dir_down", "추세선 둘 다 하락", "상승선·하락선이 동시에 하락이면 −1"),
     ("up_line_near", "상승 추세선 근접", "현재가가 상승 추세선 근처이면 +1"),
@@ -91,6 +94,7 @@ WEIGHT_FIELDS = [
     ("vah", "VAH", "밸류 상단 위이면 −1"),
     ("rsi", "RSI", "30 이하 +, 70 이상 −"),
     ("ma20", "MA20 아래", "현재가 < MA20. 상승 +1, 하락 −1"),
+    ("ma200_near", "200일선 근처", "현재가가 200일선 근처이면 +1"),
     ("chg1_50", "1개월 상승 30%", "30일 전 대비 30% 이상 100% 미만 −1"),
     ("chg1_100", "1개월 상승 100%", "30일 전 대비 100% 이상 −2"),
     ("chg1_down20", "1개월 하락 20%", "30일 전 대비 20% 이상 30% 미만 하락 +1"),
@@ -170,7 +174,7 @@ def merge_rule(rule: dict | None) -> dict:
             migrate_sell_cuts(cuts_crypto)
     return {"weights": weights, "cuts": cuts, "cuts_crypto": cuts_crypto}
 
-from .analysis import Analysis, Level
+from .analysis import Analysis, Level, classify_trend
 
 
 @dataclass
@@ -342,6 +346,15 @@ def recommend(
             add("추세", f"하락 · 눌림 매수 가점. {an.price_label} {_fmt(price)}", trend_pts)
         else:
             add("추세", f"횡보. {an.price_label} {_fmt(price)}", 0)
+        t1m = "sideways"
+        if an.df is not None and not getattr(an.df, "empty", True):
+            start = pd.Timestamp(an.as_of) - pd.Timedelta(days=30)
+            w1 = an.df.loc[an.df.index >= start]
+            t1m = classify_trend(w1, price)
+        if t1m == "up":
+            add("추세", "최근 1개월 창에서 상승", abs(wp("trend_1m")))
+        else:
+            add("추세", f"최근 1개월 창에서 {('하락' if t1m == 'down' else '횡보')}", 0)
 
     up_line = an.up_line
     down_line = an.down_line
@@ -522,6 +535,13 @@ def recommend(
         add("MA20", f"{an.price_label} < MA20 ({_fmt(an.ma20)}) · 하락 추세", -ma_pts)
     else:
         add("MA20", f"{an.price_label} < MA20 ({_fmt(an.ma20)}) · 횡보", 0)
+
+    if getattr(an, "ma200", None) is None:
+        add("200일선", "200일선 없음 (일봉 200개 미만)", 0)
+    elif abs(price - an.ma200) <= near:
+        add("200일선", f"200일선 {_fmt(an.ma200)} 근처 (이격 {_fmt(abs(price - an.ma200))})", wp("ma200_near"))
+    else:
+        add("200일선", f"200일선 {_fmt(an.ma200)} 과 이격 {_fmt(abs(price - an.ma200))}", 0)
 
     chg = _one_month_change(an, price)
     if chg is None:

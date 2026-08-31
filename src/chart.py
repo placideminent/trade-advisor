@@ -61,6 +61,12 @@ def build_chart(an: Analysis, sig: Signal, title: str) -> go.Figure:
             row=1,
             col=1,
         )
+    if "ma200" in df.columns:
+        fig.add_trace(
+            go.Scatter(x=df.index, y=df["ma200"], name="MA200", line=dict(color="#0f766e", width=1.6)),
+            row=1,
+            col=1,
+        )
 
     x0 = df.index[0]
     x1 = df.index[-1]
