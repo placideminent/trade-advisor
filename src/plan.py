@@ -15,7 +15,7 @@ from .backtest import (
     _lot,
     run_backtest,
 )
-from .data import fetch_usdkrw, fetch_usdkrw_history
+from .data import fetch_ohlcv, fetch_usdkrw, fetch_usdkrw_history
 from .universe import resolve_lookback
 
 DEFAULT_PLAN_PCTS = {
@@ -104,6 +104,66 @@ def _native_to_krw(px: float, market: str, fx: float | None) -> float | None:
     return float(px)
 
 
+def _as_date(ts) -> date:
+    return ts.date() if hasattr(ts, "date") else ts
+
+
+def _close_on_or_before(df: pd.DataFrame, as_of: date) -> float | None:
+    if df is None or df.empty or "close" not in df.columns:
+        return None
+    picked = df.loc[[_as_date(ts) <= as_of for ts in df.index]]
+    if picked.empty:
+        picked = df.loc[[_as_date(ts) >= as_of for ts in df.index]]
+        if picked.empty:
+            return None
+        row = picked.iloc[0]
+    else:
+        row = picked.iloc[-1]
+    try:
+        px = float(row["close"])
+    except (TypeError, ValueError):
+        return None
+    return px if px > 0 else None
+
+
+def _spy_monthly_value(
+    contrib_days: list[date],
+    monthly_krw: float,
+    end: date,
+    fx_hist: pd.Series,
+    fx_fallback: float | None,
+) -> tuple[float | None, str]:
+    """같은 달에 같은 금액을 SPY에 넣은 최종 원화 평가액."""
+    if not contrib_days or monthly_krw <= 0:
+        return 0.0, ""
+    start = min(contrib_days)
+    lookback = max((end - start).days + 30, 40)
+    try:
+        df, _meta = fetch_ohlcv("US", "SPY", end, lookback, "1d")
+    except Exception as extra:
+        return None, str(extra)
+    if df is None or df.empty:
+        return None, "SPY 시세를 받지 못했습니다."
+    shares = 0.0
+    last_fx = fx_fallback
+    for day in contrib_days:
+        px = _close_on_or_before(df, day)
+        fx = _fx_on(fx_hist, day, last_fx)
+        if fx:
+            last_fx = fx
+        if not px or not fx:
+            continue
+        krw_px = px * fx
+        if krw_px <= 0:
+            continue
+        shares += monthly_krw / krw_px
+    last_px = _close_on_or_before(df, end)
+    end_fx = _fx_on(fx_hist, end, last_fx)
+    if not shares or not last_px or not end_fx:
+        return None, "SPY 월적립을 계산하지 못했습니다."
+    return shares * last_px * end_fx, ""
+
+
 @dataclass
 class PlanResult:
     start: date
@@ -112,6 +172,12 @@ class PlanResult:
     months: int
     cash_krw: float = 0.0
     contributed_krw: float = 0.0
+    pnl_krw: float = 0.0
+    pnl_pct: float = 0.0
+    spy_value_krw: float | None = None
+    spy_pnl_krw: float | None = None
+    spy_pct: float | None = None
+    spy_note: str = ""
     error: str | None = None
     fx_note: str = ""
     holdings: list = field(default_factory=list)
@@ -239,8 +305,11 @@ def run_plan(
     month_left = {key: 0.0 for key in daily_by_key}
     shares = {key: 0.0 for key in daily_by_key}
     avg = {key: 0.0 for key in daily_by_key}
+    buy_krw = {key: 0.0 for key in daily_by_key}
+    sell_krw = {key: 0.0 for key in daily_by_key}
     trades: list[dict] = []
     months_log: list[dict] = []
+    contrib_days: list[date] = []
 
     def px_of(key: str, as_of: date) -> float | None:
         row = daily_by_key[key].get(as_of)
@@ -286,9 +355,11 @@ def run_plan(
                 add = monthly_krw * weights.get(key, 0)
                 month_budget[key] = add
                 month_left[key] = add
+            contrib_days.append(as_of)
             months_log.append(
                 {
                     "년월": f"{as_of.year}-{as_of.month:02d}",
+                    "날짜": as_of.isoformat(),
                     "적립": monthly_krw,
                     "현금": cash,
                 }
@@ -328,6 +399,7 @@ def run_plan(
                 shares[key] = 0.0
                 avg[key] = 0.0
             cash += proceeds
+            sell_krw[key] += proceeds
             trades.append(
                 {
                     "날짜": as_of.isoformat(),
@@ -370,6 +442,7 @@ def run_plan(
                 continue
             cost = qty * krw_px
             month_left[key], cash = _pay_krw(cost, month_left.get(key, 0), cash)
+            buy_krw[key] += cost
             prev = shares[key]
             avg[key] = (avg[key] * prev + px * qty) / (prev + qty) if prev + qty else px
             shares[key] = prev + qty
@@ -395,6 +468,10 @@ def run_plan(
         sh = shares[key]
         px = last_px.get(key) or 0.0
         val = values.get(key, 0.0)
+        invested = buy_krw.get(key, 0.0)
+        sold = sell_krw.get(key, 0.0)
+        ticker_pnl = val + sold - invested
+        ticker_pct = (ticker_pnl / invested * 100.0) if invested > 0 else None
         w = (val / total) if total > 0 else 0.0
         holdings.append(
             {
@@ -405,12 +482,28 @@ def run_plan(
                 "평단": avg[key],
                 "종가": px,
                 "평가(원)": val,
+                "투입": invested,
+                "매도대금": sold,
+                "수익금": ticker_pnl,
+                "수익률": ticker_pct,
                 "실제비중": w * 100,
                 "월배정비중": weights.get(key, 0) * 100,
             }
         )
     result.cash_krw = cash
     result.contributed_krw = contributed
+    result.pnl_krw = total - contributed
+    result.pnl_pct = (result.pnl_krw / contributed * 100.0) if contributed > 0 else 0.0
+    if progress:
+        progress(n_items, n_items, "S&P 500 비교")
+    spy_val, spy_err = _spy_monthly_value(
+        contrib_days, monthly_krw, end, fx_hist, fx_fallback
+    )
+    result.spy_value_krw = spy_val
+    result.spy_note = spy_err
+    if spy_val is not None and contributed > 0:
+        result.spy_pnl_krw = spy_val - contributed
+        result.spy_pct = result.spy_pnl_krw / contributed * 100.0
     result.holdings = holdings
     result.trades = trades
     result.months_log = months_log

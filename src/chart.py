@@ -358,12 +358,17 @@ def build_sim_chart(df: pd.DataFrame, marks: list[dict], title: str) -> go.Figur
     return fig
 
 
-def build_return_vs_spy_fig(strat_pct: float, spy_pct: float, strat_name: str = "전략") -> go.Figure:
+def build_return_vs_spy_fig(
+    strat_pct: float,
+    spy_pct: float,
+    strat_name: str = "전략",
+    spy_name: str = "SPY 보유",
+) -> go.Figure:
     beat = strat_pct >= spy_pct
     fig = go.Figure()
     fig.add_trace(
         go.Bar(
-            x=[strat_name, "SPY 보유"],
+            x=[strat_name, spy_name],
             y=[strat_pct, spy_pct],
             marker_color=["#16a34a" if beat else "#dc2626", "#2563eb"],
             text=[f"{strat_pct:+.1f}%", f"{spy_pct:+.1f}%"],

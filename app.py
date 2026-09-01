@@ -2023,32 +2023,92 @@ def _render_plan(lookback_label: str, rule: dict, start: date, months: int, mont
     if result.error:
         st.error(result.error)
         return
+    contributed = float(result.contributed_krw or 0)
+    cash = float(result.cash_krw or 0)
     hold_val = sum(float(h.get("평가(원)") or 0) for h in (result.holdings or []))
-    total = hold_val + float(result.cash_krw or 0)
-    pnl = total - float(result.contributed_krw or 0)
-    c1, c2, c3 = st.columns(3)
-    c1.metric("납입 합계", f"{result.contributed_krw:,.0f}원")
-    c2.metric("평가+현금", f"{total:,.0f}원")
-    c3.metric("손익", f"{pnl:+,.0f}원")
+    total = hold_val + cash
+    pnl = float(result.pnl_krw if result.pnl_krw is not None else total - contributed)
+    pct = float(result.pnl_pct if result.pnl_pct is not None else ((pnl / contributed * 100.0) if contributed else 0.0))
+    with st.container(horizontal=True):
+        st.metric("납입 합계", f"{contributed:,.0f}원", border=True)
+        st.metric("평가+현금", f"{total:,.0f}원", border=True)
+        st.metric("전체 수익금", f"{pnl:+,.0f}원", border=True)
+        st.metric("전체 수익률", f"{pct:+.2f}%" if contributed else "-", border=True)
+        st.metric("현금 잔액", f"{cash:,.0f}원", border=True)
     if result.fx_note:
         st.caption(f"환율: {result.fx_note}")
+    st.caption("현금 잔액은 그달 못 쓴 한도와 매도대금입니다.")
     hold_rows = []
     for h in result.holdings or []:
+        invested = float(h.get("투입") or 0)
+        ticker_pnl = float(h.get("수익금") or 0)
+        ticker_pct = h.get("수익률")
         hold_rows.append(
             {
                 "종목": h.get("종목"),
                 "시장": h.get("시장"),
                 "잔량": _fmt_qty(h.get("잔량"), h.get("시장")),
+                "투입": f"{invested:,.0f}",
                 "평가(원)": f"{float(h.get('평가(원)') or 0):,.0f}",
+                "수익금": f"{ticker_pnl:+,.0f}",
+                "수익률": f"{float(ticker_pct):+.2f}%" if ticker_pct is not None else "-",
                 "실제%": f"{float(h.get('실제비중') or 0):.1f}",
                 "월배정%": f"{float(h.get('월배정비중') or 0):.1f}",
             }
         )
     if hold_rows:
-        st.markdown("**보유**")
-        st.caption("월배정%는 매달 넣는 돈을 나눈 비율입니다. 실제%는 결과일 뿐, 이 값으로 다시 맞추지는 않습니다.")
+        st.markdown("**종목별 수익**")
+        st.caption("종목 수익률은 그 종목 매수 투입 대비 (평가+매도대금−투입)입니다. 월배정%는 매달 넣는 돈을 나눈 비율입니다.")
         _show_table(pd.DataFrame(hold_rows))
-    st.caption(f"현금 {result.cash_krw:,.0f}원 (못 쓴 월 한도 + 매도대금)")
+    spy_val = result.spy_value_krw
+    st.subheader("S&P 500 비교")
+    if spy_val is None:
+        st.info(f"S&P 500 동일 월적립을 받지 못했습니다: {result.spy_note or '알 수 없음'}")
+    else:
+        spy_pnl = float(result.spy_pnl_krw or 0)
+        spy_pct = float(result.spy_pct or 0)
+        cmp_rows = [
+            {
+                "구분": "투자계획",
+                "납입": f"{contributed:,.0f}원",
+                "최종": f"{total:,.0f}원",
+                "수익금": f"{pnl:+,.0f}원",
+                "수익률": f"{pct:+.2f}%" if contributed else "-",
+            },
+            {
+                "구분": "S&P 500 같은 월적립",
+                "납입": f"{contributed:,.0f}원",
+                "최종": f"{spy_val:,.0f}원",
+                "수익금": f"{spy_pnl:+,.0f}원",
+                "수익률": f"{spy_pct:+.2f}%" if contributed else "-",
+            },
+        ]
+        if contributed:
+            cmp_rows.append(
+                {
+                    "구분": "차이 (계획−S&P)",
+                    "납입": "-",
+                    "최종": f"{total - spy_val:+,.0f}원",
+                    "수익금": f"{pnl - spy_pnl:+,.0f}원",
+                    "수익률": f"{pct - spy_pct:+.2f}%p",
+                }
+            )
+        _show_table(pd.DataFrame(cmp_rows))
+        with st.container(horizontal=True):
+            st.metric(
+                "계획 수익률",
+                f"{pct:+.2f}%" if contributed else "-",
+                f"{pct - spy_pct:+.2f}%p vs S&P" if contributed else None,
+                border=True,
+            )
+            st.metric("S&P 500 월적립", f"{spy_pct:+.2f}%", border=True)
+            beat = "지수보다 나음" if contributed and pct >= spy_pct else "지수보다 못함"
+            st.metric("상대평가", beat if contributed else "-", border=True)
+        st.plotly_chart(build_return_vs_spy_fig(pct, spy_pct, "투자계획", "S&P 500 월적립"))
+        st.caption(
+            f"{result.start} ~ {result.end} 동안 매달 같은 금액을 SPY(S&P 500 ETF)에 넣은 경우와 비교합니다. "
+            "달러 환산은 그날 원/달러, 소수점 좌수는 허용합니다. 계획의 최종액은 보유 평가+현금입니다."
+        )
     month_rows = result.months_log or []
     if month_rows:
         st.markdown("**월별 적립**")
