@@ -14,7 +14,12 @@ import streamlit.components.v1 as components
 
 from src.analysis import analyze
 from src.backtest import DEFAULT_SIM, SIM_QTY_KEYS, normalize_sim, run_backtest, spy_hold_return
-from src.plan import run_plan
+from src.plan import (
+    DEFAULT_PLAN_PCTS,
+    PLAN_PCT_FIELDS,
+    normalize_plan_pcts,
+    run_plan,
+)
 from src.chart import (
     build_chart,
     build_pnl_split_fig,
@@ -411,6 +416,50 @@ def _cut_group_inputs(prefix: str, heading: str) -> None:
             )
 
 
+def _init_plan_pct_widgets() -> None:
+    for key, default in DEFAULT_PLAN_PCTS.items():
+        sk = f"plan_p_{key}"
+        if sk not in st.session_state:
+            st.session_state[sk] = float(default)
+
+
+def _reset_plan_pct_widgets() -> None:
+    for key, default in DEFAULT_PLAN_PCTS.items():
+        st.session_state[f"plan_p_{key}"] = float(default)
+
+
+def _plan_pct_fields() -> None:
+    st.caption("매수")
+    bcols = st.columns(3)
+    buy = [row for row in PLAN_PCT_FIELDS if str(row[0]).startswith("buy_")]
+    for i, (key, label) in enumerate(buy):
+        with bcols[i]:
+            st.number_input(
+                f"{label} %",
+                min_value=0.0,
+                max_value=100.0,
+                step=1.0,
+                key=f"plan_p_{key}",
+            )
+    st.caption("매도")
+    scols = st.columns(3)
+    sell = [row for row in PLAN_PCT_FIELDS if str(row[0]).startswith("sell_")]
+    for i, (key, label) in enumerate(sell):
+        with scols[i]:
+            st.number_input(
+                f"{label} %",
+                min_value=0.0,
+                max_value=100.0,
+                step=1.0,
+                key=f"plan_p_{key}",
+            )
+
+
+def _read_plan_pcts() -> dict:
+    raw = {key: st.session_state.get(f"plan_p_{key}", default) for key, default in DEFAULT_PLAN_PCTS.items()}
+    return normalize_plan_pcts(raw)
+
+
 def _read_sim_from_prefix(prefix: str) -> dict:
     raw = {key: st.session_state.get(f"{prefix}{key}", default) for key, default in DEFAULT_SIM.items()}
     return normalize_sim(raw)
@@ -582,6 +631,9 @@ def _prefs_payload(rule: dict) -> dict:
             "months": int(st.session_state.get("plan_months") or 12),
             "monthly_krw": float(st.session_state.get("plan_monthly_krw") or 0),
             "weights": dict(st.session_state.get("plan_weights") or {}),
+            "pcts": normalize_plan_pcts(
+                {key: st.session_state.get(f"plan_p_{key}", default) for key, default in DEFAULT_PLAN_PCTS.items()}
+            ),
         },
     }
 
@@ -659,6 +711,9 @@ def _apply_loaded_prefs(loaded: dict) -> None:
     except (TypeError, ValueError):
         st.session_state.plan_monthly_krw = 0.0
     st.session_state.plan_weights = dict(plan.get("weights") or {}) if isinstance(plan.get("weights"), dict) else {}
+    pcts = normalize_plan_pcts(plan.get("pcts") if isinstance(plan.get("pcts"), dict) else None)
+    for key, default in DEFAULT_PLAN_PCTS.items():
+        st.session_state[f"plan_p_{key}"] = float(pcts.get(key, default))
 
 
 def _bootstrap_prefs() -> None:
@@ -1921,11 +1976,11 @@ def _render_simulation(
     _show_sim_result(result)
 
 
-def _render_plan(lookback_label: str, rule: dict, sim: dict, start: date, months: int, monthly_krw: float, run: bool) -> None:
+def _render_plan(lookback_label: str, rule: dict, start: date, months: int, monthly_krw: float, pcts: dict, run: bool) -> None:
     st.subheader("투자계획")
     st.caption(
-        "매달 투자금을 종목 비중대로 나눠 두고, 그 종목에 매수 신호가 나면 그 한도 안에서 삽니다. "
-        "전체 평가 비중을 계속 맞추지는 않습니다. 매도는 설정한 수량 규칙으로 이뤄지고, 매도대금은 그 종목의 다음 매수 재원으로 돌아갑니다. "
+        "매달 투자금을 종목 비중대로 나눕니다. 신호가 나면 그달 종목 한도의 비율만큼 사고팝니다. "
+        "그달 못 쓴 한도와 매도대금은 현금으로 모이고, 나중에 한도가 모자라면 현금에서 삽니다. "
         "미국 주식·코인은 그날 원/달러 종가로 환산합니다."
     )
     favs = _fav_list()
@@ -1938,7 +1993,6 @@ def _render_plan(lookback_label: str, rule: dict, sim: dict, start: date, months
         entry = dict(item)
         k = _fav_row_key(item["market"], item["ticker"])
         entry["weight"] = float(weights.get(k) or 0)
-        entry["sim"] = normalize_sim(item.get("sim") or sim)
         items.append(entry)
     st.write(
         f"**{len(items)}종목** · {start}부터 {int(months)}개월 · "
@@ -1958,7 +2012,7 @@ def _render_plan(lookback_label: str, rule: dict, sim: dict, start: date, months
                 float(monthly_krw),
                 lookback_label,
                 rule,
-                sim,
+                pcts=pcts,
                 progress=_prog,
             )
         bar.empty()
@@ -1994,7 +2048,20 @@ def _render_plan(lookback_label: str, rule: dict, sim: dict, start: date, months
         st.markdown("**보유**")
         st.caption("월배정%는 매달 넣는 돈을 나눈 비율입니다. 실제%는 결과일 뿐, 이 값으로 다시 맞추지는 않습니다.")
         _show_table(pd.DataFrame(hold_rows))
-    st.caption(f"미사용 월배정 {result.cash_krw:,.0f}원 (신호·수량 한도로 못 산 금액과 매도대금)")
+    st.caption(f"현금 {result.cash_krw:,.0f}원 (못 쓴 월 한도 + 매도대금)")
+    month_rows = result.months_log or []
+    if month_rows:
+        st.markdown("**월별 적립**")
+        show_m = []
+        for row in month_rows:
+            show_m.append(
+                {
+                    "년월": row.get("년월"),
+                    "적립": f"{float(row.get('적립') or 0):,.0f}",
+                    "현금(월초)": f"{float(row.get('현금') or 0):,.0f}",
+                }
+            )
+        _show_table(pd.DataFrame(show_m))
     trades = result.trades or []
     if trades:
         st.markdown("**거래**")
@@ -2239,13 +2306,11 @@ with st.sidebar:
                 on_click=_reset_rule_widgets,
             )
         sim = dict(DEFAULT_SIM)
-        if page in ("시뮬레이션", "투자계획"):
+        if page == "시뮬레이션":
             crypto_qty = (pick_one and market == "CRYPTO") or (
-                page == "투자계획" and any(f.get("market") == "CRYPTO" for f in _fav_list())
-            ) or (
-                page == "시뮬레이션" and sim_scope == "즐겨찾기 전체" and any(f.get("market") == "CRYPTO" for f in _fav_list())
+                sim_scope == "즐겨찾기 전체" and any(f.get("market") == "CRYPTO" for f in _fav_list())
             )
-            with st.expander("기본 매매 수량", expanded=page == "투자계획" or sim_scope != "즐겨찾기 전체"):
+            with st.expander("기본 매매 수량", expanded=sim_scope != "즐겨찾기 전체"):
                 st.caption(
                     "약한 매수 / 매수 / 강한 매수 수량, 잔량 기준 이상이면 % 매도, 미만이면 고정 수량. "
                     "코인은 소수점 5자리까지 넣을 수 있습니다. 바꾼 값은 저장됩니다."
@@ -2253,7 +2318,7 @@ with st.sidebar:
                 _sim_qty_fields("s_", crypto=crypto_qty)
                 st.button("수량 기본값", use_container_width=True, on_click=_reset_sim_widgets)
             sim = _read_sim_from_sidebar()
-            if page == "시뮬레이션" and sim_scope == "즐겨찾기 전체":
+            if sim_scope == "즐겨찾기 전체":
                 favs_now = _fav_list()
                 _init_fav_sim_widgets(sim)
                 with st.expander("종목별 매매 수량", expanded=True):
@@ -2280,51 +2345,43 @@ with st.sidebar:
                                     on_click=partial(_reset_one_fav_sim, item["market"], item["ticker"]),
                                 )
                 _sync_fav_sims()
-            if page == "투자계획":
-                favs_now = _fav_list()
-                _init_fav_sim_widgets(sim)
-                saved_w = dict(st.session_state.get("plan_weights") or {})
-                with st.expander("종목 비중(%)", expanded=True):
-                    if not favs_now:
-                        st.caption("즐겨찾기가 없습니다. 종목 분석에서 별표로 넣으세요.")
-                    else:
-                        st.caption("매달 넣는 돈을 이 비율로 나눕니다. 합이 100이 아니면 비율로 맞춥니다. 전체 평가액을 이 비중으로 고정하지는 않습니다.")
-                        wsum = 0.0
-                        new_w = {}
-                        for item in favs_now:
-                            k = _fav_row_key(item["market"], item["ticker"])
-                            sk = f"plan_w_{item['market']}_{item['ticker']}"
-                            if sk not in st.session_state:
-                                try:
-                                    st.session_state[sk] = float(saved_w.get(k) or 0)
-                                except (TypeError, ValueError):
-                                    st.session_state[sk] = 0.0
-                            val = st.number_input(
-                                f"{item.get('name') or item['ticker']} ({item['ticker']})",
-                                min_value=0.0,
-                                max_value=100.0,
-                                step=1.0,
-                                key=sk,
-                            )
-                            new_w[k] = float(val or 0)
-                            wsum += float(val or 0)
-                        st.caption(f"비중 합계 {wsum:.1f}%")
-                        st.session_state.plan_weights = new_w
-                with st.expander("종목별 매매 수량", expanded=False):
-                    st.button(
-                        "위 기본 수량을 모든 종목에 넣기",
-                        width="stretch",
-                        on_click=_copy_global_sim_to_favs,
-                    )
+        elif page == "투자계획":
+            _init_plan_pct_widgets()
+            with st.expander("매수·매도 비율(%)", expanded=True):
+                st.caption(
+                    "그달 종목 배정액 기준입니다. 약한 매수 10, 매수 30, 강한 매수 50, "
+                    "약한 매도 5, 매도 10, 강한 매도 20이 기본값입니다. 못 쓴 한도는 현금으로 갑니다."
+                )
+                _plan_pct_fields()
+                st.button("비율 기본값", width="stretch", on_click=_reset_plan_pct_widgets)
+            favs_now = _fav_list()
+            saved_w = dict(st.session_state.get("plan_weights") or {})
+            with st.expander("종목 비중(%)", expanded=True):
+                if not favs_now:
+                    st.caption("즐겨찾기가 없습니다. 종목 분석에서 별표로 넣으세요.")
+                else:
+                    st.caption("매달 넣는 돈을 이 비율로 나눕니다. 합이 100이 아니면 비율로 맞춥니다.")
+                    wsum = 0.0
+                    new_w = {}
                     for item in favs_now:
-                        label = f"{item.get('name') or item['ticker']} ({item['ticker']})"
-                        with st.expander(label, expanded=False):
-                            _sim_qty_fields(
-                                _fav_sim_prefix(item["market"], item["ticker"]),
-                                crypto=item.get("market") == "CRYPTO",
-                            )
-                if favs_now:
-                    _sync_fav_sims()
+                        k = _fav_row_key(item["market"], item["ticker"])
+                        sk = f"plan_w_{item['market']}_{item['ticker']}"
+                        if sk not in st.session_state:
+                            try:
+                                st.session_state[sk] = float(saved_w.get(k) or 0)
+                            except (TypeError, ValueError):
+                                st.session_state[sk] = 0.0
+                        val = st.number_input(
+                            f"{item.get('name') or item['ticker']} ({item['ticker']})",
+                            min_value=0.0,
+                            max_value=100.0,
+                            step=1.0,
+                            key=sk,
+                        )
+                        new_w[k] = float(val or 0)
+                        wsum += float(val or 0)
+                    st.caption(f"비중 합계 {wsum:.1f}%")
+                    st.session_state.plan_weights = new_w
         rule = _read_rule_from_sidebar()
         _persist_prefs(rule)
         _emit_prefs_cookie()
@@ -2386,10 +2443,10 @@ if page == "투자계획":
     _render_plan(
         lookback_label,
         rule,
-        sim,
         plan_start,
         int(st.session_state.get("plan_months") or 12),
         float(st.session_state.get("plan_monthly_krw") or 0),
+        _read_plan_pcts(),
         run_plan_btn,
     )
     st.stop()
@@ -2422,7 +2479,7 @@ if not run:
         3. 그 시점의 추세선, 지지/저항, 주요 매물대를 그린 뒤 매수·매도·홀딩을 제안합니다.
         4. 종목을 즐겨찾기에 넣으면 한 화면에서 제안만 모아 볼 수 있습니다.
         5. 시뮬레이션 화면에서 한 종목 또는 즐겨찾기 전체를 돌립니다. 즐겨찾기는 종목별 수량을 따로 저장합니다.
-        6. 투자계획 화면에서는 월 적립금을 즐겨찾기 비중대로 나눠, 매수 신호가 나면 그 한도 안에서 삽니다.
+        6. 투자계획 화면에서는 월 적립금을 즐겨찾기 비중대로 나누고, 신호 비율만큼 사고팝니다. 남은 돈은 현금으로 모입니다.
 
         1개월은 1시간봉, 2·3개월은 4시간봉, 6개월·1년은 일봉으로 계산합니다.
         평가 배점·즐겨찾기·시뮬레이션 수량은 접속자마다 따로 저장됩니다. 다른 기기는 저장 코드로 이어갑니다.

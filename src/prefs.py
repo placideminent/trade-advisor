@@ -120,6 +120,29 @@ except ImportError:
                 data[key] = default
         return data
 
+try:
+    from .plan import normalize_plan_pcts
+except ImportError:
+    def normalize_plan_pcts(raw: dict | None) -> dict:
+        data = {
+            "buy_weak": 10.0,
+            "buy_mid": 30.0,
+            "buy_strong": 50.0,
+            "sell_weak": 5.0,
+            "sell_mid": 10.0,
+            "sell_strong": 20.0,
+        }
+        if not isinstance(raw, dict):
+            return data
+        for key, default in list(data.items()):
+            if key not in raw:
+                continue
+            try:
+                data[key] = max(0.0, min(100.0, float(raw[key])))
+            except (TypeError, ValueError):
+                data[key] = default
+        return data
+
 LEGACY_DEFAULT_CUTS = {
     "buy_weak": 65,
     "buy_mid": 70,
@@ -191,7 +214,7 @@ def _empty() -> dict:
         "sim_options": 0,
         "rule_ver": SIGNAL_RULE_VERSION,
         "favorites": [],
-        "plan": {"months": 12, "monthly_krw": 0, "weights": {}},
+        "plan": {"months": 12, "monthly_krw": 0, "weights": {}, "pcts": {}},
     }
 
 
@@ -282,7 +305,7 @@ def _normalize(raw: dict | None) -> dict:
             break
     data["favorites"] = out_favs
     plan_raw = raw.get("plan") if isinstance(raw.get("plan"), dict) else {}
-    plan = {"months": 12, "monthly_krw": 0.0, "weights": {}}
+    plan = {"months": 12, "monthly_krw": 0.0, "weights": {}, "pcts": {}}
     try:
         plan["months"] = max(1, int(plan_raw.get("months") or 12))
     except (TypeError, ValueError):
@@ -291,6 +314,7 @@ def _normalize(raw: dict | None) -> dict:
         plan["monthly_krw"] = max(0.0, float(plan_raw.get("monthly_krw") or 0))
     except (TypeError, ValueError):
         pass
+    plan["pcts"] = normalize_plan_pcts(plan_raw.get("pcts") if isinstance(plan_raw.get("pcts"), dict) else None)
     wsrc = plan_raw.get("weights") if isinstance(plan_raw.get("weights"), dict) else {}
     wout = {}
     for k, v in wsrc.items():

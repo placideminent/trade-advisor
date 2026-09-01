@@ -13,13 +13,68 @@ from .backtest import (
     SELL_ACTIONS,
     _floor_lot,
     _lot,
-    _qty_maps,
-    _sell_qty,
-    normalize_sim,
     run_backtest,
 )
 from .data import fetch_usdkrw, fetch_usdkrw_history
 from .universe import resolve_lookback
+
+DEFAULT_PLAN_PCTS = {
+    "buy_weak": 10.0,
+    "buy_mid": 30.0,
+    "buy_strong": 50.0,
+    "sell_weak": 5.0,
+    "sell_mid": 10.0,
+    "sell_strong": 20.0,
+}
+PLAN_PCT_FIELDS = (
+    ("buy_weak", "약한 매수"),
+    ("buy_mid", "매수"),
+    ("buy_strong", "강한 매수"),
+    ("sell_weak", "약한 매도"),
+    ("sell_mid", "매도"),
+    ("sell_strong", "강한 매도"),
+)
+_ACTION_PCT_KEY = {
+    "약한 매수": "buy_weak",
+    "매수": "buy_mid",
+    "강한 매수": "buy_strong",
+    "약한 매도": "sell_weak",
+    "매도": "sell_mid",
+    "강한 매도": "sell_strong",
+}
+
+
+def normalize_plan_pcts(raw: dict | None) -> dict:
+    data = dict(DEFAULT_PLAN_PCTS)
+    if not isinstance(raw, dict):
+        return data
+    for key, default in DEFAULT_PLAN_PCTS.items():
+        if key not in raw:
+            continue
+        try:
+            data[key] = max(0.0, min(100.0, float(raw[key])))
+        except (TypeError, ValueError):
+            data[key] = default
+    return data
+
+
+def _action_frac(action: str, pcts: dict) -> float:
+    key = _ACTION_PCT_KEY.get(action)
+    if not key:
+        return 0.0
+    try:
+        return max(0.0, float(pcts.get(key) or 0)) / 100.0
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _pay_krw(cost: float, month_left: float, cash: float) -> tuple[float, float]:
+    """월 배정부터 쓰고, 모자라면 현금. (새 월배정, 새 현금)."""
+    cost = max(0.0, float(cost or 0))
+    month_left = max(0.0, float(month_left or 0))
+    cash = max(0.0, float(cash or 0))
+    take = min(cost, month_left)
+    return month_left - take, max(0.0, cash - (cost - take))
 
 
 def _is_usd(market: str) -> bool:
@@ -72,6 +127,7 @@ def run_plan(
     lookback_label: str,
     rule: dict | None,
     sim: dict | None = None,
+    pcts: dict | None = None,
     progress=None,
 ) -> PlanResult:
     spec = resolve_lookback(lookback_label)
@@ -79,6 +135,8 @@ def run_plan(
     timeframe = str(spec["timeframe"])
     months = max(1, int(months or 1))
     monthly_krw = max(0.0, float(monthly_krw or 0))
+    pcts = normalize_plan_pcts(pcts)
+    _ = sim
     m0 = start.year * 12 + (start.month - 1) + months
     y, m = divmod(m0, 12)
     end = date(start.year, start.month, start.day)
@@ -121,7 +179,6 @@ def run_plan(
         key = f"{item['market']}|{item['ticker']}"
         if progress:
             progress(i, n_items, f"{item.get('name') or item['ticker']} 신호")
-        item_sim = normalize_sim(item.get("sim") or sim)
         bt = run_backtest(
             item["market"],
             item["ticker"],
@@ -131,7 +188,7 @@ def run_plan(
             timeframe,
             lookback_label,
             rule,
-            item_sim,
+            DEFAULT_SIM,
             progress=None,
             use_options=False,
         )
@@ -151,7 +208,6 @@ def run_plan(
             "market": item["market"],
             "ticker": item["ticker"],
             "name": item.get("name") or item["ticker"],
-            "sim": item_sim,
         }
 
     try:
@@ -179,7 +235,8 @@ def run_plan(
     cash = 0.0
     contributed = 0.0
     last_month = None
-    alloc = {key: 0.0 for key in daily_by_key}
+    month_budget = {key: 0.0 for key in daily_by_key}
+    month_left = {key: 0.0 for key in daily_by_key}
     shares = {key: 0.0 for key in daily_by_key}
     avg = {key: 0.0 for key in daily_by_key}
     trades: list[dict] = []
@@ -219,17 +276,28 @@ def run_plan(
             progress(n_items, n_items, str(as_of))
         month_key = (as_of.year, as_of.month)
         if month_key != last_month:
+            if last_month is not None:
+                cash += sum(month_left.values())
+                for key in month_left:
+                    month_left[key] = 0.0
             contributed += monthly_krw
             last_month = month_key
-            for key in alloc:
+            for key in month_left:
                 add = monthly_krw * weights.get(key, 0)
-                alloc[key] += add
-            months_log.append({"년월": f"{as_of.year}-{as_of.month:02d}", "적립": monthly_krw})
+                month_budget[key] = add
+                month_left[key] = add
+            months_log.append(
+                {
+                    "년월": f"{as_of.year}-{as_of.month:02d}",
+                    "적립": monthly_krw,
+                    "현금": cash,
+                }
+            )
         fx = _fx_on(fx_hist, as_of, fx_fallback)
         if any(_is_usd(meta[k]["market"]) for k in shares) and not fx:
             continue
 
-        # 매도: 시뮬레이션과 같은 수량. 매도대금은 그 종목의 다음 매수 재원으로 되돌림.
+        # 매도: 그달 종목 배정액 × 신호 비율. 대금은 현금.
         for key, row in list(daily_by_key.items()):
             day = row.get(as_of)
             if not day:
@@ -246,10 +314,12 @@ def run_plan(
             krw_px = _native_to_krw(px, meta[key]["market"], fx)
             if not krw_px:
                 continue
-            sim_d = meta[key]["sim"]
-            buy_map, sell_pct, sell_fixed, share_cut = _qty_maps(sim_d)
+            frac = _action_frac(action, pcts)
+            if frac <= 0:
+                continue
             lot = _lot(meta[key]["market"])
-            qty = _sell_qty(action, sh, share_cut, sell_pct, sell_fixed, lot)
+            want_krw = month_budget.get(key, 0) * frac
+            qty = min(sh, _floor_lot(want_krw / krw_px, lot))
             if qty <= 0:
                 continue
             proceeds = qty * krw_px
@@ -257,7 +327,7 @@ def run_plan(
             if shares[key] <= 0:
                 shares[key] = 0.0
                 avg[key] = 0.0
-            alloc[key] += proceeds
+            cash += proceeds
             trades.append(
                 {
                     "날짜": as_of.isoformat(),
@@ -268,11 +338,11 @@ def run_plan(
                     "수량": qty,
                     "가격": px,
                     "원화": proceeds,
-                    "비중": f"월배정 {weights.get(key, 0) * 100:.1f}%",
+                    "비중": f"월한도 {frac * 100:.0f}%",
                 }
             )
 
-        # 매수: 종목별 월 투자금(비중×월 적립) 한도 + 매수 신호
+        # 매수: 그달 종목 배정액 × 신호 비율. 월 잔액 먼저, 모자라면 현금.
         for key, row in daily_by_key.items():
             day = row.get(as_of)
             if not day:
@@ -283,26 +353,26 @@ def run_plan(
             px = float(day["가격"])
             if px <= 0:
                 continue
-            if alloc.get(key, 0) <= 0:
-                continue
             krw_px = _native_to_krw(px, meta[key]["market"], fx)
             if not krw_px:
                 continue
-            sim_d = meta[key]["sim"]
-            buy_map, _sp, _sf, _sc = _qty_maps(sim_d)
-            lot = _lot(meta[key]["market"])
-            want = _floor_lot(float(buy_map.get(action) or 0), lot)
-            if want <= 0:
+            frac = _action_frac(action, pcts)
+            if frac <= 0:
                 continue
-            max_by_alloc = _floor_lot(alloc[key] / krw_px, lot)
-            qty = min(want, max_by_alloc)
+            want_krw = month_budget.get(key, 0) * frac
+            available = month_left.get(key, 0) + cash
+            cap = min(want_krw, available)
+            if cap <= 0:
+                continue
+            lot = _lot(meta[key]["market"])
+            qty = _floor_lot(cap / krw_px, lot)
             if qty <= 0:
                 continue
             cost = qty * krw_px
+            month_left[key], cash = _pay_krw(cost, month_left.get(key, 0), cash)
             prev = shares[key]
             avg[key] = (avg[key] * prev + px * qty) / (prev + qty) if prev + qty else px
             shares[key] = prev + qty
-            alloc[key] -= cost
             trades.append(
                 {
                     "날짜": as_of.isoformat(),
@@ -313,11 +383,11 @@ def run_plan(
                     "수량": qty,
                     "가격": px,
                     "원화": cost,
-                    "비중": f"월배정 {weights.get(key, 0) * 100:.1f}%",
+                    "비중": f"월한도 {frac * 100:.0f}%",
                 }
             )
 
-    cash = sum(alloc.values())
+    cash += sum(month_left.values())
     fx_end = _fx_on(fx_hist, end, fx_fallback)
     total, values = mtm(end, fx_end)
     holdings = []
