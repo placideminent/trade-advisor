@@ -1654,7 +1654,7 @@ def _fmt_qty(qty, market: str = "") -> str:
     except (TypeError, ValueError):
         return "-"
     if str(market or "").upper() == "CRYPTO" or abs(q - round(q)) > 1e-9:
-        txt = f"{q:.5f}".rstrip("0").rstrip(".")
+        txt = f"{q:.8f}".rstrip("0").rstrip(".")
         return txt or "0"
     return f"{int(round(q)):,}"
 
@@ -1979,9 +1979,10 @@ def _render_simulation(
 def _render_plan(lookback_label: str, rule: dict, start: date, months: int, monthly_krw: float, pcts: dict, run: bool) -> None:
     st.subheader("투자계획")
     st.caption(
-        "매달 투자금을 종목 비중대로 나눕니다. 그달 마지막 매수·매도 신호로 한 번, 종목 한도의 비율만큼 사고팝니다. "
-        "비율 금액이 1주보다 작으면 한도·현금으로 1주까지 채웁니다. "
-        "못 쓴 한도와 매도대금은 현금으로 모입니다. 미국 주식·코인은 그날 원/달러 종가로 환산합니다."
+        "매달 투자금을 종목 비중대로 나눕니다. 신호가 나면 그달 종목 한도의 비율만큼 사고팝니다. "
+        "1주가 안 되어도 금액만큼 주식을 쪼개 산다고 봅니다. "
+        "못 쓴 한도와 매도대금은 현금으로 모이고, 한도가 모자라면 현금에서 삽니다. "
+        "미국 주식·코인은 그날 원/달러 종가로 환산합니다."
     )
     favs = _fav_list()
     if not favs:
@@ -2124,10 +2125,8 @@ def _render_plan(lookback_label: str, rule: dict, start: date, months: int, mont
         _show_table(pd.DataFrame(show_m))
     trades = result.trades or []
     if trades:
-        filled = sum(1 for t in trades if t.get("체결") in ("매수", "매도"))
-        skipped = sum(1 for t in trades if t.get("체결") == "미체결")
         st.markdown("**거래**")
-        st.caption(f"체결 {filled}건 · 미체결 {skipped}건. 미체결은 1주 가격이 그달 한도+현금보다 클 때입니다.")
+        st.caption("수량은 1주 미만도 나옵니다. 한도 금액 ÷ 가격으로 쪼개 산 가상 수량입니다.")
         show = []
         for t in trades:
             show.append(
@@ -2414,7 +2413,7 @@ with st.sidebar:
                 st.caption(
                     "그달 종목 배정액 기준입니다. 약한 매수 10, 매수 30, 강한 매수 50, "
                     "약한 매도 5, 매도 10, 강한 매도 20이 기본값입니다. "
-                    "그달 마지막 신호로 한 번 거래하고, 비율이 1주보다 작으면 한도·현금으로 1주까지 채웁니다."
+                    "1주가 안 되어도 그 금액만큼 쪼개 삽니다. 못 쓴 한도는 현금으로 갑니다."
                 )
                 _plan_pct_fields()
                 st.button("비율 기본값", width="stretch", on_click=_reset_plan_pct_widgets)

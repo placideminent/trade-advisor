@@ -11,8 +11,6 @@ from .backtest import (
     BUY_ACTIONS,
     DEFAULT_SIM,
     SELL_ACTIONS,
-    _floor_lot,
-    _lot,
     run_backtest,
 )
 from .data import fetch_ohlcv, fetch_usdkrw, fetch_usdkrw_history
@@ -81,23 +79,20 @@ def _fill_qty(
     want_krw: float,
     available: float,
     krw_px: float,
-    lot: float,
     max_shares: float | None = None,
 ) -> float:
-    """비율 금액으로 살 수량. 1호도 안 되면 한도+현금으로 최소 1호."""
-    if krw_px <= 0 or lot <= 0:
+    """금액만큼 수량을 나눈다. 1주 미만도 허용."""
+    if krw_px <= 0:
         return 0.0
-    available = max(0.0, float(available or 0))
-    want_krw = max(0.0, float(want_krw or 0))
-    qty = _floor_lot(min(want_krw, available) / krw_px, lot)
-    min_cost = lot * krw_px
-    if qty <= 0 and available + 1e-9 >= min_cost:
-        qty = lot
+    spend = min(max(0.0, float(want_krw or 0)), max(0.0, float(available or 0)))
+    if spend < 1.0:
+        return 0.0
+    qty = spend / krw_px
     if max_shares is not None:
-        qty = min(qty, _floor_lot(float(max_shares), lot))
-    if qty > 0 and qty * krw_px > available + 1e-6:
-        qty = _floor_lot(available / krw_px, lot)
-    return qty if qty > 0 else 0.0
+        qty = min(qty, max(0.0, float(max_shares)))
+    if qty <= 1e-12:
+        return 0.0
+    return round(qty, 8)
 
 
 def _is_usd(market: str) -> bool:
@@ -333,7 +328,6 @@ def run_plan(
     trades: list[dict] = []
     months_log: list[dict] = []
     contrib_days: list[date] = []
-    pending: dict[str, dict] = {}
 
     def px_of(key: str, as_of: date) -> float | None:
         row = daily_by_key[key].get(as_of)
@@ -364,122 +358,12 @@ def run_plan(
             total += val
         return total, values
 
-    def execute_pending() -> None:
-        nonlocal cash
-        for key, info in pending.items():
-            action = info.get("action")
-            as_of = info.get("as_of")
-            px = float(info.get("px") or 0)
-            fx = info.get("fx")
-            if action not in BUY_ACTIONS and action not in SELL_ACTIONS:
-                continue
-            if px <= 0:
-                continue
-            krw_px = _native_to_krw(px, meta[key]["market"], fx)
-            if not krw_px:
-                trades.append(
-                    {
-                        "날짜": as_of.isoformat() if as_of else "",
-                        "종목": meta[key]["name"],
-                        "시장": meta[key]["market"],
-                        "신호": action,
-                        "체결": "미체결",
-                        "수량": 0,
-                        "가격": px,
-                        "원화": 0,
-                        "비중": "환율 없음",
-                    }
-                )
-                continue
-            frac = _action_frac(action, pcts)
-            if frac <= 0:
-                continue
-            lot = _lot(meta[key]["market"])
-            want_krw = month_budget.get(key, 0) * frac
-            if action in SELL_ACTIONS:
-                sh = shares[key]
-                qty = _fill_qty(want_krw, sh * krw_px, krw_px, lot, max_shares=sh)
-                if qty <= 0:
-                    trades.append(
-                        {
-                            "날짜": as_of.isoformat() if as_of else "",
-                            "종목": meta[key]["name"],
-                            "시장": meta[key]["market"],
-                            "신호": action,
-                            "체결": "미체결",
-                            "수량": 0,
-                            "가격": px,
-                            "원화": 0,
-                            "비중": "잔량 없음" if sh <= 0 else "1주 미만",
-                        }
-                    )
-                    continue
-                proceeds = qty * krw_px
-                shares[key] -= qty
-                if shares[key] <= 0:
-                    shares[key] = 0.0
-                    avg[key] = 0.0
-                cash += proceeds
-                sell_krw[key] += proceeds
-                trades.append(
-                    {
-                        "날짜": as_of.isoformat() if as_of else "",
-                        "종목": meta[key]["name"],
-                        "시장": meta[key]["market"],
-                        "신호": action,
-                        "체결": "매도",
-                        "수량": qty,
-                        "가격": px,
-                        "원화": proceeds,
-                        "비중": f"월한도 {frac * 100:.0f}%",
-                    }
-                )
-                continue
-            available = month_left.get(key, 0) + cash
-            qty = _fill_qty(want_krw, available, krw_px, lot)
-            if qty <= 0:
-                trades.append(
-                    {
-                        "날짜": as_of.isoformat() if as_of else "",
-                        "종목": meta[key]["name"],
-                        "시장": meta[key]["market"],
-                        "신호": action,
-                        "체결": "미체결",
-                        "수량": 0,
-                        "가격": px,
-                        "원화": 0,
-                        "비중": "1주 가격이 한도+현금보다 큼",
-                    }
-                )
-                continue
-            cost = qty * krw_px
-            month_left[key], cash = _pay_krw(cost, month_left.get(key, 0), cash)
-            buy_krw[key] += cost
-            prev = shares[key]
-            avg[key] = (avg[key] * prev + px * qty) / (prev + qty) if prev + qty else px
-            shares[key] = prev + qty
-            trades.append(
-                {
-                    "날짜": as_of.isoformat() if as_of else "",
-                    "종목": meta[key]["name"],
-                    "시장": meta[key]["market"],
-                    "신호": action,
-                    "체결": "매수",
-                    "수량": qty,
-                    "가격": px,
-                    "원화": cost,
-                    "비중": f"월한도 {frac * 100:.0f}%",
-                }
-            )
-        pending.clear()
-
     for i, as_of in enumerate(dates):
         if progress:
             progress(n_items, n_items, str(as_of))
         month_key = (as_of.year, as_of.month)
         if month_key != last_month:
             if last_month is not None:
-                execute_pending()
                 cash += sum(month_left.values())
                 for key in month_left:
                     month_left[key] = 0.0
@@ -499,24 +383,102 @@ def run_plan(
                 }
             )
         fx = _fx_on(fx_hist, as_of, fx_fallback)
+
         for key, row in daily_by_key.items():
             day = row.get(as_of)
             if not day:
                 continue
             action = day.get("신호")
-            if action not in BUY_ACTIONS and action not in SELL_ACTIONS:
+            if action not in SELL_ACTIONS:
+                continue
+            sh = shares[key]
+            if sh <= 0:
                 continue
             try:
                 px = float(day["가격"])
             except (TypeError, ValueError):
-                px = 0.0
+                continue
             if px <= 0:
                 continue
             if _is_usd(meta[key]["market"]) and not fx:
                 continue
-            pending[key] = {"as_of": as_of, "action": action, "px": px, "fx": fx}
+            krw_px = _native_to_krw(px, meta[key]["market"], fx)
+            if not krw_px:
+                continue
+            frac = _action_frac(action, pcts)
+            if frac <= 0:
+                continue
+            want_krw = month_budget.get(key, 0) * frac
+            qty = _fill_qty(want_krw, sh * krw_px, krw_px, max_shares=sh)
+            if qty <= 0:
+                continue
+            proceeds = qty * krw_px
+            shares[key] -= qty
+            if shares[key] <= 1e-12:
+                shares[key] = 0.0
+                avg[key] = 0.0
+            cash += proceeds
+            sell_krw[key] += proceeds
+            trades.append(
+                {
+                    "날짜": as_of.isoformat(),
+                    "종목": meta[key]["name"],
+                    "시장": meta[key]["market"],
+                    "신호": action,
+                    "체결": "매도",
+                    "수량": qty,
+                    "가격": px,
+                    "원화": proceeds,
+                    "비중": f"월한도 {frac * 100:.0f}%",
+                }
+            )
 
-    execute_pending()
+        for key, row in daily_by_key.items():
+            day = row.get(as_of)
+            if not day:
+                continue
+            action = day.get("신호")
+            if action not in BUY_ACTIONS:
+                continue
+            try:
+                px = float(day["가격"])
+            except (TypeError, ValueError):
+                continue
+            if px <= 0:
+                continue
+            if _is_usd(meta[key]["market"]) and not fx:
+                continue
+            krw_px = _native_to_krw(px, meta[key]["market"], fx)
+            if not krw_px:
+                continue
+            frac = _action_frac(action, pcts)
+            if frac <= 0:
+                continue
+            want_krw = month_budget.get(key, 0) * frac
+            available = month_left.get(key, 0) + cash
+            qty = _fill_qty(want_krw, available, krw_px)
+            if qty <= 0:
+                continue
+            cost = qty * krw_px
+            month_left[key], cash = _pay_krw(cost, month_left.get(key, 0), cash)
+            buy_krw[key] += cost
+            prev = shares[key]
+            avg[key] = (avg[key] * prev + px * qty) / (prev + qty) if prev + qty else px
+            shares[key] = prev + qty
+            trades.append(
+                {
+                    "날짜": as_of.isoformat(),
+                    "종목": meta[key]["name"],
+                    "시장": meta[key]["market"],
+                    "신호": action,
+                    "체결": "매수",
+                    "수량": qty,
+                    "가격": px,
+                    "원화": cost,
+                    "비중": f"월한도 {frac * 100:.0f}%",
+                }
+            )
+
     cash += sum(month_left.values())
     fx_end = _fx_on(fx_hist, end, fx_fallback)
     total, values = mtm(end, fx_end)
