@@ -112,7 +112,10 @@ except ImportError:
             if key not in raw:
                 continue
             try:
-                data[key] = int(raw[key])
+                data[key] = float(raw[key]) if key in (
+                    "buy_weak", "buy_mid", "buy_strong", "share_cut",
+                    "sell_weak_qty", "sell_mid_qty", "sell_strong_qty",
+                ) else int(raw[key])
             except (TypeError, ValueError):
                 data[key] = default
         return data
@@ -188,6 +191,7 @@ def _empty() -> dict:
         "sim_options": 0,
         "rule_ver": SIGNAL_RULE_VERSION,
         "favorites": [],
+        "plan": {"months": 12, "monthly_krw": 0, "drift_pp": 5, "weights": {}},
     }
 
 
@@ -277,6 +281,29 @@ def _normalize(raw: dict | None) -> dict:
         if len(out_favs) >= MAX_FAVORITES:
             break
     data["favorites"] = out_favs
+    plan_raw = raw.get("plan") if isinstance(raw.get("plan"), dict) else {}
+    plan = {"months": 12, "monthly_krw": 0.0, "drift_pp": 5.0, "weights": {}}
+    try:
+        plan["months"] = max(1, int(plan_raw.get("months") or 12))
+    except (TypeError, ValueError):
+        pass
+    try:
+        plan["monthly_krw"] = max(0.0, float(plan_raw.get("monthly_krw") or 0))
+    except (TypeError, ValueError):
+        pass
+    try:
+        plan["drift_pp"] = max(0.0, float(plan_raw.get("drift_pp") or 5))
+    except (TypeError, ValueError):
+        pass
+    wsrc = plan_raw.get("weights") if isinstance(plan_raw.get("weights"), dict) else {}
+    wout = {}
+    for k, v in wsrc.items():
+        try:
+            wout[str(k)] = float(v)
+        except (TypeError, ValueError):
+            continue
+    plan["weights"] = wout
+    data["plan"] = plan
     try:
         data["ts"] = int(raw.get("ts") or 0)
     except (TypeError, ValueError):
@@ -296,6 +323,7 @@ def snapshot_key(data: dict) -> str:
         "sim_options": int(data.get("sim_options") or 0),
         "rule_ver": int(data.get("rule_ver") or 0),
         "favorites": data.get("favorites") or [],
+        "plan": data.get("plan") or {},
     }
     return json.dumps(payload, sort_keys=True, ensure_ascii=False)
 

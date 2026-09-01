@@ -28,6 +28,15 @@ DEFAULT_SIM = {
     "sell_mid_qty": 5,
     "sell_strong_qty": 10,
 }
+SIM_QTY_KEYS = (
+    "buy_weak",
+    "buy_mid",
+    "buy_strong",
+    "share_cut",
+    "sell_weak_qty",
+    "sell_mid_qty",
+    "sell_strong_qty",
+)
 
 
 def normalize_sim(raw: dict | None) -> dict:
@@ -38,7 +47,10 @@ def normalize_sim(raw: dict | None) -> dict:
         if key not in raw:
             continue
         try:
-            data[key] = int(raw[key])
+            if key in SIM_QTY_KEYS:
+                data[key] = round(max(0.0, float(raw[key])), 5)
+            else:
+                data[key] = int(raw[key])
         except (TypeError, ValueError):
             data[key] = default
     return data
@@ -56,7 +68,7 @@ class BacktestResult:
     lookback_label: str
     market: str = ""
     last_px: float = 0.0
-    shares: int = 0
+    shares: float = 0.0
     avg: float = 0.0
     realized: float = 0.0
     m2m: float = 0.0
@@ -68,6 +80,7 @@ class BacktestResult:
     chart_df: pd.DataFrame | None = None
     error: str | None = None
     invested: float = 0.0
+    daily: list = field(default_factory=list)
 
 
 def _window(df: pd.DataFrame, as_of: date, days: int) -> pd.DataFrame:
@@ -80,11 +93,11 @@ def _window(df: pd.DataFrame, as_of: date, days: int) -> pd.DataFrame:
     return df.loc[(df.index >= start) & (df.index <= cutoff)].copy()
 
 
-def _qty_maps(sim: dict) -> tuple[dict, dict, dict, int]:
+def _qty_maps(sim: dict) -> tuple[dict, dict, dict, float]:
     buy = {
-        "약한 매수": int(sim["buy_weak"]),
-        "매수": int(sim["buy_mid"]),
-        "강한 매수": int(sim["buy_strong"]),
+        "약한 매수": float(sim["buy_weak"]),
+        "매수": float(sim["buy_mid"]),
+        "강한 매수": float(sim["buy_strong"]),
     }
     sell_pct = {
         "약한 매도": int(sim["sell_weak_pct"]) / 100.0,
@@ -92,20 +105,37 @@ def _qty_maps(sim: dict) -> tuple[dict, dict, dict, int]:
         "강한 매도": int(sim["sell_strong_pct"]) / 100.0,
     }
     sell_fixed = {
-        "약한 매도": int(sim["sell_weak_qty"]),
-        "매도": int(sim["sell_mid_qty"]),
-        "강한 매도": int(sim["sell_strong_qty"]),
+        "약한 매도": float(sim["sell_weak_qty"]),
+        "매도": float(sim["sell_mid_qty"]),
+        "강한 매도": float(sim["sell_strong_qty"]),
     }
-    return buy, sell_pct, sell_fixed, int(sim["share_cut"])
+    return buy, sell_pct, sell_fixed, float(sim["share_cut"])
 
 
-def _sell_qty(action: str, shares: int, share_cut: int, sell_pct: dict, sell_fixed: dict) -> int:
+def _lot(market: str) -> float:
+    return 0.00001 if str(market or "").upper() == "CRYPTO" else 1.0
+
+
+def _floor_lot(qty: float, lot: float) -> float:
+    if qty <= 0:
+        return 0.0
+    if lot >= 1:
+        return float(int(qty))
+    n = int(qty / lot + 1e-12)
+    return round(n * lot, 5)
+
+
+def _sell_qty(action: str, shares: float, share_cut: float, sell_pct: dict, sell_fixed: dict, lot: float = 1.0) -> float:
     if shares <= 0 or action not in sell_pct:
-        return 0
+        return 0.0
     if shares < share_cut:
-        return min(sell_fixed[action], shares)
-    qty = int(shares * sell_pct[action])
-    return min(max(qty, 1), shares)
+        qty = min(float(sell_fixed[action]), shares)
+    else:
+        qty = shares * float(sell_pct[action])
+    qty = _floor_lot(qty, lot)
+    if qty <= 0:
+        return 0.0
+    return min(qty, shares)
 
 
 def run_backtest(
@@ -213,7 +243,7 @@ def run_backtest(
             chart_df = sliced
     result.chart_df = chart_df
 
-    shares = 0
+    shares = 0.0
     avg = 0.0
     realized = 0.0
     invested = 0.0
@@ -221,6 +251,8 @@ def run_backtest(
     counts: dict[str, int] = {}
     trades: list[dict] = []
     signals: list[dict] = []
+    daily: list[dict] = []
+    lot = _lot(market)
 
     for i, as_of in enumerate(days, 1):
         if progress:
@@ -270,6 +302,7 @@ def run_backtest(
             "평단": avg,
             "체결": "",
         }
+        daily.append({"날짜": as_of.isoformat(), "신호": action, "합산%": sig.score_pct, "가격": px})
         if action in BUY_ACTIONS or action in SELL_ACTIONS:
             signals.append(
                 {
@@ -281,7 +314,7 @@ def run_backtest(
             )
 
         if action in buy_map:
-            qty = buy_map[action]
+            qty = _floor_lot(float(buy_map[action]), lot)
             if qty > 0:
                 cost = avg * shares + px * qty
                 shares += qty
@@ -294,11 +327,11 @@ def run_backtest(
                 row.update(체결="잔량0")
                 trades.append(row)
             else:
-                qty = _sell_qty(action, shares, share_cut, sell_pct, sell_fixed)
+                qty = _sell_qty(action, shares, share_cut, sell_pct, sell_fixed, lot)
                 realized += (px - avg) * qty
                 shares -= qty
                 if shares <= 0:
-                    shares = 0
+                    shares = 0.0
                     avg = 0.0
                 row.update(수량=qty, 잔량=shares, 평단=avg, 체결="매도")
                 trades.append(row)
@@ -316,6 +349,7 @@ def run_backtest(
     result.counts = counts
     result.trades = trades
     result.signals = signals
+    result.daily = daily
     return result
 
 

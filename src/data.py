@@ -894,3 +894,44 @@ def fetch_usdkrw(as_of: date) -> tuple[float | None, str, date | None]:
         return px, src, when
     return None, "", None
 
+
+def fetch_usdkrw_history(start: date, end: date) -> pd.Series:
+    """기간 원/달러 종가. 인덱스는 날짜."""
+    start = _to_date(start)
+    end = _to_date(end)
+    pad = start - timedelta(days=14)
+    df = pd.DataFrame()
+    try:
+        df = _fetch_fdr("USD/KRW", pad, end)
+    except Exception:
+        df = pd.DataFrame()
+    if df is None or df.empty:
+        for symbol in ("USDKRW=X", "KRW=X"):
+            try:
+                df = _fetch_daily(symbol, pad, end)
+            except Exception:
+                df = pd.DataFrame()
+            if df is not None and not df.empty:
+                break
+    if df is None or df.empty or "close" not in getattr(df, "columns", []):
+        return pd.Series(dtype=float)
+    work = df.copy()
+    work.index = _index_naive_wall(work.index)
+    closes = pd.to_numeric(work["close"], errors="coerce").dropna()
+    out = {}
+    for ts, px in closes.items():
+        val = _usdkrw_from_close(px)
+        if not val:
+            continue
+        try:
+            day = ts.date() if hasattr(ts, "date") else pd.Timestamp(ts).date()
+        except Exception:
+            continue
+        if day > end:
+            continue
+        out[day] = val
+    if not out:
+        return pd.Series(dtype=float)
+    ser = pd.Series(out).sort_index()
+    return ser
+
