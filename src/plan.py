@@ -100,13 +100,22 @@ def _is_usd(market: str) -> bool:
 
 
 def _fx_on(hist: pd.Series, as_of: date, fallback: float | None) -> float | None:
-    if hist is not None and not hist.empty:
-        picked = hist.loc[hist.index <= as_of]
-        if not picked.empty:
-            try:
-                return float(picked.iloc[-1])
-            except (TypeError, ValueError):
-                pass
+    try:
+        if hist is not None and not hist.empty:
+            idx = hist.index
+            ts = pd.Timestamp(as_of)
+            if getattr(idx, "tz", None) is not None:
+                ts = ts.tz_localize(idx.tz) if ts.tzinfo is None else ts.tz_convert(idx.tz)
+            picked = hist.loc[idx <= ts]
+            if picked.empty:
+                days = [_as_date(i) for i in idx]
+                picked = hist.loc[[d <= as_of for d in days]]
+            if not picked.empty:
+                val = float(picked.iloc[-1])
+                if val == val and val > 0:
+                    return val
+    except Exception:
+        pass
     if fallback and fallback > 0:
         return float(fallback)
     return None
@@ -201,6 +210,10 @@ class PlanResult:
     holdings: list = field(default_factory=list)
     trades: list = field(default_factory=list)
     months_log: list = field(default_factory=list)
+    signal_counts: dict = field(default_factory=dict)
+    skips: list = field(default_factory=list)
+    engine: str = "frac-v2"
+    equal_weights: bool = False
 
 
 def run_plan(
@@ -250,8 +263,11 @@ def run_plan(
         weights[key] = w
         total_w += w
     if total_w <= 0:
-        result.error = "종목 비중을 1% 이상 넣어 주세요."
-        return result
+        n = max(len(weights), 1)
+        for key in list(weights):
+            weights[key] = 1.0
+        total_w = float(n)
+        result.equal_weights = True
     for key in list(weights):
         weights[key] = weights[key] / total_w
 
@@ -306,7 +322,8 @@ def run_plan(
         result.fx_note = src or ""
     except Exception:
         fx_fallback = None
-    if (fx_hist is None or fx_hist.empty) and not fx_fallback:
+    needs_fx = any(_is_usd(item.get("market")) for item in items)
+    if needs_fx and (fx_hist is None or fx_hist.empty) and not fx_fallback:
         result.error = "원/달러 환율을 받지 못해 달러 자산을 계산할 수 없습니다."
         return result
 
@@ -328,6 +345,8 @@ def run_plan(
     trades: list[dict] = []
     months_log: list[dict] = []
     contrib_days: list[date] = []
+    signal_counts: dict[str, int] = {}
+    skips: list[dict] = []
 
     def px_of(key: str, as_of: date) -> float | None:
         row = daily_by_key[key].get(as_of)
@@ -383,6 +402,12 @@ def run_plan(
                 }
             )
         fx = _fx_on(fx_hist, as_of, fx_fallback)
+        for key, row in daily_by_key.items():
+            day = row.get(as_of)
+            if not day:
+                continue
+            action = str(day.get("신호") or "홀딩")
+            signal_counts[action] = signal_counts.get(action, 0) + 1
 
         for key, row in daily_by_key.items():
             day = row.get(as_of)
@@ -447,17 +472,28 @@ def run_plan(
             if px <= 0:
                 continue
             if _is_usd(meta[key]["market"]) and not fx:
+                skips.append({"날짜": as_of.isoformat(), "종목": meta[key]["name"], "신호": action, "이유": "환율 없음"})
                 continue
             krw_px = _native_to_krw(px, meta[key]["market"], fx)
             if not krw_px:
+                skips.append({"날짜": as_of.isoformat(), "종목": meta[key]["name"], "신호": action, "이유": "원화 가격 없음"})
                 continue
             frac = _action_frac(action, pcts)
             if frac <= 0:
+                skips.append({"날짜": as_of.isoformat(), "종목": meta[key]["name"], "신호": action, "이유": "비율 0%"})
                 continue
             want_krw = month_budget.get(key, 0) * frac
             available = month_left.get(key, 0) + cash
             qty = _fill_qty(want_krw, available, krw_px)
             if qty <= 0:
+                skips.append(
+                    {
+                        "날짜": as_of.isoformat(),
+                        "종목": meta[key]["name"],
+                        "신호": action,
+                        "이유": f"가용 {available:,.0f}원 / 목표 {want_krw:,.0f}원",
+                    }
+                )
                 continue
             cost = qty * krw_px
             month_left[key], cash = _pay_krw(cost, month_left.get(key, 0), cash)
@@ -526,4 +562,6 @@ def run_plan(
     result.holdings = holdings
     result.trades = trades
     result.months_log = months_log
+    result.signal_counts = signal_counts
+    result.skips = skips
     return result

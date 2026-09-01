@@ -1999,6 +1999,8 @@ def _render_plan(lookback_label: str, rule: dict, start: date, months: int, mont
         f"**{len(items)}종목** · {start}부터 {int(months)}개월 · "
         f"월 {monthly_krw:,.0f}원 · 조회 {lookback_label}"
     )
+    if float(monthly_krw or 0) <= 0:
+        st.warning("월 투자금액이 0원입니다. 왼쪽에서 금액을 넣은 뒤 다시 실행하세요.")
     if run:
         bar = st.progress(0, text="투자계획 계산 중...")
 
@@ -2024,6 +2026,29 @@ def _render_plan(lookback_label: str, rule: dict, start: date, months: int, mont
     if result.error:
         st.error(result.error)
         return
+    if getattr(result, "engine", "") != "frac-v2":
+        st.warning("계산 방식이 바뀌었습니다. 왼쪽에서 **투자계획 실행**을 다시 눌러 주세요.")
+        return
+    counts = dict(getattr(result, "signal_counts", None) or {})
+    buy_n = sum(int(counts.get(a) or 0) for a in ("약한 매수", "매수", "강한 매수"))
+    sell_n = sum(int(counts.get(a) or 0) for a in ("약한 매도", "매도", "강한 매도"))
+    hold_n = int(counts.get("홀딩") or 0)
+    fills = [t for t in (result.trades or []) if t.get("체결") in ("매수", "매도")]
+    buy_fills = sum(1 for t in fills if t.get("체결") == "매수")
+    st.write(
+        f"신호 합계 · 매수 {buy_n}일 · 매도 {sell_n}일 · 홀딩 {hold_n}일 · 체결 {buy_fills}건"
+    )
+    if getattr(result, "equal_weights", False):
+        st.caption("종목 비중이 비어 있어 균등 비중으로 나눴습니다.")
+    if buy_n == 0:
+        st.warning(
+            "이 기간·조회 설정에서는 매수 신호가 하루도 없었습니다. "
+            "종목 분석과 **같은 조회 기간(예: 1년)** 으로 맞춘 뒤 다시 실행해 보세요. "
+            "3개월 조회는 4시간봉이라 종목 분석 1년(일봉)과 신호가 다릅니다."
+        )
+    skips = list(getattr(result, "skips", None) or [])
+    if buy_n > 0 and buy_fills == 0:
+        st.error("매수 신호는 있었는데 체결이 없습니다. 아래 미체결 이유를 확인하세요.")
     contributed = float(result.contributed_krw or 0)
     cash = float(result.cash_krw or 0)
     hold_val = sum(float(h.get("평가(원)") or 0) for h in (result.holdings or []))
@@ -2141,6 +2166,12 @@ def _render_plan(lookback_label: str, rule: dict, start: date, months: int, mont
                 }
             )
         _show_table(pd.DataFrame(show))
+    elif buy_n:
+        st.info("매수 신호는 있었지만 체결된 거래가 없습니다.")
+    skips = list(getattr(result, "skips", None) or [])
+    if skips:
+        st.markdown("**미체결 매수**")
+        _show_table(pd.DataFrame(skips[:80]))
 
 
 def _apply_analysis_jump() -> None:
@@ -2316,13 +2347,21 @@ with st.sidebar:
             key=f"as_of_{market}",
         )
     lookback_keys = list(LOOKBACK_OPTIONS.keys())
-    lb_key = "lookback_sim" if page in ("시뮬레이션", "투자계획") else "lookback_v2"
+    if page == "투자계획":
+        lb_key = "lookback_plan"
+        lb_default = "1년"
+    elif page == "시뮬레이션":
+        lb_key = "lookback_sim"
+        lb_default = "3개월"
+    else:
+        lb_key = "lookback_v2"
+        lb_default = "1년"
     if st.session_state.get(lb_key) not in lookback_keys:
         st.session_state.pop(lb_key, None)
     lookback_label = st.selectbox(
         "조회 기간",
         lookback_keys,
-        index=lookback_keys.index("3개월" if page in ("시뮬레이션", "투자계획") else "1년"),
+        index=lookback_keys.index(lb_default),
         key=lb_key,
     )
     lookback_spec = resolve_lookback(lookback_label)
@@ -2423,9 +2462,16 @@ with st.sidebar:
                 if not favs_now:
                     st.caption("즐겨찾기가 없습니다. 종목 분석에서 별표로 넣으세요.")
                 else:
-                    st.caption("매달 넣는 돈을 이 비율로 나눕니다. 합이 100이 아니면 비율로 맞춥니다.")
+                    st.caption("매달 넣는 돈을 이 비율로 나눕니다. 합이 100이 아니면 비율로 맞춥니다. 전부 0이면 균등 비중으로 넣습니다.")
                     wsum = 0.0
                     new_w = {}
+                    saved_total = 0.0
+                    for v in saved_w.values():
+                        try:
+                            saved_total += float(v or 0)
+                        except (TypeError, ValueError):
+                            pass
+                    even = round(100.0 / max(len(favs_now), 1), 1) if saved_total <= 0 else 0.0
                     for item in favs_now:
                         k = _fav_row_key(item["market"], item["ticker"])
                         sk = f"plan_w_{item['market']}_{item['ticker']}"
@@ -2434,6 +2480,8 @@ with st.sidebar:
                                 st.session_state[sk] = float(saved_w.get(k) or 0)
                             except (TypeError, ValueError):
                                 st.session_state[sk] = 0.0
+                            if float(st.session_state[sk] or 0) <= 0 and even:
+                                st.session_state[sk] = even
                         val = st.number_input(
                             f"{item.get('name') or item['ticker']} ({item['ticker']})",
                             min_value=0.0,
