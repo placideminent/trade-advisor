@@ -14,7 +14,7 @@ import streamlit.components.v1 as components
 
 from src.analysis import analyze
 from src.backtest import DEFAULT_SIM, SIM_QTY_KEYS, normalize_sim, run_backtest, spy_hold_return
-from src.plan import DRIFT_PP, run_plan
+from src.plan import run_plan
 from src.chart import (
     build_chart,
     build_pnl_split_fig,
@@ -581,7 +581,6 @@ def _prefs_payload(rule: dict) -> dict:
         "plan": {
             "months": int(st.session_state.get("plan_months") or 12),
             "monthly_krw": float(st.session_state.get("plan_monthly_krw") or 0),
-            "drift_pp": float(st.session_state.get("plan_drift_pp") or DRIFT_PP),
             "weights": dict(st.session_state.get("plan_weights") or {}),
         },
     }
@@ -659,10 +658,6 @@ def _apply_loaded_prefs(loaded: dict) -> None:
         st.session_state.plan_monthly_krw = float(plan.get("monthly_krw") or 0)
     except (TypeError, ValueError):
         st.session_state.plan_monthly_krw = 0.0
-    try:
-        st.session_state.plan_drift_pp = float(plan.get("drift_pp") or DRIFT_PP)
-    except (TypeError, ValueError):
-        st.session_state.plan_drift_pp = DRIFT_PP
     st.session_state.plan_weights = dict(plan.get("weights") or {}) if isinstance(plan.get("weights"), dict) else {}
 
 
@@ -1926,11 +1921,11 @@ def _render_simulation(
     _show_sim_result(result)
 
 
-def _render_plan(lookback_label: str, rule: dict, sim: dict, start: date, months: int, monthly_krw: float, drift_pp: float, run: bool) -> None:
+def _render_plan(lookback_label: str, rule: dict, sim: dict, start: date, months: int, monthly_krw: float, run: bool) -> None:
     st.subheader("투자계획")
     st.caption(
-        "즐겨찾기 종목에 목표 비중을 두고, 매달 넣은 원으로 매수 신호 때 삽니다. "
-        "매도는 목표 비중보다 허용 오차 이상 무거울 때만, 목표에 가깝게 줄입니다. "
+        "매달 투자금을 종목 비중대로 나눠 두고, 그 종목에 매수 신호가 나면 그 한도 안에서 삽니다. "
+        "전체 평가 비중을 계속 맞추지는 않습니다. 매도는 설정한 수량 규칙으로 이뤄지고, 매도대금은 그 종목의 다음 매수 재원으로 돌아갑니다. "
         "미국 주식·코인은 그날 원/달러 종가로 환산합니다."
     )
     favs = _fav_list()
@@ -1947,7 +1942,7 @@ def _render_plan(lookback_label: str, rule: dict, sim: dict, start: date, months
         items.append(entry)
     st.write(
         f"**{len(items)}종목** · {start}부터 {int(months)}개월 · "
-        f"월 {monthly_krw:,.0f}원 · 조회 {lookback_label} · 오차 {drift_pp:g}%p"
+        f"월 {monthly_krw:,.0f}원 · 조회 {lookback_label}"
     )
     if run:
         bar = st.progress(0, text="투자계획 계산 중...")
@@ -1964,7 +1959,6 @@ def _render_plan(lookback_label: str, rule: dict, sim: dict, start: date, months
                 lookback_label,
                 rule,
                 sim,
-                drift_pp=float(drift_pp),
                 progress=_prog,
             )
         bar.empty()
@@ -1993,13 +1987,14 @@ def _render_plan(lookback_label: str, rule: dict, sim: dict, start: date, months
                 "잔량": _fmt_qty(h.get("잔량"), h.get("시장")),
                 "평가(원)": f"{float(h.get('평가(원)') or 0):,.0f}",
                 "실제%": f"{float(h.get('실제비중') or 0):.1f}",
-                "목표%": f"{float(h.get('목표비중') or 0):.1f}",
+                "월배정%": f"{float(h.get('월배정비중') or 0):.1f}",
             }
         )
     if hold_rows:
         st.markdown("**보유**")
+        st.caption("월배정%는 매달 넣는 돈을 나눈 비율입니다. 실제%는 결과일 뿐, 이 값으로 다시 맞추지는 않습니다.")
         _show_table(pd.DataFrame(hold_rows))
-    st.caption(f"현금 {result.cash_krw:,.0f}원")
+    st.caption(f"미사용 월배정 {result.cash_krw:,.0f}원 (신호·수량 한도로 못 산 금액과 매도대금)")
     trades = result.trades or []
     if trades:
         st.markdown("**거래**")
@@ -2162,18 +2157,8 @@ with st.sidebar:
             st.session_state.plan_months = 12
         if "plan_monthly_krw" not in st.session_state:
             st.session_state.plan_monthly_krw = 1_000_000
-        if "plan_drift_pp" not in st.session_state:
-            st.session_state.plan_drift_pp = DRIFT_PP
         st.number_input("총 투자기간(개월)", min_value=1, max_value=120, step=1, key="plan_months")
         st.number_input("월 투자금액(원)", min_value=0, max_value=2_000_000_000, step=10000, key="plan_monthly_krw")
-        st.number_input(
-            "비중 허용 오차(%p)",
-            min_value=0.0,
-            max_value=30.0,
-            step=0.5,
-            key="plan_drift_pp",
-            help="목표 비중보다 이만큼 이상 무거울 때만 매도하고, 이만큼 이상 가벼울 여유 안에서만 매수합니다.",
-        )
     elif page == "시뮬레이션":
         d1, d2 = st.columns(2)
         date_key = market if pick_one else "fav"
@@ -2303,7 +2288,7 @@ with st.sidebar:
                     if not favs_now:
                         st.caption("즐겨찾기가 없습니다. 종목 분석에서 별표로 넣으세요.")
                     else:
-                        st.caption("합이 100%가 되게 넣으세요. 합이 100이 아니면 비율로 맞춥니다.")
+                        st.caption("매달 넣는 돈을 이 비율로 나눕니다. 합이 100이 아니면 비율로 맞춥니다. 전체 평가액을 이 비중으로 고정하지는 않습니다.")
                         wsum = 0.0
                         new_w = {}
                         for item in favs_now:
@@ -2405,7 +2390,6 @@ if page == "투자계획":
         plan_start,
         int(st.session_state.get("plan_months") or 12),
         float(st.session_state.get("plan_monthly_krw") or 0),
-        float(st.session_state.get("plan_drift_pp") or DRIFT_PP),
         run_plan_btn,
     )
     st.stop()
@@ -2438,7 +2422,7 @@ if not run:
         3. 그 시점의 추세선, 지지/저항, 주요 매물대를 그린 뒤 매수·매도·홀딩을 제안합니다.
         4. 종목을 즐겨찾기에 넣으면 한 화면에서 제안만 모아 볼 수 있습니다.
         5. 시뮬레이션 화면에서 한 종목 또는 즐겨찾기 전체를 돌립니다. 즐겨찾기는 종목별 수량을 따로 저장합니다.
-        6. 투자계획 화면에서는 월 적립금(원)과 즐겨찾기 비중으로, 매수 신호가 나면 한도 안에서 삽니다.
+        6. 투자계획 화면에서는 월 적립금을 즐겨찾기 비중대로 나눠, 매수 신호가 나면 그 한도 안에서 삽니다.
 
         1개월은 1시간봉, 2·3개월은 4시간봉, 6개월·1년은 일봉으로 계산합니다.
         평가 배점·즐겨찾기·시뮬레이션 수량은 접속자마다 따로 저장됩니다. 다른 기기는 저장 코드로 이어갑니다.

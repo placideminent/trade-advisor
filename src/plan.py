@@ -21,8 +21,6 @@ from .backtest import (
 from .data import fetch_usdkrw, fetch_usdkrw_history
 from .universe import resolve_lookback
 
-DRIFT_PP = 5.0
-
 
 def _is_usd(market: str) -> bool:
     return str(market or "").upper() in ("US", "CRYPTO")
@@ -74,7 +72,6 @@ def run_plan(
     lookback_label: str,
     rule: dict | None,
     sim: dict | None = None,
-    drift_pp: float = DRIFT_PP,
     progress=None,
 ) -> PlanResult:
     spec = resolve_lookback(lookback_label)
@@ -82,7 +79,6 @@ def run_plan(
     timeframe = str(spec["timeframe"])
     months = max(1, int(months or 1))
     monthly_krw = max(0.0, float(monthly_krw or 0))
-    drift = max(0.0, float(drift_pp if drift_pp is not None else DRIFT_PP)) / 100.0
     m0 = start.year * 12 + (start.month - 1) + months
     y, m = divmod(m0, 12)
     end = date(start.year, start.month, start.day)
@@ -183,6 +179,7 @@ def run_plan(
     cash = 0.0
     contributed = 0.0
     last_month = None
+    alloc = {key: 0.0 for key in daily_by_key}
     shares = {key: 0.0 for key in daily_by_key}
     avg = {key: 0.0 for key in daily_by_key}
     trades: list[dict] = []
@@ -222,16 +219,17 @@ def run_plan(
             progress(n_items, n_items, str(as_of))
         month_key = (as_of.year, as_of.month)
         if month_key != last_month:
-            cash += monthly_krw
             contributed += monthly_krw
             last_month = month_key
-            months_log.append({"년월": f"{as_of.year}-{as_of.month:02d}", "적립": monthly_krw, "현금": cash})
+            for key in alloc:
+                add = monthly_krw * weights.get(key, 0)
+                alloc[key] += add
+            months_log.append({"년월": f"{as_of.year}-{as_of.month:02d}", "적립": monthly_krw})
         fx = _fx_on(fx_hist, as_of, fx_fallback)
         if any(_is_usd(meta[k]["market"]) for k in shares) and not fx:
             continue
-        total, values = mtm(as_of, fx)
 
-        # 매도: 목표보다 drift 이상 무거울 때만, 목표까지
+        # 매도: 시뮬레이션과 같은 수량. 매도대금은 그 종목의 다음 매수 재원으로 되돌림.
         for key, row in list(daily_by_key.items()):
             day = row.get(as_of)
             if not day:
@@ -245,20 +243,13 @@ def run_plan(
             px = float(day["가격"])
             if px <= 0:
                 continue
-            target = weights.get(key, 0)
-            cur_w = (values.get(key, 0) / total) if total > 0 else 0.0
-            if cur_w <= target + drift:
-                continue
-            over_krw = (cur_w - target) * total
             krw_px = _native_to_krw(px, meta[key]["market"], fx)
             if not krw_px:
                 continue
-            max_qty = over_krw / krw_px
             sim_d = meta[key]["sim"]
             buy_map, sell_pct, sell_fixed, share_cut = _qty_maps(sim_d)
             lot = _lot(meta[key]["market"])
             qty = _sell_qty(action, sh, share_cut, sell_pct, sell_fixed, lot)
-            qty = min(qty, _floor_lot(max_qty, lot), sh)
             if qty <= 0:
                 continue
             proceeds = qty * krw_px
@@ -266,7 +257,7 @@ def run_plan(
             if shares[key] <= 0:
                 shares[key] = 0.0
                 avg[key] = 0.0
-            cash += proceeds
+            alloc[key] += proceeds
             trades.append(
                 {
                     "날짜": as_of.isoformat(),
@@ -277,13 +268,11 @@ def run_plan(
                     "수량": qty,
                     "가격": px,
                     "원화": proceeds,
-                    "비중": f"{cur_w * 100:.1f}%→목표 {target * 100:.1f}%",
+                    "비중": f"월배정 {weights.get(key, 0) * 100:.1f}%",
                 }
             )
-            total, values = mtm(as_of, fx)
 
-        # 매수: 신호 + 월 적립 현금, 목표+drift를 넘기지 않음
-        buy_candidates = []
+        # 매수: 종목별 월 투자금(비중×월 적립) 한도 + 매수 신호
         for key, row in daily_by_key.items():
             day = row.get(as_of)
             if not day:
@@ -294,37 +283,26 @@ def run_plan(
             px = float(day["가격"])
             if px <= 0:
                 continue
-            buy_candidates.append((key, action, px))
-        buy_candidates.sort(key=lambda t: (values.get(t[0], 0) / total if total else 0) - weights.get(t[0], 0))
-
-        for key, action, px in buy_candidates:
-            if cash <= 0:
-                break
+            if alloc.get(key, 0) <= 0:
+                continue
             krw_px = _native_to_krw(px, meta[key]["market"], fx)
             if not krw_px:
                 continue
-            total, values = mtm(as_of, fx)
-            target = weights.get(key, 0)
-            cur_w = (values.get(key, 0) / total) if total > 0 else 0.0
-            if cur_w >= target + drift:
-                continue
-            room_krw = max(0.0, (target + drift) * (total + cash) - values.get(key, 0))
             sim_d = meta[key]["sim"]
             buy_map, _sp, _sf, _sc = _qty_maps(sim_d)
             lot = _lot(meta[key]["market"])
             want = _floor_lot(float(buy_map.get(action) or 0), lot)
             if want <= 0:
                 continue
-            max_by_cash = _floor_lot(cash / krw_px, lot)
-            max_by_room = _floor_lot(room_krw / krw_px, lot)
-            qty = min(want, max_by_cash, max_by_room)
+            max_by_alloc = _floor_lot(alloc[key] / krw_px, lot)
+            qty = min(want, max_by_alloc)
             if qty <= 0:
                 continue
             cost = qty * krw_px
             prev = shares[key]
-            avg[key] = (avg[key] * prev + px * qty) / (prev + qty)
+            avg[key] = (avg[key] * prev + px * qty) / (prev + qty) if prev + qty else px
             shares[key] = prev + qty
-            cash -= cost
+            alloc[key] -= cost
             trades.append(
                 {
                     "날짜": as_of.isoformat(),
@@ -335,10 +313,11 @@ def run_plan(
                     "수량": qty,
                     "가격": px,
                     "원화": cost,
-                    "비중": f"목표 {target * 100:.1f}%",
+                    "비중": f"월배정 {weights.get(key, 0) * 100:.1f}%",
                 }
             )
 
+    cash = sum(alloc.values())
     fx_end = _fx_on(fx_hist, end, fx_fallback)
     total, values = mtm(end, fx_end)
     holdings = []
@@ -357,7 +336,7 @@ def run_plan(
                 "종가": px,
                 "평가(원)": val,
                 "실제비중": w * 100,
-                "목표비중": weights.get(key, 0) * 100,
+                "월배정비중": weights.get(key, 0) * 100,
             }
         )
     result.cash_krw = cash

@@ -191,7 +191,7 @@ def _empty() -> dict:
         "sim_options": 0,
         "rule_ver": SIGNAL_RULE_VERSION,
         "favorites": [],
-        "plan": {"months": 12, "monthly_krw": 0, "drift_pp": 5, "weights": {}},
+        "plan": {"months": 12, "monthly_krw": 0, "weights": {}},
     }
 
 
@@ -282,17 +282,13 @@ def _normalize(raw: dict | None) -> dict:
             break
     data["favorites"] = out_favs
     plan_raw = raw.get("plan") if isinstance(raw.get("plan"), dict) else {}
-    plan = {"months": 12, "monthly_krw": 0.0, "drift_pp": 5.0, "weights": {}}
+    plan = {"months": 12, "monthly_krw": 0.0, "weights": {}}
     try:
         plan["months"] = max(1, int(plan_raw.get("months") or 12))
     except (TypeError, ValueError):
         pass
     try:
         plan["monthly_krw"] = max(0.0, float(plan_raw.get("monthly_krw") or 0))
-    except (TypeError, ValueError):
-        pass
-    try:
-        plan["drift_pp"] = max(0.0, float(plan_raw.get("drift_pp") or 5))
     except (TypeError, ValueError):
         pass
     wsrc = plan_raw.get("weights") if isinstance(plan_raw.get("weights"), dict) else {}
