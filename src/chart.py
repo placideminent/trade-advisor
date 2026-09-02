@@ -425,6 +425,76 @@ def build_ticker_vs_spy_fig(names: list[str], pcts: list[float], spy_pct: float)
     return fig
 
 
+def build_plan_return_fig(names: list[str], pcts: list[float]) -> go.Figure:
+    names = list(reversed(names))
+    pcts = list(reversed(pcts))
+    colors = ["#16a34a" if p >= 0 else "#dc2626" for p in pcts]
+    fig = go.Figure()
+    fig.add_trace(
+        go.Bar(
+            y=names,
+            x=pcts,
+            orientation="h",
+            marker_color=colors,
+            text=[f"{p:+.1f}%" for p in pcts],
+            textposition="auto",
+        )
+    )
+    fig.add_vline(x=0, line_color="#94a3b8", line_width=1)
+    fig.update_layout(
+        title="종목별 수익률",
+        xaxis_title="수익률 %",
+        height=max(280, 40 * max(len(names), 1) + 80),
+        margin=dict(t=48, b=40, l=16, r=24),
+        plot_bgcolor="#f8fafc",
+        showlegend=False,
+    )
+    return fig
+
+
+def build_plan_pnl_fig(names: list[str], pnls: list[float]) -> go.Figure:
+    names = list(reversed(names))
+    pnls = list(reversed(pnls))
+    colors = ["#16a34a" if v >= 0 else "#dc2626" for v in pnls]
+    fig = go.Figure()
+    fig.add_trace(
+        go.Bar(
+            y=names,
+            x=pnls,
+            orientation="h",
+            marker_color=colors,
+            text=[f"{v:+,.0f}" for v in pnls],
+            textposition="auto",
+        )
+    )
+    fig.add_vline(x=0, line_color="#94a3b8", line_width=1)
+    fig.update_layout(
+        title="종목별 수익금(원)",
+        xaxis_title="원",
+        height=max(280, 40 * max(len(names), 1) + 80),
+        margin=dict(t=48, b=40, l=16, r=24),
+        plot_bgcolor="#f8fafc",
+        showlegend=False,
+    )
+    return fig
+
+
+def build_plan_value_fig(names: list[str], invested: list[float], values: list[float]) -> go.Figure:
+    fig = go.Figure()
+    fig.add_trace(go.Bar(name="투입", x=names, y=invested, marker_color="#94a3b8"))
+    fig.add_trace(go.Bar(name="평가", x=names, y=values, marker_color="#2563eb"))
+    fig.update_layout(
+        title="종목별 투입·평가",
+        yaxis_title="원",
+        barmode="group",
+        height=max(320, 48 * max(len(names), 1) + 90),
+        margin=dict(t=48, b=80, l=48, r=24),
+        plot_bgcolor="#f8fafc",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
+    )
+    return fig
+
+
 def build_pnl_split_fig(realized: float, m2m: float, title: str = "손익 구성") -> go.Figure:
     total = realized + m2m
     fig = go.Figure()

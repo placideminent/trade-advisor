@@ -22,6 +22,9 @@ from src.plan import (
 )
 from src.chart import (
     build_chart,
+    build_plan_pnl_fig,
+    build_plan_return_fig,
+    build_plan_value_fig,
     build_pnl_split_fig,
     build_return_vs_spy_fig,
     build_sim_chart,
@@ -1390,7 +1393,7 @@ def _render_favorites(as_of, lookback_days: int, timeframe: str, lookback_label:
     st.subheader("즐겨찾기")
     st.caption(
         f"조회 기간 {lookback_label} · 분석일 {as_of} · "
-        "추가만 하면 목록에만 들어갑니다. **분석하기**를 눌러야 계산합니다. "
+        "추가만 하면 목록에만 들어갑니다. **분석하기**를 누를 때마다 시세를 다시 받습니다. "
         "색 막대를 누르면 그 종목 분석으로 갑니다. "
         "미국 종목은 매수/매도일 때 기존 제안과 옵션 반영 제안을 같이 표시합니다."
     )
@@ -1399,40 +1402,17 @@ def _render_favorites(as_of, lookback_days: int, timeframe: str, lookback_label:
     if not favs:
         st.info("아직 즐겨찾기한 종목이 없습니다. 위에서 검색해 추가하세요.")
         return
-    run = st.button("분석하기", type="primary", use_container_width=True, key="fav_run_btn")
+    run = st.button("분석하기", type="primary", width="stretch", key="fav_run_btn")
     if run:
+        _cached_ohlcv.clear()
+        _cached_spot.clear()
+        _cached_option_walls.clear()
         results = []
-        prev = st.session_state.get("fav_board") or {}
-        reuse = (
-            prev.get("as_of") == as_of.isoformat()
-            and prev.get("lookback") == lookback_label
-        )
-        prev_ok = {}
-        if reuse:
-            for row in prev.get("results") or []:
-                if not row or row.get("error"):
-                    continue
-                market_row = str(row.get("market") or "")
-                base = row.get("action_base") or row.get("action") or "홀딩"
-                if (
-                    market_row == "US"
-                    and base in ("약한 매수", "매수", "강한 매수", "약한 매도", "매도", "강한 매도")
-                    and not row.get("option_applied")
-                ):
-                    continue
-                prev_ok[_fav_row_key(row.get("market"), row.get("ticker"))] = row
         bar = st.progress(0, text="즐겨찾기 계산 중...")
         n_fav = len(favs)
         failed_once = False
         for i, item in enumerate(favs, 1):
             name = item.get("name") or item.get("ticker")
-            key = _fav_row_key(item["market"], item["ticker"])
-            if key in prev_ok:
-                row = dict(prev_ok[key])
-                row["name"] = name or row.get("name") or item["ticker"]
-                results.append(row)
-                bar.progress(i / n_fav, text=f"{name} 유지")
-                continue
             if i > 1:
                 time.sleep(1.1 if failed_once else 0.35)
             bar.progress(i / n_fav, text=f"{name} 계산 중...")
@@ -1456,10 +1436,7 @@ def _render_favorites(as_of, lookback_days: int, timeframe: str, lookback_label:
         }
         n_fail = sum(1 for r in results if r.get("error"))
         if n_fail:
-            st.warning(
-                f"{n_fail}종목은 시세를 받지 못했습니다. "
-                "**분석하기**를 다시 누르면 실패한 종목만 다시 받습니다."
-            )
+            st.warning(f"{n_fail}종목은 시세를 받지 못했습니다. **분석하기**를 다시 누르면 전부 다시 받습니다.")
     board = st.session_state.get("fav_board") or {}
     same_ctx = (
         board.get("as_of") == as_of.isoformat()
@@ -2050,7 +2027,7 @@ def _render_plan(lookback_label: str, rule: dict, start: date, months: int, mont
         )
     skips = list(getattr(result, "skips", None) or [])
     if buy_n > 0 and buy_fills == 0:
-        st.error("매수 신호는 있었는데 체결이 없습니다. 아래 미체결 이유를 확인하세요.")
+        st.error("매수 신호는 있었는데 체결이 없습니다. 월 투자금·비중을 확인하세요.")
     contributed = float(result.contributed_krw or 0)
     cash = float(result.cash_krw or 0)
     hold_val = sum(float(h.get("평가(원)") or 0) for h in (result.holdings or []))
@@ -2088,6 +2065,22 @@ def _render_plan(lookback_label: str, rule: dict, start: date, months: int, mont
         st.markdown("**종목별 수익**")
         st.caption("종목 수익률은 그 종목 매수 투입 대비 (평가+매도대금−투입)입니다. 월배정%는 매달 넣는 돈을 나눈 비율입니다.")
         _show_table(pd.DataFrame(hold_rows))
+        names, pcts, pnls, invested_l, value_l = [], [], [], [], []
+        for h in result.holdings or []:
+            name = str(h.get("종목") or h.get("티커") or "")
+            names.append(name)
+            raw_pct = h.get("수익률")
+            pcts.append(float(raw_pct) if raw_pct is not None else 0.0)
+            pnls.append(float(h.get("수익금") or 0))
+            invested_l.append(float(h.get("투입") or 0))
+            value_l.append(float(h.get("평가(원)") or 0))
+        if names:
+            g1, g2 = st.columns(2)
+            with g1:
+                st.plotly_chart(build_plan_return_fig(names, pcts))
+            with g2:
+                st.plotly_chart(build_plan_pnl_fig(names, pnls))
+            st.plotly_chart(build_plan_value_fig(names, invested_l, value_l))
     spy_val = result.spy_value_krw
     st.subheader("S&P 500 비교")
     if spy_val is None:
@@ -2137,43 +2130,6 @@ def _render_plan(lookback_label: str, rule: dict, start: date, months: int, mont
             f"{result.start} ~ {result.end} 동안 매달 같은 금액을 SPY(S&P 500 ETF)에 넣은 경우와 비교합니다. "
             "달러 환산은 그날 원/달러, 소수점 좌수는 허용합니다. 계획의 최종액은 보유 평가+현금입니다."
         )
-    month_rows = result.months_log or []
-    if month_rows:
-        st.markdown("**월별 적립**")
-        show_m = []
-        for row in month_rows:
-            show_m.append(
-                {
-                    "년월": row.get("년월"),
-                    "적립": f"{float(row.get('적립') or 0):,.0f}",
-                    "현금(월초)": f"{float(row.get('현금') or 0):,.0f}",
-                }
-            )
-        _show_table(pd.DataFrame(show_m))
-    trades = result.trades or []
-    if trades:
-        st.markdown("**거래**")
-        st.caption("수량은 1주 미만도 나옵니다. 한도 금액 ÷ 가격으로 쪼개 산 가상 수량입니다.")
-        show = []
-        for t in trades:
-            show.append(
-                {
-                    "날짜": t.get("날짜"),
-                    "종목": t.get("종목"),
-                    "체결": t.get("체결"),
-                    "신호": t.get("신호"),
-                    "수량": _fmt_qty(t.get("수량"), t.get("시장")),
-                    "원화": f"{float(t.get('원화') or 0):,.0f}",
-                    "비중": t.get("비중"),
-                }
-            )
-        _show_table(pd.DataFrame(show))
-    elif buy_n:
-        st.info("매수 신호는 있었지만 체결된 거래가 없습니다.")
-    skips = list(getattr(result, "skips", None) or [])
-    if skips:
-        st.markdown("**미체결 매수**")
-        _show_table(pd.DataFrame(skips[:80]))
 
 
 def _apply_analysis_jump() -> None:
