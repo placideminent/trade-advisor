@@ -25,7 +25,6 @@ from src.chart import (
     build_plan_pnl_fig,
     build_plan_return_fig,
     build_plan_value_fig,
-    build_pnl_split_fig,
     build_return_vs_spy_fig,
     build_sim_chart,
     build_ticker_vs_spy_fig,
@@ -461,6 +460,89 @@ def _plan_pct_fields() -> None:
 def _read_plan_pcts() -> dict:
     raw = {key: st.session_state.get(f"plan_p_{key}", default) for key, default in DEFAULT_PLAN_PCTS.items()}
     return normalize_plan_pcts(raw)
+
+
+def _render_fav_weight_inputs(caption: str) -> None:
+    favs_now = _fav_list()
+    saved_w = dict(st.session_state.get("plan_weights") or {})
+    with st.expander("종목 비중(%)", expanded=True):
+        if not favs_now:
+            st.caption("즐겨찾기가 없습니다. 종목 분석에서 별표로 넣으세요.")
+            return
+        st.caption(caption)
+        wsum = 0.0
+        new_w = {}
+        saved_total = 0.0
+        for v in saved_w.values():
+            try:
+                saved_total += float(v or 0)
+            except (TypeError, ValueError):
+                pass
+        even = round(100.0 / max(len(favs_now), 1), 1) if saved_total <= 0 else 0.0
+        for item in favs_now:
+            k = _fav_row_key(item["market"], item["ticker"])
+            sk = f"plan_w_{item['market']}_{item['ticker']}"
+            if sk not in st.session_state:
+                try:
+                    st.session_state[sk] = float(saved_w.get(k) or 0)
+                except (TypeError, ValueError):
+                    st.session_state[sk] = 0.0
+                if float(st.session_state[sk] or 0) <= 0 and even:
+                    st.session_state[sk] = even
+            val = st.number_input(
+                f"{item.get('name') or item['ticker']} ({item['ticker']})",
+                min_value=0.0,
+                max_value=100.0,
+                step=1.0,
+                key=sk,
+            )
+            new_w[k] = float(val or 0)
+            wsum += float(val or 0)
+        st.caption(f"비중 합계 {wsum:.1f}%")
+        st.session_state.plan_weights = new_w
+
+
+def _normalized_fav_weights() -> dict[str, float]:
+    raw = dict(st.session_state.get("plan_weights") or {})
+    out = {}
+    total = 0.0
+    for k, v in raw.items():
+        try:
+            w = max(0.0, float(v or 0))
+        except (TypeError, ValueError):
+            w = 0.0
+        if w > 0:
+            out[str(k)] = w
+            total += w
+    if total <= 0:
+        favs = _fav_list()
+        if not favs:
+            return {}
+        even = 1.0 / len(favs)
+        return {_fav_row_key(item["market"], item["ticker"]): even for item in favs}
+    return {k: v / total for k, v in out.items()}
+
+
+def _weighted_return(results: list) -> tuple[float | None, dict[str, float]]:
+    """종목 수익률을 비중으로 가중 평균. (전체%, 종목키→수익률)."""
+    weights = _normalized_fav_weights()
+    pcts: dict[str, float] = {}
+    acc = 0.0
+    wsum = 0.0
+    for result in results:
+        if getattr(result, "error", None):
+            continue
+        key = _fav_row_key(getattr(result, "market", "") or "", result.ticker)
+        _inv, _pnl, pct = _strategy_pnl(result)
+        pcts[key] = pct
+        w = float(weights.get(key) or 0)
+        if w <= 0:
+            continue
+        acc += w * pct
+        wsum += w
+    if wsum <= 0:
+        return None, pcts
+    return acc / wsum, pcts
 
 
 def _read_sim_from_prefix(prefix: str) -> dict:
@@ -1493,135 +1575,51 @@ def _cached_usdkrw(as_of_iso: str) -> tuple[float | None, str, str]:
     return rate, src, when.isoformat() if when else ""
 
 
-def _show_spy_compare(results: list, start: date, end: date) -> None:
+def _show_spy_compare(results: list, start: date, end: date, overall_pct: float | None = None) -> None:
     spy_pct, spy_err = _cached_spy_hold(start.isoformat(), end.isoformat())
     st.subheader("S&P 500 (SPY) 비교")
     if spy_pct is None:
         st.info(f"SPY 동일기간 수익을 받지 못했습니다: {spy_err or '알 수 없음'}")
         return
-    rows = []
     ok = [r for r in results if not getattr(r, "error", None)]
-    if len(ok) == 1:
-        invested, pnl, pct = _strategy_pnl(ok[0])
-        ccy = _sim_currency(getattr(ok[0], "market", "") or "")
-        rows.append(
-            {
-                "구분": f"{ok[0].name} 전략",
-                "투입": _fmt_ccy(invested, ccy) if invested else "-",
-                "손익": _fmt_ccy(pnl, ccy),
-                "수익률": f"{pct:+.2f}%" if invested else "-",
-            }
-        )
-        spy_pnl = invested * spy_pct / 100.0 if invested else 0.0
-        rows.append(
-            {
-                "구분": "SPY 매수 후 보유",
-                "투입": _fmt_ccy(invested, ccy) if invested else "-",
-                "손익": _fmt_ccy(spy_pnl, ccy) if invested else "-",
-                "수익률": f"{spy_pct:+.2f}%",
-            }
-        )
-        if invested:
-            rows.append(
-                {
-                    "구분": "차이 (전략−SPY)",
-                    "투입": "-",
-                    "손익": _fmt_ccy(pnl - spy_pnl, ccy),
-                    "수익률": f"{pct - spy_pct:+.2f}%p",
-                }
-            )
-    else:
-        by_ccy: dict[str, dict] = {}
-        for result in ok:
-            ccy = _sim_currency(getattr(result, "market", "") or "")
-            invested, pnl, _pct = _strategy_pnl(result)
-            bucket = by_ccy.setdefault(ccy, {"invested": 0.0, "pnl": 0.0, "n": 0})
-            bucket["invested"] += invested
-            bucket["pnl"] += pnl
-            bucket["n"] += 1
-        for ccy in ("KRW", "USD"):
-            bucket = by_ccy.get(ccy)
-            if not bucket:
-                continue
-            label = "원 전략" if ccy == "KRW" else "달러 전략 (미국·코인)"
-            invested = bucket["invested"]
-            pnl = bucket["pnl"]
-            pct = (pnl / invested * 100.0) if invested else 0.0
-            spy_pnl = invested * spy_pct / 100.0 if invested else 0.0
-            rows.append(
-                {
-                    "구분": f"{label} {bucket['n']}종목",
-                    "투입": _fmt_ccy(invested, ccy) if invested else "-",
-                    "손익": _fmt_ccy(pnl, ccy),
-                    "수익률": f"{pct:+.2f}%" if invested else "-",
-                }
-            )
-            rows.append(
-                {
-                    "구분": f"SPY 동일 투입 ({'원' if ccy == 'KRW' else '달러'})",
-                    "투입": _fmt_ccy(invested, ccy) if invested else "-",
-                    "손익": _fmt_ccy(spy_pnl, ccy) if invested else "-",
-                    "수익률": f"{spy_pct:+.2f}%",
-                }
-            )
-            if invested:
-                rows.append(
-                    {
-                        "구분": f"차이 ({'원' if ccy == 'KRW' else '달러'})",
-                        "투입": "-",
-                        "손익": _fmt_ccy(pnl - spy_pnl, ccy),
-                        "수익률": f"{pct - spy_pct:+.2f}%p",
-                    }
-                )
+    if overall_pct is None and len(ok) == 1:
+        _inv, _pnl, overall_pct = _strategy_pnl(ok[0])
+    elif overall_pct is None and ok:
+        overall_pct, _pcts = _weighted_return(ok)
+    has = overall_pct is not None
+    rows = [
+        {
+            "구분": "전략" if len(ok) != 1 else f"{ok[0].name} 전략",
+            "수익률": f"{overall_pct:+.2f}%" if has else "-",
+        },
+        {"구분": "SPY 매수 후 보유", "수익률": f"{spy_pct:+.2f}%"},
+    ]
+    if has:
+        rows.append({"구분": "차이 (전략−SPY)", "수익률": f"{overall_pct - spy_pct:+.2f}%p"})
     _show_table(pd.DataFrame(rows))
-    if len(ok) == 1:
-        invested, pnl, pct = _strategy_pnl(ok[0])
-        c1, c2, c3 = st.columns(3)
-        c1.metric("전략 수익률", f"{pct:+.2f}%" if invested else "-", f"{pct - spy_pct:+.2f}%p vs SPY" if invested else None)
-        c2.metric("SPY 보유", f"{spy_pct:+.2f}%")
-        beat = "지수보다 나음" if invested and pct >= spy_pct else "지수보다 못함"
-        c3.metric("상대평가", beat if invested else "-")
-        g1, g2 = st.columns(2)
-        with g1:
-            st.plotly_chart(
-                build_return_vs_spy_fig(pct, spy_pct, ok[0].name or "전략"),
-                use_container_width=True,
-            )
-        with g2:
-            st.plotly_chart(
-                build_pnl_split_fig(float(ok[0].realized or 0), float(ok[0].m2m or 0), "손익 구성"),
-                use_container_width=True,
-            )
-    else:
+    with st.container(horizontal=True):
+        st.metric(
+            "전략 수익률",
+            f"{overall_pct:+.2f}%" if has else "-",
+            f"{overall_pct - spy_pct:+.2f}%p vs SPY" if has else None,
+            border=True,
+        )
+        st.metric("SPY 보유", f"{spy_pct:+.2f}%", border=True)
+        beat = "지수보다 나음" if has and overall_pct >= spy_pct else "지수보다 못함"
+        st.metric("상대평가", beat if has else "-", border=True)
+    if has:
+        st.plotly_chart(build_return_vs_spy_fig(overall_pct, spy_pct, "전략" if len(ok) != 1 else (ok[0].name or "전략")))
+    if len(ok) > 1:
         names, pcts = [], []
         for result in ok:
-            invested, _pnl, pct = _strategy_pnl(result)
-            if invested:
-                names.append(str(result.name or result.ticker))
-                pcts.append(pct)
+            _inv, _pnl, pct = _strategy_pnl(result)
+            names.append(str(result.name or result.ticker))
+            pcts.append(pct)
         if names:
-            st.plotly_chart(
-                build_ticker_vs_spy_fig(names, pcts, spy_pct),
-                use_container_width=True,
-            )
-        metric_ccy = [c for c in ("KRW", "USD") if c in by_ccy]
-        if metric_ccy:
-            cards = st.columns(len(metric_ccy))
-            for i, ccy in enumerate(metric_ccy):
-                bucket = by_ccy[ccy]
-                invested = bucket["invested"]
-                pnl = bucket["pnl"]
-                pct = (pnl / invested * 100.0) if invested else 0.0
-                label = "원" if ccy == "KRW" else "달러"
-                cards[i].metric(
-                    f"{label} 전략 vs SPY",
-                    f"{pct:+.2f}%" if invested else "-",
-                    f"{pct - spy_pct:+.2f}%p" if invested else None,
-                )
+            st.plotly_chart(build_ticker_vs_spy_fig(names, pcts, spy_pct))
     st.caption(
         f"{start} ~ {end} SPY(SPDR S&P 500 ETF)를 기간 첫날 사서 끝날까지 보유한 수익률과 비교합니다. "
-        "초록은 지수 이상, 빨강은 지수 미만. 전략 수익률은 매수 투입 대비 (실현+평가) 손익입니다. "
-        "원 표시는 환율 없이 같은 %만 견줍니다."
+        "여러 종목일 때 전체 수익률은 설정한 비중으로 종목 수익률을 가중 평균합니다."
     )
 
 
@@ -1650,15 +1648,14 @@ def _show_sim_result(result, *, with_spy: bool = True) -> None:
     if result.error:
         st.error(result.error)
         return
-    ccy = _sim_currency(getattr(result, "market", "") or "")
+    _inv, _pnl, pct = _strategy_pnl(result)
     _kv_table(
         [
             ("종목", f"{result.name} ({result.ticker})"),
             ("잔량", f"{_fmt_qty(result.shares, getattr(result, 'market', ''))}주"),
             ("평단", _fmt(result.avg) if result.shares else "-"),
             ("종료가", _fmt(result.last_px)),
-            ("평가손익", f"{_fmt_ccy(result.m2m, ccy)} ({result.m2m_pct:+.2f}%)"),
-            ("실현손익", _fmt_ccy(result.realized, ccy)),
+            ("수익률", f"{pct:+.2f}%" if _inv else "-"),
             ("거래일", f"{result.days}일"),
         ]
     )
@@ -1723,120 +1720,56 @@ def _show_sim_result(result, *, with_spy: bool = True) -> None:
 
 
 def _show_sim_favorites(results: list) -> None:
+    overall, _pct_map = _weighted_return(results)
+    weights = _normalized_fav_weights()
     rows = []
-    totals: dict[str, dict] = {}
+    names, pcts = [], []
     for result in results:
         market = getattr(result, "market", "") or ""
-        ccy = _sim_currency(market)
+        key = _fav_row_key(market, result.ticker)
+        w = float(weights.get(key) or 0) * 100.0
         if result.error:
             rows.append(
                 {
                     "종목": result.name or result.ticker,
                     "시장": _market_name(market),
-                    "잔량": "-",
-                    "평단": "-",
-                    "종료가": "-",
-                    "평가손익": "-",
-                    "실현손익": "-",
+                    "비중%": f"{w:.1f}",
+                    "수익률": "-",
                     "비고": result.error,
                 }
             )
             continue
-        bucket = totals.setdefault(ccy, {"m2m": 0.0, "realized": 0.0, "n": 0})
-        bucket["m2m"] += float(result.m2m or 0)
-        bucket["realized"] += float(result.realized or 0)
-        bucket["n"] += 1
+        _inv, _pnl, pct = _strategy_pnl(result)
         rows.append(
             {
                 "종목": f"{result.name} ({result.ticker})",
                 "시장": _market_name(market),
-                "잔량": f"{_fmt_qty(result.shares, market)}주",
-                "평단": _fmt(result.avg) if result.shares else "-",
-                "종료가": _fmt(result.last_px),
-                "평가손익": f"{_fmt_ccy(result.m2m, ccy)} ({result.m2m_pct:+.2f}%)",
-                "실현손익": _fmt_ccy(result.realized, ccy),
-                "비고": "",
+                "비중%": f"{w:.1f}",
+                "수익률": f"{pct:+.2f}%",
+                "비고": "" if _inv else "매수 없음",
             }
         )
+        names.append(str(result.name or result.ticker))
+        pcts.append(pct)
     st.subheader("종목 요약")
+    with st.container(horizontal=True):
+        st.metric("전체 수익률", f"{overall:+.2f}%" if overall is not None else "-", border=True)
+        st.metric("종목 수", f"{len(results)}종목", border=True)
+    st.caption("전체 수익률은 종목별 수익률을 왼쪽에서 정한 비중으로 가중 평균한 값입니다. 손익 금액은 넣지 않습니다.")
     _show_table(pd.DataFrame(rows))
-    if totals:
-        st.subheader("통화별 합계")
-        ccy_rows = []
-        for ccy in ("KRW", "USD"):
-            bucket = totals.get(ccy)
-            if not bucket:
-                continue
-            label = "원 (한국 주식)" if ccy == "KRW" else "달러 (미국 주식·코인)"
-            m2m = bucket["m2m"]
-            realized = bucket["realized"]
-            ccy_rows.append(
-                {
-                    "통화": label,
-                    "종목 수": f"{bucket['n']}종목",
-                    "평가손익": _fmt_ccy(m2m, ccy),
-                    "실현손익": _fmt_ccy(realized, ccy),
-                    "평가+실현": _fmt_ccy(m2m + realized, ccy),
-                }
-            )
-        starts = [r.start for r in results if getattr(r, "start", None)]
-        ends = [r.end for r in results if getattr(r, "end", None)]
-        as_of_end = max(ends) if ends else None
-        rate = None
-        rate_src = ""
-        rate_day = ""
-        if as_of_end:
-            rate, rate_src, rate_day = _cached_usdkrw(as_of_end.isoformat())
-        krw_b = totals.get("KRW") or {"m2m": 0.0, "realized": 0.0, "n": 0}
-        usd_b = totals.get("USD") or {"m2m": 0.0, "realized": 0.0, "n": 0}
-        if rate:
-            n_all = int(krw_b["n"]) + int(usd_b["n"])
-            krw_m2m = float(krw_b["m2m"]) + float(usd_b["m2m"]) * rate
-            krw_real = float(krw_b["realized"]) + float(usd_b["realized"]) * rate
-            usd_m2m = float(usd_b["m2m"]) + float(krw_b["m2m"]) / rate
-            usd_real = float(usd_b["realized"]) + float(krw_b["realized"]) / rate
-            ccy_rows.append(
-                {
-                    "통화": "합계 (원)",
-                    "종목 수": f"{n_all}종목",
-                    "평가손익": _fmt_ccy(krw_m2m, "KRW"),
-                    "실현손익": _fmt_ccy(krw_real, "KRW"),
-                    "평가+실현": _fmt_ccy(krw_m2m + krw_real, "KRW"),
-                }
-            )
-            ccy_rows.append(
-                {
-                    "통화": "합계 (달러)",
-                    "종목 수": f"{n_all}종목",
-                    "평가손익": _fmt_ccy(usd_m2m, "USD"),
-                    "실현손익": _fmt_ccy(usd_real, "USD"),
-                    "평가+실현": _fmt_ccy(usd_m2m + usd_real, "USD"),
-                }
-            )
-        _show_table(pd.DataFrame(ccy_rows))
-        if rate:
-            used = rate_day or str(as_of_end)
-            extra = f", {used}" if str(used) != str(as_of_end) else ""
-            st.caption(
-                f"코인은 달러 기준입니다. 합계는 조회 종료일 {as_of_end} 원/달러 "
-                f"{rate:,.2f}원({rate_src}{extra})으로 달러를 환산했습니다."
-            )
-            m1, m2 = st.columns(2)
-            m1.metric("합계 평가+실현 (원)", _fmt_ccy(krw_m2m + krw_real, "KRW"))
-            m2.metric("합계 평가+실현 (달러)", _fmt_ccy(usd_m2m + usd_real, "USD"))
-        else:
-            st.caption(
-                "코인은 달러 기준입니다. 원/달러 환율을 받지 못해 원·달러 합계는 표시하지 않습니다."
-            )
-        if starts and ends:
-            _show_spy_compare(results, min(starts), max(ends))
+    if names:
+        st.plotly_chart(build_plan_return_fig(names, pcts))
+    starts = [r.start for r in results if getattr(r, "start", None)]
+    ends = [r.end for r in results if getattr(r, "end", None)]
+    if starts and ends:
+        _show_spy_compare(results, min(starts), max(ends), overall_pct=overall)
     for result in results:
         title = f"{result.name} ({result.ticker})"
         if result.error:
             title += " · 실패"
         else:
-            ccy = _sim_currency(getattr(result, "market", "") or "")
-            title += f" · 평가 {_fmt_ccy(result.m2m, ccy)}"
+            _inv, _pnl, pct = _strategy_pnl(result)
+            title += f" · 수익률 {pct:+.2f}%"
         with st.expander(title, expanded=False):
             _show_sim_result(result, with_spy=False)
 
@@ -2404,6 +2337,9 @@ with st.sidebar:
                                     on_click=partial(_reset_one_fav_sim, item["market"], item["ticker"]),
                                 )
                 _sync_fav_sims()
+                _render_fav_weight_inputs(
+                    "종목 수익률을 이 비중으로 가중 평균해 전체 수익률을 냅니다. 합이 100이 아니면 비율로 맞춥니다. 전부 0이면 균등 비중입니다."
+                )
         elif page == "투자계획":
             _init_plan_pct_widgets()
             with st.expander("매수·매도 비율(%)", expanded=True):
@@ -2414,43 +2350,9 @@ with st.sidebar:
                 )
                 _plan_pct_fields()
                 st.button("비율 기본값", width="stretch", on_click=_reset_plan_pct_widgets)
-            favs_now = _fav_list()
-            saved_w = dict(st.session_state.get("plan_weights") or {})
-            with st.expander("종목 비중(%)", expanded=True):
-                if not favs_now:
-                    st.caption("즐겨찾기가 없습니다. 종목 분석에서 별표로 넣으세요.")
-                else:
-                    st.caption("매달 넣는 돈을 이 비율로 나눕니다. 합이 100이 아니면 비율로 맞춥니다. 전부 0이면 균등 비중으로 넣습니다.")
-                    wsum = 0.0
-                    new_w = {}
-                    saved_total = 0.0
-                    for v in saved_w.values():
-                        try:
-                            saved_total += float(v or 0)
-                        except (TypeError, ValueError):
-                            pass
-                    even = round(100.0 / max(len(favs_now), 1), 1) if saved_total <= 0 else 0.0
-                    for item in favs_now:
-                        k = _fav_row_key(item["market"], item["ticker"])
-                        sk = f"plan_w_{item['market']}_{item['ticker']}"
-                        if sk not in st.session_state:
-                            try:
-                                st.session_state[sk] = float(saved_w.get(k) or 0)
-                            except (TypeError, ValueError):
-                                st.session_state[sk] = 0.0
-                            if float(st.session_state[sk] or 0) <= 0 and even:
-                                st.session_state[sk] = even
-                        val = st.number_input(
-                            f"{item.get('name') or item['ticker']} ({item['ticker']})",
-                            min_value=0.0,
-                            max_value=100.0,
-                            step=1.0,
-                            key=sk,
-                        )
-                        new_w[k] = float(val or 0)
-                        wsum += float(val or 0)
-                    st.caption(f"비중 합계 {wsum:.1f}%")
-                    st.session_state.plan_weights = new_w
+            _render_fav_weight_inputs(
+                "매달 넣는 돈을 이 비율로 나눕니다. 합이 100이 아니면 비율로 맞춥니다. 전부 0이면 균등 비중으로 넣습니다."
+            )
         rule = _read_rule_from_sidebar()
         _persist_prefs(rule)
         _emit_prefs_cookie()
