@@ -2007,27 +2007,29 @@ def _render_plan(lookback_label: str, rule: dict, start: date, months: int, mont
         def _prog(i, n, msg):
             bar.progress(min((i + 1) / max(n, 1), 1.0), text=str(msg))
 
-        with st.spinner("즐겨찾기 신호와 환율을 모으는 중..."):
-            st.session_state.plan_result = run_plan(
-                items,
-                start,
-                int(months),
-                float(monthly_krw),
-                lookback_label,
-                rule,
-                pcts=pcts,
-                progress=_prog,
-            )
+        try:
+            with st.spinner("즐겨찾기 신호와 환율을 모으는 중..."):
+                st.session_state.plan_result = run_plan(
+                    items,
+                    start,
+                    int(months),
+                    float(monthly_krw),
+                    lookback_label,
+                    rule,
+                    pcts=pcts,
+                    progress=_prog,
+                )
+        except Exception as extra:
+            bar.empty()
+            st.error(f"투자계획 계산에 실패했습니다: {extra}")
+            return
         bar.empty()
     result = st.session_state.get("plan_result")
     if not result:
         st.info("왼쪽에서 기간·월 투자금·비중을 정한 뒤 **투자계획 실행**을 누르세요.")
         return
-    if result.error:
+    if getattr(result, "error", None):
         st.error(result.error)
-        return
-    if getattr(result, "engine", "") != "frac-v2":
-        st.warning("계산 방식이 바뀌었습니다. 왼쪽에서 **투자계획 실행**을 다시 눌러 주세요.")
         return
     counts = dict(getattr(result, "signal_counts", None) or {})
     buy_n = sum(int(counts.get(a) or 0) for a in ("약한 매수", "매수", "강한 매수"))

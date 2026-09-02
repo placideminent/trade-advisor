@@ -212,7 +212,6 @@ class PlanResult:
     months_log: list = field(default_factory=list)
     signal_counts: dict = field(default_factory=dict)
     skips: list = field(default_factory=list)
-    engine: str = "frac-v2"
     equal_weights: bool = False
 
 
