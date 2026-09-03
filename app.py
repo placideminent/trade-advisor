@@ -1901,6 +1901,8 @@ def _render_simulation(
             for i, item in enumerate(favs):
                 name = item.get("name") or item.get("ticker")
                 item_sim = normalize_sim(item.get("sim") or sim)
+                if i:
+                    time.sleep(1.0)
                 def _prog(j, n, as_of, i=i, name=name, n_fav=n_fav):
                     bar.progress(
                         min((i + j / max(n, 1)) / max(n_fav, 1), 1.0),
@@ -1934,6 +1936,8 @@ def _render_simulation(
                 if item.get("name"):
                     result.name = item["name"]
                 out.append(result)
+                if getattr(result, "error", None):
+                    time.sleep(1.4)
             bar.empty()
             st.session_state.sim_fav_results = out
             st.session_state.sim_result = None

@@ -137,6 +137,13 @@ def _yahoo_blocked() -> bool:
     return monotonic() < _yahoo_skip_until
 
 
+def reset_yahoo_gate() -> None:
+    """종목을 바꿀 때 Yahoo 차단을 풀어 다음 종목이 바로 건너뛰지 않게 한다."""
+    global _yahoo_fail_streak, _yahoo_skip_until
+    _yahoo_fail_streak = 0
+    _yahoo_skip_until = 0.0
+
+
 def _mark_yahoo(ok: bool) -> None:
     """연속 실패면 잠시 Yahoo를 건너뛰고 FDR/Naver로 넘어가게 한다."""
     global _yahoo_fail_streak, _yahoo_skip_until
@@ -148,10 +155,17 @@ def _mark_yahoo(ok: bool) -> None:
         _yahoo_skip_until = monotonic() + 5.0
 
 
-def _fetch_yf(symbol: str, start: date, end: date, interval: str = "1d") -> pd.DataFrame:
+def _fetch_yf(
+    symbol: str,
+    start: date,
+    end: date,
+    interval: str = "1d",
+    *,
+    respect_gate: bool = True,
+) -> pd.DataFrame:
     import yfinance as yf
 
-    if _yahoo_blocked():
+    if respect_gate and _yahoo_blocked():
         return pd.DataFrame()
     kwargs = dict(
         start=start.isoformat(),
@@ -362,10 +376,57 @@ def _kr_yahoo_symbols(code: str) -> list[str]:
     return [f"{code}{s}" for s in suffixes]
 
 
+def _fetch_stooq_daily(symbol: str, start: date, end: date, *, crypto: bool = False) -> pd.DataFrame:
+    """Yahoo가 막힐 때 미국·코인 일봉 폴백."""
+    import io
+    import requests
+
+    raw = str(symbol or "").strip().lower()
+    if not raw:
+        return pd.DataFrame()
+    if crypto:
+        key = raw.replace("-usd", "").replace("usdt", "").replace("/", "")
+        query = f"{key}usd"
+    else:
+        query = raw.replace("/", "-")
+        if "." not in query and "-" not in query:
+            query = f"{query}.us"
+    try:
+        resp = requests.get(
+            "https://stooq.com/q/d/l/",
+            params={
+                "s": query,
+                "d1": start.strftime("%Y%m%d"),
+                "d2": end.strftime("%Y%m%d"),
+                "i": "d",
+            },
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        text = (resp.text or "").strip()
+        if not text or text[:1] == "<" or "no data" in text.lower():
+            return pd.DataFrame()
+        raw_df = pd.read_csv(io.StringIO(text))
+        rename = {c: str(c).strip().lower() for c in raw_df.columns}
+        raw_df = raw_df.rename(columns=rename)
+        if "date" not in raw_df.columns or "close" not in raw_df.columns:
+            return pd.DataFrame()
+        raw_df["date"] = pd.to_datetime(raw_df["date"], errors="coerce")
+        raw_df = raw_df.dropna(subset=["date"]).set_index("date").sort_index()
+        return _normalize_ohlcv(raw_df)
+    except Exception:
+        return pd.DataFrame()
+
+
 def _fetch_daily(symbol: str, start: date, end: date) -> pd.DataFrame:
     df = pd.DataFrame()
     try:
-        df = _fetch_yf(symbol, start, end, interval="1d")
+        if _yahoo_blocked():
+            from time import sleep
+
+            sleep(1.0)
+        df = _fetch_yf(symbol, start, end, interval="1d", respect_gate=False)
     except Exception:
         df = pd.DataFrame()
     if df.empty:
@@ -614,6 +675,7 @@ def fetch_ohlcv(
 ) -> tuple[pd.DataFrame, dict]:
     """지정일(as_of)까지의 봉만 반환. 1개월 주식은 1시간봉, 2~3개월은 4시간봉, 그 이상은 일봉."""
     as_of = _to_date(as_of)
+    reset_yahoo_gate()
     if timeframe not in ("1h", "4h", "1d"):
         timeframe = "1d"
     interval = "1h" if timeframe in ("1h", "4h") else "1d"
@@ -695,6 +757,10 @@ def fetch_ohlcv(
                     meta["source"] = "FinanceDataReader"
             except Exception:
                 df = pd.DataFrame()
+        if df.empty:
+            df = _fetch_stooq_daily(symbol, start, as_of)
+            if not df.empty:
+                meta["source"] = "Stooq"
         if want_intra and not used_intra and not df.empty:
             timeframe = "1d"
             meta["note"] = "시간봉을 받지 못해 일봉으로 계산합니다."
@@ -713,7 +779,14 @@ def fetch_ohlcv(
                 used_intra = True
         if df.empty:
             df = _fetch_daily(symbol, start, as_of)
-        meta["source"] = "Yahoo Finance"
+            if not df.empty:
+                meta["source"] = "Yahoo Finance"
+        if df.empty:
+            df = _fetch_stooq_daily(symbol, start, as_of, crypto=True)
+            if not df.empty:
+                meta["source"] = "Stooq"
+        if not meta.get("source") and not df.empty:
+            meta["source"] = "Yahoo Finance"
         if want_intra and not used_intra and not df.empty:
             timeframe = "1d"
             meta["note"] = "시간봉을 받지 못해 일봉으로 계산합니다."

@@ -12,6 +12,7 @@ from .data import (
     fetch_intraday_range,
     fetch_ohlcv,
     resample_4h,
+    reset_yahoo_gate,
     to_market_wall,
 )
 from .signals import period_return, recommend
@@ -166,16 +167,27 @@ def run_backtest(
         return result
 
     span = max((end - start).days, 1) + int(lookback_days) + 30
+    reset_yahoo_gate()
     df_main = pd.DataFrame()
     meta: dict = {"ticker": ticker, "name": ticker}
     notes: list[str] = []
 
     def _try_ohlcv(tf: str):
-        try:
-            return fetch_ohlcv(market, ticker, end, span, tf)
-        except Exception as extra:
-            notes.append(str(extra)[:160])
-            return pd.DataFrame(), dict(meta)
+        last_meta = dict(meta)
+        for attempt in range(3):
+            try:
+                reset_yahoo_gate()
+                df, got = fetch_ohlcv(market, ticker, end, span, tf)
+                if df is not None and not df.empty:
+                    return df, got
+                last_meta = got or last_meta
+            except Exception as extra:
+                notes.append(str(extra)[:160])
+            if attempt < 2:
+                from time import sleep
+
+                sleep(0.8 * (attempt + 1))
+        return pd.DataFrame(), last_meta
 
     if timeframe in ("1h", "4h"):
         h1_start = start - timedelta(days=int(lookback_days * 1.2) + 10)
@@ -233,6 +245,7 @@ def run_backtest(
             option_walls = fetch_option_walls(ticker, end, last)
         except Exception as extra:
             option_walls = {"error": str(extra)[:120], "soon": False}
+        reset_yahoo_gate()
 
     if df_main is None or df_main.empty:
         extra = f" ({'; '.join(notes)})" if notes else ""
