@@ -24,12 +24,12 @@ def build_chart(an: Analysis, sig: Signal, title: str) -> go.Figure:
     fig = make_subplots(
         rows=2,
         cols=2,
-        shared_xaxes=True,
-        shared_yaxes=False,
-        column_widths=[0.78, 0.22],
-        row_heights=[0.74, 0.26],
-        specs=[[{"colspan": 1}, {"rowspan": 2}], [{}, None]],
-        horizontal_spacing=0.02,
+        shared_xaxes="columns",
+        shared_yaxes="rows",
+        column_widths=[0.82, 0.18],
+        row_heights=[0.76, 0.24],
+        specs=[[{}, {}], [{}, None]],
+        horizontal_spacing=0.01,
         vertical_spacing=0.04,
         subplot_titles=(title, "매물대", "거래량", ""),
     )
@@ -165,8 +165,14 @@ def build_chart(an: Analysis, sig: Signal, title: str) -> go.Figure:
     )
 
     if len(an.vp_centers):
+        centers = list(an.vp_centers)
+        vols = list(an.vp_volumes)
+        if len(centers) >= 2:
+            bin_h = abs(float(centers[1]) - float(centers[0]))
+        else:
+            bin_h = max(abs(float(an.price) or 1.0) * 0.01, 1e-9)
         vp_colors = []
-        for p in an.vp_centers:
+        for p in centers:
             if abs(p - an.poc) < 1e-9:
                 vp_colors.append("#ca8a04")
             elif an.val <= p <= an.vah:
@@ -175,11 +181,12 @@ def build_chart(an: Analysis, sig: Signal, title: str) -> go.Figure:
                 vp_colors.append("#cbd5e1")
         fig.add_trace(
             go.Bar(
-                x=an.vp_volumes,
-                y=an.vp_centers,
+                x=vols,
+                y=centers,
                 orientation="h",
                 name="매물대",
-                marker_color=vp_colors,
+                marker=dict(color=vp_colors, line=dict(width=0)),
+                width=bin_h,
                 showlegend=False,
                 hovertemplate="가격 %{y}<br>거래량 %{x}<extra></extra>",
             ),
@@ -187,20 +194,34 @@ def build_chart(an: Analysis, sig: Signal, title: str) -> go.Figure:
             col=2,
         )
 
+    y_lo = float(df["low"].min())
+    y_hi = float(df["high"].max())
+    pad = (y_hi - y_lo) * 0.04 if y_hi > y_lo else abs(y_lo) * 0.04 or 1.0
+    y_range = [y_lo - pad, y_hi + pad]
+
     fig.update_layout(
         template="plotly_white",
         font=dict(family="Malgun Gothic, Apple SD Gothic Neo, sans-serif", size=13),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
         margin=dict(l=28, r=12, t=48, b=28),
-        height=560,
+        height=620,
         xaxis_rangeslider_visible=False,
-        bargap=0.15,
-        hovermode="x unified",
+        bargap=0,
+        hovermode="closest",
     )
-    fig.update_yaxes(title_text="가격", row=1, col=1)
-    fig.update_yaxes(matches="y", showticklabels=False, row=1, col=2)
-    fig.update_xaxes(title_text="거래량 합", row=1, col=2)
+    fig.update_yaxes(title_text="가격", range=y_range, row=1, col=1)
+    fig.update_yaxes(
+        range=y_range,
+        matches="y",
+        showticklabels=False,
+        showgrid=False,
+        zeroline=False,
+        row=1,
+        col=2,
+    )
+    fig.update_xaxes(title_text="", showticklabels=False, showgrid=False, zeroline=False, row=1, col=2)
     fig.update_yaxes(title_text="거래량", row=2, col=1)
+    fig.update_xaxes(rangeslider_visible=False, row=1, col=1)
     return fig
 
 
