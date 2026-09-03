@@ -212,11 +212,9 @@ def _empty() -> dict:
         "cuts_crypto": dict(DEFAULT_CUTS_CRYPTO),
         "sim": dict(DEFAULT_SIM),
         "sim_options": 0,
-        "sim_rule_mode": "full",
         "rule_ver": SIGNAL_RULE_VERSION,
         "favorites": [],
         "plan": {"months": 12, "monthly_krw": 0, "weights": {}, "pcts": {}},
-        "simple": {"weights": {}, "cuts": {}, "cuts_crypto": {}},
     }
 
 
@@ -288,7 +286,6 @@ def _normalize(raw: dict | None) -> dict:
         data["sim_options"] = 1 if int(raw.get("sim_options") or 0) else 0
     except (TypeError, ValueError):
         data["sim_options"] = 0
-    data["sim_rule_mode"] = "simple" if raw.get("sim_rule_mode") == "simple" else "full"
     out_favs = []
     for item in favs:
         if not isinstance(item, dict):
@@ -327,12 +324,6 @@ def _normalize(raw: dict | None) -> dict:
             continue
     plan["weights"] = wout
     data["plan"] = plan
-    simple_raw = raw.get("simple") if isinstance(raw.get("simple"), dict) else {}
-    data["simple"] = {
-        "weights": dict(simple_raw.get("weights") or {}) if isinstance(simple_raw.get("weights"), dict) else {},
-        "cuts": dict(simple_raw.get("cuts") or {}) if isinstance(simple_raw.get("cuts"), dict) else {},
-        "cuts_crypto": dict(simple_raw.get("cuts_crypto") or {}) if isinstance(simple_raw.get("cuts_crypto"), dict) else {},
-    }
     try:
         data["ts"] = int(raw.get("ts") or 0)
     except (TypeError, ValueError):
