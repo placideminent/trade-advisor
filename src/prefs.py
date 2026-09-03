@@ -212,6 +212,7 @@ def _empty() -> dict:
         "cuts_crypto": dict(DEFAULT_CUTS_CRYPTO),
         "sim": dict(DEFAULT_SIM),
         "sim_options": 0,
+        "sim_rule_mode": "full",
         "rule_ver": SIGNAL_RULE_VERSION,
         "favorites": [],
         "plan": {"months": 12, "monthly_krw": 0, "weights": {}, "pcts": {}},
@@ -287,6 +288,7 @@ def _normalize(raw: dict | None) -> dict:
         data["sim_options"] = 1 if int(raw.get("sim_options") or 0) else 0
     except (TypeError, ValueError):
         data["sim_options"] = 0
+    data["sim_rule_mode"] = "simple" if raw.get("sim_rule_mode") == "simple" else "full"
     out_favs = []
     for item in favs:
         if not isinstance(item, dict):

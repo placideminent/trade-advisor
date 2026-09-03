@@ -358,6 +358,7 @@ def _init_rule_widgets() -> None:
     for key, default in DEFAULT_SIM.items():
         st.session_state.setdefault(f"s_{key}", int(default))
     st.session_state.setdefault("sim_eval_mode", "기존 규칙만")
+    st.session_state.setdefault("sim_rule_mode", "기존 분석")
 
 
 def _read_rule_from_sidebar() -> dict:
@@ -753,6 +754,7 @@ def _prefs_payload(rule: dict) -> dict:
         "cuts_crypto": rule.get("cuts_crypto") or dict(DEFAULT_CUTS_CRYPTO),
         "sim": normalize_sim({key: st.session_state.get(f"s_{key}", default) for key, default in DEFAULT_SIM.items()}),
         "sim_options": 1 if st.session_state.get("sim_eval_mode") == "옵션 월 포함" else 0,
+        "sim_rule_mode": "simple" if st.session_state.get("sim_rule_mode") == "간략 분석" else "full",
         "rule_ver": SIGNAL_RULE_VERSION,
         "favorites": list(st.session_state.get("favorites") or []),
         "plan": {
@@ -829,6 +831,7 @@ def _apply_loaded_prefs(loaded: dict) -> None:
     for key, default in DEFAULT_SIM.items():
         st.session_state[f"s_{key}"] = sim.get(key, default)
     st.session_state.sim_eval_mode = "옵션 월 포함" if loaded.get("sim_options") else "기존 규칙만"
+    st.session_state.sim_rule_mode = "간략 분석" if loaded.get("sim_rule_mode") == "simple" else "기존 분석"
     st.session_state.favorites = list(loaded.get("favorites") or [])
     plan = loaded.get("plan") or {}
     try:
@@ -1868,9 +1871,10 @@ def _render_simulation(
 ) -> None:
     st.subheader("시뮬레이션")
     eval_txt = "옵션 월 포함" if use_options else "기존 규칙만"
+    rule_txt = "간략 분석" if isinstance(rule, dict) and rule.get("mode") == "simple" else "기존 분석"
     st.caption(
         "매일 조회 기간만큼만 보고 신호를 낸 뒤, 설정한 수량으로 사고팝니다. "
-        f"평가는 **{eval_txt}**. 배점·매수/매도 컷은 왼쪽 값을 그대로 씁니다."
+        f"점수 규칙은 **{rule_txt}**, 평가는 **{eval_txt}**. 배점·매수/매도 컷은 왼쪽 값을 그대로 씁니다."
         + (
             " 옵션은 미국 주식만, 시뮬 종료일 기준 현재 체인을 전 기간에 같이 씁니다. "
             "홀딩인 날에는 옵션을 넣지 않습니다."
@@ -1922,10 +1926,14 @@ def _render_simulation(
             bar.empty()
             st.session_state.sim_fav_results = out
             st.session_state.sim_result = None
+            st.session_state.sim_rule_used = rule_txt
         results = st.session_state.get("sim_fav_results")
         if not results:
             st.info("왼쪽에서 기간·수량을 정한 뒤 **시뮬레이션 실행**을 누르세요.")
             return
+        used = st.session_state.get("sim_rule_used")
+        if used and used != rule_txt:
+            st.caption(f"아래 결과는 **{used}** 기준입니다. 점수 규칙을 바꿨으면 **시뮬레이션 실행**을 다시 누르세요.")
         _show_sim_favorites(results)
         return
 
@@ -1955,6 +1963,11 @@ def _render_simulation(
             )
         bar.empty()
         st.session_state.sim_fav_results = None
+        st.session_state.sim_rule_used = rule_txt
+
+    used = st.session_state.get("sim_rule_used")
+    if used and used != rule_txt:
+        st.caption(f"아래 결과는 **{used}** 기준입니다. 점수 규칙을 바꿨으면 **시뮬레이션 실행**을 다시 누르세요.")
 
     result = st.session_state.get("sim_result")
     if not result:
@@ -2201,6 +2214,15 @@ with st.sidebar:
         )
         if sim_scope == "즐겨찾기 전체":
             st.caption(f"즐겨찾기 {len(_fav_list())}종목을 같은 기간·수량으로 각각 돌립니다.")
+        if st.session_state.get("sim_rule_mode") not in ("기존 분석", "간략 분석"):
+            st.session_state.sim_rule_mode = "기존 분석"
+        st.radio(
+            "점수 규칙",
+            ["기존 분석", "간략 분석"],
+            horizontal=True,
+            key="sim_rule_mode",
+            help="기존 분석은 종목 분석과 같은 점수표입니다. 간략 분석은 간단 점수표입니다.",
+        )
         if st.session_state.get("sim_eval_mode") not in ("기존 규칙만", "옵션 월 포함"):
             st.session_state.sim_eval_mode = "기존 규칙만"
         st.radio(
@@ -2371,7 +2393,9 @@ with st.sidebar:
         run_plan_btn = st.button("투자계획 실행", type="primary", width="stretch")
 
     try:
-        if page == "간략 분석":
+        sim_rule_mode = str(st.session_state.get("sim_rule_mode") or "기존 분석")
+        use_simple_ui = page == "간략 분석" or (page == "시뮬레이션" and sim_rule_mode == "간략 분석")
+        if use_simple_ui:
             with st.expander("간단 평가 배점·기준", expanded=False):
                 st.caption("간략 분석 전용입니다. 지금 규칙(종목 분석) 배점은 건드리지 않습니다. 1개월·6개월 급등락은 쓰지 않습니다.")
                 _cut_group_inputs("sc_stock_", "매수 / 매도 기준 · 주식")
@@ -2476,7 +2500,7 @@ with st.sidebar:
         rule = _read_rule_from_sidebar()
         _persist_prefs(rule)
         _emit_prefs_cookie()
-        if page == "간략 분석":
+        if page == "간략 분석" or (page == "시뮬레이션" and st.session_state.get("sim_rule_mode") == "간략 분석"):
             rule = _read_simple_rule()
     except Exception as _set_exc:
         st.error(f"설정 칸을 건너뛰었습니다: {_set_exc}")
