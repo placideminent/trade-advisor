@@ -165,30 +165,54 @@ def run_backtest(
         result.error = "시작일이 종료일보다 뒤입니다."
         return result
 
-    h1_start = start - timedelta(days=int(lookback_days * 1.2) + 10)
-    need_1h = timeframe in ("1h", "4h")
-    df_1h = pd.DataFrame()
-    if need_1h:
-        df_1h = fetch_intraday_range(market, ticker, h1_start, end)
-
+    span = max((end - start).days, 1) + int(lookback_days) + 30
     df_main = pd.DataFrame()
-    meta = {}
-    if timeframe == "4h":
-        if df_1h.empty:
-            df_main, meta = fetch_ohlcv(market, ticker, end, (end - start).days + lookback_days + 15, "4h")
-        else:
-            df_main = resample_4h(df_1h, market)
-            meta = {"name": ticker, "ticker": ticker, "bar": "4시간봉"}
-    elif timeframe == "1h":
-        if df_1h.empty:
-            df_main, meta = fetch_ohlcv(market, ticker, end, (end - start).days + lookback_days + 15, "1h")
-        else:
-            df_main = to_market_wall(df_1h, market)
-            meta = {"name": ticker, "ticker": ticker, "bar": "1시간봉"}
-    else:
-        df_main, meta = fetch_ohlcv(market, ticker, end, (end - start).days + lookback_days + 15, "1d")
+    meta: dict = {"ticker": ticker, "name": ticker}
+    notes: list[str] = []
 
-    df_1d, _ = fetch_ohlcv(market, ticker, end, (end - start).days + 220, "1d")
+    def _try_ohlcv(tf: str):
+        try:
+            return fetch_ohlcv(market, ticker, end, span, tf)
+        except Exception as extra:
+            notes.append(str(extra)[:160])
+            return pd.DataFrame(), dict(meta)
+
+    if timeframe in ("1h", "4h"):
+        h1_start = start - timedelta(days=int(lookback_days * 1.2) + 10)
+        df_1h = pd.DataFrame()
+        try:
+            df_1h = fetch_intraday_range(market, ticker, h1_start, end)
+        except Exception as extra:
+            notes.append(str(extra)[:160])
+            df_1h = pd.DataFrame()
+        if df_1h is not None and not df_1h.empty:
+            try:
+                if timeframe == "4h":
+                    df_main = resample_4h(df_1h, market)
+                    meta = {"name": ticker, "ticker": ticker, "bar": "4시간봉"}
+                    if df_main is None or df_main.empty:
+                        df_main = to_market_wall(df_1h, market)
+                        meta["bar"] = "1시간봉"
+                else:
+                    df_main = to_market_wall(df_1h, market)
+                    meta = {"name": ticker, "ticker": ticker, "bar": "1시간봉"}
+            except Exception as extra:
+                notes.append(str(extra)[:160])
+                df_main = pd.DataFrame()
+        if df_main is None or df_main.empty:
+            df_main, meta = _try_ohlcv(timeframe)
+    else:
+        df_main, meta = _try_ohlcv("1d")
+
+    if df_main is None or df_main.empty:
+        df_main, meta = _try_ohlcv("1d")
+        if meta is not None and (df_main is not None and not df_main.empty):
+            meta["note"] = ((meta.get("note") or "") + " 시간봉 없이 일봉으로 계산합니다.").strip()
+
+    try:
+        df_1d, _ = fetch_ohlcv(market, ticker, end, (end - start).days + 220, "1d")
+    except Exception:
+        df_1d = pd.DataFrame()
     df_1m_src = pd.DataFrame()
     if str(timeframe or "") != "1h" and int(lookback_days) > 60:
         try:
@@ -211,7 +235,8 @@ def run_backtest(
             option_walls = {"error": str(extra)[:120], "soon": False}
 
     if df_main is None or df_main.empty:
-        result.error = "해당 기간 시세를 받지 못했습니다."
+        extra = f" ({'; '.join(notes)})" if notes else ""
+        result.error = f"{ticker} 시세를 받지 못했습니다.{extra}"
         return result
 
     if df_1d is not None and not df_1d.empty:

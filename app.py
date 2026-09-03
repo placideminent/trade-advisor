@@ -13,7 +13,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 from src.analysis import analyze
-from src.backtest import DEFAULT_SIM, SIM_QTY_KEYS, normalize_sim, run_backtest, spy_hold_return
+from src.backtest import BacktestResult, DEFAULT_SIM, SIM_QTY_KEYS, normalize_sim, run_backtest, spy_hold_return
 from src.plan import (
     DEFAULT_PLAN_PCTS,
     PLAN_PCT_FIELDS,
@@ -1907,19 +1907,30 @@ def _render_simulation(
                         text=f"{name} {as_of} ({i + 1}/{n_fav})",
                     )
                 with st.spinner(f"{name} 계산 중..."):
-                    result = run_backtest(
-                        item["market"],
-                        item["ticker"],
-                        start,
-                        end,
-                        lookback_days,
-                        timeframe,
-                        lookback_label,
-                        rule,
-                        item_sim,
-                        progress=_prog,
-                        use_options=use_options,
-                    )
+                    try:
+                        result = run_backtest(
+                            item["market"],
+                            item["ticker"],
+                            start,
+                            end,
+                            lookback_days,
+                            timeframe,
+                            lookback_label,
+                            rule,
+                            item_sim,
+                            progress=_prog,
+                            use_options=use_options,
+                        )
+                    except Exception as extra:
+                        result = BacktestResult(
+                            name=name,
+                            ticker=item["ticker"],
+                            start=start,
+                            end=end,
+                            lookback_label=lookback_label,
+                            market=item["market"],
+                            error=f"시세를 받지 못했습니다: {extra}",
+                        )
                 if item.get("name"):
                     result.name = item["name"]
                 out.append(result)
@@ -1948,19 +1959,30 @@ def _render_simulation(
             bar.progress(min(i / max(n, 1), 1.0), text=f"{as_of} ({i}/{n})")
 
         with st.spinner("시뮬레이션 실행 중..."):
-            st.session_state.sim_result = run_backtest(
-                market,
-                ticker,
-                start,
-                end,
-                lookback_days,
-                timeframe,
-                lookback_label,
-                rule,
-                sim,
-                progress=_prog,
-                use_options=use_options,
-            )
+            try:
+                st.session_state.sim_result = run_backtest(
+                    market,
+                    ticker,
+                    start,
+                    end,
+                    lookback_days,
+                    timeframe,
+                    lookback_label,
+                    rule,
+                    sim,
+                    progress=_prog,
+                    use_options=use_options,
+                )
+            except Exception as extra:
+                st.session_state.sim_result = BacktestResult(
+                    name=display_name or ticker,
+                    ticker=ticker,
+                    start=start,
+                    end=end,
+                    lookback_label=lookback_label,
+                    market=market,
+                    error=f"시세를 받지 못했습니다: {extra}",
+                )
         bar.empty()
         st.session_state.sim_fav_results = None
         st.session_state.sim_rule_used = rule_txt

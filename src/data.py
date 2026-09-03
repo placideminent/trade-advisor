@@ -309,6 +309,8 @@ def fetch_intraday_range(market: str, ticker: str, start: date, end: date) -> pd
     frames: list[pd.DataFrame] = []
     cur = start
     while cur <= end:
+        if _yahoo_blocked() and not frames:
+            break
         nxt = min(cur + timedelta(days=55), end)
         chunk = pd.DataFrame()
         try:
