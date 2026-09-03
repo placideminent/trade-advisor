@@ -254,6 +254,8 @@ def to_market_wall(df: pd.DataFrame, market: str) -> pd.DataFrame:
 
 def _fetch_yahoo_chart(symbol: str, start: date, end: date, interval: str = "60m") -> pd.DataFrame:
     """yfinance가 막힐 때를 위한 Yahoo chart API. Streamlit Cloud에서 더 잘 되는 경우가 많다."""
+    from time import sleep
+
     import requests
 
     p1 = int(datetime(start.year, start.month, start.day, tzinfo=timezone.utc).timestamp())
@@ -271,40 +273,45 @@ def _fetch_yahoo_chart(symbol: str, start: date, end: date, interval: str = "60m
     }
     last_err = None
     for host in ("query1.finance.yahoo.com", "query2.finance.yahoo.com"):
-        try:
-            resp = requests.get(
-                f"https://{host}/v8/finance/chart/{symbol}",
-                params=params,
-                headers=headers,
-                timeout=15,
-            )
-            resp.raise_for_status()
-            result = (resp.json().get("chart") or {}).get("result") or []
-            if not result:
+        for attempt in range(3):
+            try:
+                resp = requests.get(
+                    f"https://{host}/v8/finance/chart/{symbol}",
+                    params=params,
+                    headers=headers,
+                    timeout=15,
+                )
+                if resp.status_code in (429, 503, 502):
+                    sleep(1.2 * (attempt + 1))
+                    continue
+                resp.raise_for_status()
+                result = (resp.json().get("chart") or {}).get("result") or []
+                if not result:
+                    break
+                node = result[0]
+                ts = node.get("timestamp") or []
+                quote = ((node.get("indicators") or {}).get("quote") or [{}])[0]
+                if not ts:
+                    break
+                raw = pd.DataFrame(
+                    {
+                        "open": quote.get("open"),
+                        "high": quote.get("high"),
+                        "low": quote.get("low"),
+                        "close": quote.get("close"),
+                        "volume": quote.get("volume"),
+                    },
+                    index=pd.to_datetime(ts, unit="s", utc=True),
+                )
+                df = _normalize_ohlcv(raw)
+                _mark_yahoo(not df.empty)
+                if df.empty:
+                    break
+                return df
+            except Exception as exc:
+                last_err = exc
+                sleep(0.6 * (attempt + 1))
                 continue
-            node = result[0]
-            ts = node.get("timestamp") or []
-            quote = ((node.get("indicators") or {}).get("quote") or [{}])[0]
-            if not ts:
-                continue
-            raw = pd.DataFrame(
-                {
-                    "open": quote.get("open"),
-                    "high": quote.get("high"),
-                    "low": quote.get("low"),
-                    "close": quote.get("close"),
-                    "volume": quote.get("volume"),
-                },
-                index=pd.to_datetime(ts, unit="s", utc=True),
-            )
-            df = _normalize_ohlcv(raw)
-            _mark_yahoo(not df.empty)
-            if df.empty:
-                continue
-            return df
-        except Exception as exc:
-            last_err = exc
-            continue
     _mark_yahoo(False)
     if last_err:
         return pd.DataFrame()
@@ -360,6 +367,76 @@ def _kr_code(ticker: str) -> str:
     if raw.isdigit():
         return raw.zfill(6)
     return raw
+
+
+def _us_yahoo_symbols(ticker: str) -> list[str]:
+    raw = str(ticker or "").strip().upper().replace("/", "-")
+    aliases = {
+        "GOOGL": ["GOOGL", "GOOG"],
+        "GOOG": ["GOOG", "GOOGL"],
+        "BRK.B": ["BRK-B", "BRK.B"],
+        "BRK.A": ["BRK-A", "BRK.A"],
+        "BRK-B": ["BRK-B", "BRK.B"],
+        "BRK-A": ["BRK-A", "BRK.A"],
+    }
+    out = list(aliases.get(raw, [raw]))
+    dotted = raw.replace("-", ".")
+    if dotted not in out:
+        out.append(dotted)
+    return list(dict.fromkeys([s for s in out if s]))
+
+
+COINGECKO_IDS = {
+    "BTC": "bitcoin",
+    "ETH": "ethereum",
+    "SOL": "solana",
+    "XRP": "ripple",
+    "ONDO": "ondo-finance",
+    "BNB": "binancecoin",
+    "DOGE": "dogecoin",
+}
+
+
+def _fetch_coingecko_daily(key: str, start: date, end: date) -> pd.DataFrame:
+    """Yahoo가 막힌 코인 일봉 폴백."""
+    import requests
+
+    cid = COINGECKO_IDS.get(str(key or "").strip().upper())
+    if not cid:
+        return pd.DataFrame()
+    span = max((end - start).days + 3, 7)
+    days = 365 if span > 180 else 180 if span > 90 else 90 if span > 30 else 30
+    try:
+        resp = requests.get(
+            f"https://api.coingecko.com/api/v3/coins/{cid}/ohlc",
+            params={"vs_currency": "usd", "days": days},
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=20,
+        )
+        resp.raise_for_status()
+        rows = resp.json()
+        if not isinstance(rows, list) or not rows:
+            return pd.DataFrame()
+        recs = []
+        for row in rows:
+            if not isinstance(row, (list, tuple)) or len(row) < 5:
+                continue
+            recs.append(
+                {
+                    "date": pd.to_datetime(row[0], unit="ms", utc=True),
+                    "open": row[1],
+                    "high": row[2],
+                    "low": row[3],
+                    "close": row[4],
+                    "volume": 0,
+                }
+            )
+        if not recs:
+            return pd.DataFrame()
+        raw = pd.DataFrame(recs).set_index("date").sort_index()
+        return _normalize_ohlcv(raw)
+    except Exception:
+        return pd.DataFrame()
 
 
 def _kr_yahoo_symbols(code: str) -> list[str]:
@@ -734,33 +811,45 @@ def fetch_ohlcv(
             timeframe = "1d"
             meta["note"] = "시간봉을 받지 못해 일봉으로 계산합니다."
     elif market == "US":
-        symbol = ticker.strip().upper().replace("/", "-")
-
+        symbols = _us_yahoo_symbols(ticker)
+        symbol = symbols[0]
         meta["ticker"] = symbol
         meta["name"] = symbol
         df = pd.DataFrame()
         want_intra = timeframe in ("1h", "4h")
         used_intra = False
         if want_intra:
-            df = _fetch_intraday(symbol, start, as_of)
-            if not df.empty:
-                used_intra = True
-                meta["source"] = "Yahoo Finance"
+            for symbol in symbols:
+                df = _fetch_intraday(symbol, start, as_of)
+                if not df.empty:
+                    used_intra = True
+                    meta["source"] = "Yahoo Finance"
+                    meta["ticker"] = symbol
+                    break
         if df.empty:
-            df = _fetch_daily(symbol, start, as_of)
-            if not df.empty:
-                meta["source"] = "Yahoo Finance"
+            for symbol in symbols:
+                df = _fetch_daily(symbol, start, as_of)
+                if not df.empty:
+                    meta["source"] = "Yahoo Finance"
+                    meta["ticker"] = symbol
+                    break
         if df.empty:
-            try:
-                df = _fetch_fdr(symbol, start, as_of)
+            for symbol in symbols:
+                try:
+                    df = _fetch_fdr(symbol, start, as_of)
+                except Exception:
+                    df = pd.DataFrame()
                 if not df.empty:
                     meta["source"] = "FinanceDataReader"
-            except Exception:
-                df = pd.DataFrame()
+                    meta["ticker"] = symbol
+                    break
         if df.empty:
-            df = _fetch_stooq_daily(symbol, start, as_of)
-            if not df.empty:
-                meta["source"] = "Stooq"
+            for symbol in symbols:
+                df = _fetch_stooq_daily(symbol, start, as_of)
+                if not df.empty:
+                    meta["source"] = "Stooq"
+                    meta["ticker"] = symbol
+                    break
         if want_intra and not used_intra and not df.empty:
             timeframe = "1d"
             meta["note"] = "시간봉을 받지 못해 일봉으로 계산합니다."
@@ -785,6 +874,10 @@ def fetch_ohlcv(
             df = _fetch_stooq_daily(symbol, start, as_of, crypto=True)
             if not df.empty:
                 meta["source"] = "Stooq"
+        if df.empty:
+            df = _fetch_coingecko_daily(key, start, as_of)
+            if not df.empty:
+                meta["source"] = "CoinGecko"
         if not meta.get("source") and not df.empty:
             meta["source"] = "Yahoo Finance"
         if want_intra and not used_intra and not df.empty:

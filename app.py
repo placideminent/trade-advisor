@@ -1937,7 +1937,7 @@ def _render_simulation(
                     result.name = item["name"]
                 out.append(result)
                 if getattr(result, "error", None):
-                    time.sleep(1.4)
+                    time.sleep(2.5)
             bar.empty()
             st.session_state.sim_fav_results = out
             st.session_state.sim_result = None
