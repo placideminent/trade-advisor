@@ -360,12 +360,12 @@ def _sim_qty_fields(prefix: str, *, crypto: bool = False) -> None:
                 except (TypeError, ValueError):
                     pass
         qty_kw = {"min_value": 0.0, "max_value": 1_000_000.0, "step": 0.00001, "format": "%.5f"}
-        cut_kw = {"min_value": 0.00001, "max_value": 1_000_000.0, "step": 0.00001, "format": "%.5f"}
-        sell_kw = {"min_value": 0.00001, "max_value": 1_000_000.0, "step": 0.00001, "format": "%.5f"}
+        cut_kw = {"min_value": 0.0, "max_value": 1_000_000.0, "step": 0.00001, "format": "%.5f"}
+        sell_kw = {"min_value": 0.0, "max_value": 1_000_000.0, "step": 0.00001, "format": "%.5f"}
     else:
         qty_kw = {"min_value": 0, "max_value": 1000, "step": 1}
-        cut_kw = {"min_value": 1, "max_value": 10000, "step": 1}
-        sell_kw = {"min_value": 1, "max_value": 1000, "step": 1}
+        cut_kw = {"min_value": 0, "max_value": 10000, "step": 1}
+        sell_kw = {"min_value": 0, "max_value": 1000, "step": 1}
     q1, q2, q3 = st.columns(3)
     with q1:
         st.number_input(f"약한 매수 {unit}", key=f"{prefix}buy_weak", **qty_kw)
@@ -376,11 +376,11 @@ def _sim_qty_fields(prefix: str, *, crypto: bool = False) -> None:
     st.number_input(f"이 수량 이상이면 % 매도", key=f"{prefix}share_cut", **cut_kw)
     p1, p2, p3 = st.columns(3)
     with p1:
-        st.number_input("약한 매도 %", min_value=1, max_value=100, step=1, key=f"{prefix}sell_weak_pct")
+        st.number_input("약한 매도 %", min_value=0, max_value=100, step=1, key=f"{prefix}sell_weak_pct")
     with p2:
-        st.number_input("매도 %", min_value=1, max_value=100, step=1, key=f"{prefix}sell_mid_pct")
+        st.number_input("매도 %", min_value=0, max_value=100, step=1, key=f"{prefix}sell_mid_pct")
     with p3:
-        st.number_input("강한 매도 %", min_value=1, max_value=100, step=1, key=f"{prefix}sell_strong_pct")
+        st.number_input("강한 매도 %", min_value=0, max_value=100, step=1, key=f"{prefix}sell_strong_pct")
     f1, f2, f3 = st.columns(3)
     with f1:
         st.number_input(f"약한 매도 {unit}(미만)", key=f"{prefix}sell_weak_qty", **sell_kw)

@@ -50,7 +50,7 @@ def normalize_sim(raw: dict | None) -> dict:
             if key in SIM_QTY_KEYS:
                 data[key] = round(max(0.0, float(raw[key])), 5)
             else:
-                data[key] = int(raw[key])
+                data[key] = max(0, min(100, int(raw[key])))
         except (TypeError, ValueError):
             data[key] = default
     return data
