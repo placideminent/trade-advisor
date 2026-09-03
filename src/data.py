@@ -90,15 +90,25 @@ def _normalize_ohlcv(df: pd.DataFrame) -> pd.DataFrame:
         out.columns = [str(c).lower() for c in out.columns]
 
     rename = {}
+    have = set()
     for col in out.columns:
-        key = col.replace(" ", "")
-        if key in ("adjclose", "adjustedclose"):
-            rename[col] = "close"
-        elif key in ("open", "high", "low", "close", "volume"):
-            rename[col] = key
+        key = str(col).replace(" ", "")
+        if key in ("open", "high", "low", "close", "volume"):
+            dest = key
+        elif key in ("adjclose", "adjustedclose") and "close" not in have:
+            dest = "close"
+        else:
+            dest = None
+        if dest:
+            rename[col] = dest
+            have.add(dest)
     out = out.rename(columns=rename)
+    if out.columns.duplicated().any():
+        out = out.loc[:, ~out.columns.duplicated()]
 
     needed = ["open", "high", "low", "close", "volume"]
+    if "volume" not in out.columns:
+        out["volume"] = 0
     missing = [c for c in needed if c not in out.columns]
     if missing:
         raise ValueError(f"OHLCV 컬럼 없음: {missing} / 실제={list(df.columns)}")
@@ -110,9 +120,24 @@ def _normalize_ohlcv(df: pd.DataFrame) -> pd.DataFrame:
     out = out.dropna(subset=["open", "high", "low", "close"])
     out["volume"] = out["volume"].fillna(0)
     for col in needed:
-        out[col] = pd.to_numeric(out[col], errors="coerce")
+        series = out[col]
+        if isinstance(series, pd.DataFrame):
+            series = series.iloc[:, 0]
+        out[col] = pd.to_numeric(series, errors="coerce")
     out = out.dropna(subset=["open", "high", "low", "close"])
     return out
+
+
+def _frame_from_recs(recs: list[dict]) -> pd.DataFrame:
+    if not recs:
+        return pd.DataFrame()
+    raw = pd.DataFrame(recs)
+    if "date" not in raw.columns:
+        return pd.DataFrame()
+    raw = raw.set_index("date").sort_index()
+    if "volume" not in raw.columns:
+        raw["volume"] = 0
+    return _normalize_ohlcv(raw)
 
 
 def _fetch_fdr(code: str, start: date, end: date) -> pd.DataFrame:
@@ -271,50 +296,52 @@ def _fetch_yahoo_chart(symbol: str, start: date, end: date, interval: str = "60m
         "includePrePost": "false",
         "events": "div,splits",
     }
-    last_err = None
-    for host in ("query1.finance.yahoo.com", "query2.finance.yahoo.com"):
-        for attempt in range(3):
-            try:
-                resp = requests.get(
-                    f"https://{host}/v8/finance/chart/{symbol}",
-                    params=params,
-                    headers=headers,
-                    timeout=15,
-                )
-                if resp.status_code in (429, 503, 502):
-                    sleep(1.2 * (attempt + 1))
+    param_sets = [params]
+    if interval in ("1d", "1wk"):
+        param_sets.append({"interval": interval, "range": "2y", "includePrePost": "false"})
+        param_sets.append({"interval": interval, "range": "5y", "includePrePost": "false"})
+    for query in param_sets:
+        for host in ("query1.finance.yahoo.com", "query2.finance.yahoo.com"):
+            tries = 2 if "range" in query else 3
+            for attempt in range(tries):
+                try:
+                    resp = requests.get(
+                        f"https://{host}/v8/finance/chart/{symbol}",
+                        params=query,
+                        headers=headers,
+                        timeout=15,
+                    )
+                    if resp.status_code in (429, 503, 502):
+                        sleep(1.2 * (attempt + 1))
+                        continue
+                    resp.raise_for_status()
+                    result = (resp.json().get("chart") or {}).get("result") or []
+                    if not result:
+                        break
+                    node = result[0]
+                    ts = node.get("timestamp") or []
+                    quote = ((node.get("indicators") or {}).get("quote") or [{}])[0]
+                    if not ts:
+                        break
+                    raw = pd.DataFrame(
+                        {
+                            "open": quote.get("open"),
+                            "high": quote.get("high"),
+                            "low": quote.get("low"),
+                            "close": quote.get("close"),
+                            "volume": quote.get("volume"),
+                        },
+                        index=pd.to_datetime(ts, unit="s", utc=True),
+                    )
+                    df = _normalize_ohlcv(raw)
+                    _mark_yahoo(not df.empty)
+                    if df.empty:
+                        break
+                    return df
+                except Exception:
+                    sleep(0.6 * (attempt + 1))
                     continue
-                resp.raise_for_status()
-                result = (resp.json().get("chart") or {}).get("result") or []
-                if not result:
-                    break
-                node = result[0]
-                ts = node.get("timestamp") or []
-                quote = ((node.get("indicators") or {}).get("quote") or [{}])[0]
-                if not ts:
-                    break
-                raw = pd.DataFrame(
-                    {
-                        "open": quote.get("open"),
-                        "high": quote.get("high"),
-                        "low": quote.get("low"),
-                        "close": quote.get("close"),
-                        "volume": quote.get("volume"),
-                    },
-                    index=pd.to_datetime(ts, unit="s", utc=True),
-                )
-                df = _normalize_ohlcv(raw)
-                _mark_yahoo(not df.empty)
-                if df.empty:
-                    break
-                return df
-            except Exception as exc:
-                last_err = exc
-                sleep(0.6 * (attempt + 1))
-                continue
     _mark_yahoo(False)
-    if last_err:
-        return pd.DataFrame()
     return pd.DataFrame()
 
 
@@ -345,7 +372,13 @@ def fetch_intraday_range(market: str, ticker: str, start: date, end: date) -> pd
                     if not chunk.empty:
                         break
             elif market == "US":
-                chunk = _fetch_intraday(ticker.strip().upper(), cur - timedelta(days=1), nxt)
+                for symbol in _us_yahoo_symbols(ticker):
+                    try:
+                        chunk = _fetch_intraday(symbol, cur - timedelta(days=1), nxt)
+                    except Exception:
+                        chunk = pd.DataFrame()
+                    if not chunk.empty:
+                        break
             else:
                 key = ticker.strip().upper().replace("-USD", "").replace("USDT", "").replace("/", "")
                 info = CRYPTO.get(key)
@@ -399,44 +432,299 @@ COINGECKO_IDS = {
 
 def _fetch_coingecko_daily(key: str, start: date, end: date) -> pd.DataFrame:
     """Yahoo가 막힌 코인 일봉 폴백."""
+    from time import sleep
+
     import requests
 
     cid = COINGECKO_IDS.get(str(key or "").strip().upper())
     if not cid:
         return pd.DataFrame()
     span = max((end - start).days + 3, 7)
-    days = 365 if span > 180 else 180 if span > 90 else 90 if span > 30 else 30
-    try:
-        resp = requests.get(
+    days = "max" if span > 180 else 365 if span > 90 else 90 if span > 30 else 30
+    ohlc_days = 365 if days == "max" else days
+    headers = {"User-Agent": "Mozilla/5.0"}
+    queries = (
+        (
+            f"https://api.coingecko.com/api/v3/coins/{cid}/market_chart",
+            {"vs_currency": "usd", "days": days, "interval": "daily"},
+        ),
+        (
+            f"https://api.coingecko.com/api/v3/coins/{cid}/market_chart",
+            {"vs_currency": "usd", "days": days},
+        ),
+        (
             f"https://api.coingecko.com/api/v3/coins/{cid}/ohlc",
-            params={"vs_currency": "usd", "days": days},
-            headers={"User-Agent": "Mozilla/5.0"},
-            timeout=20,
-        )
-        resp.raise_for_status()
-        rows = resp.json()
-        if not isinstance(rows, list) or not rows:
-            return pd.DataFrame()
-        recs = []
-        for row in rows:
-            if not isinstance(row, (list, tuple)) or len(row) < 5:
+            {"vs_currency": "usd", "days": ohlc_days},
+        ),
+    )
+    for url, params in queries:
+        for attempt in range(3):
+            try:
+                resp = requests.get(url, params=params, headers=headers, timeout=20)
+                if resp.status_code in (429, 503, 502):
+                    sleep(1.5 * (attempt + 1))
+                    continue
+                if resp.status_code >= 400:
+                    break
+                payload = resp.json()
+                recs: list[dict] = []
+                if isinstance(payload, dict) and payload.get("prices"):
+                    vols = {
+                        int(ts): vol
+                        for ts, vol in (payload.get("total_volumes") or [])
+                        if isinstance(ts, (int, float))
+                    }
+                    prev = None
+                    for ts, px in payload["prices"]:
+                        try:
+                            price = float(px)
+                            when = pd.to_datetime(ts, unit="ms", utc=True)
+                        except (TypeError, ValueError):
+                            continue
+                        if price <= 0:
+                            continue
+                        open_px = prev if prev else price
+                        recs.append(
+                            {
+                                "date": when,
+                                "open": open_px,
+                                "high": max(open_px, price),
+                                "low": min(open_px, price),
+                                "close": price,
+                                "volume": float(vols.get(int(ts), 0) or 0),
+                            }
+                        )
+                        prev = price
+                elif isinstance(payload, list):
+                    for row in payload:
+                        if not isinstance(row, (list, tuple)) or len(row) < 5:
+                            continue
+                        recs.append(
+                            {
+                                "date": pd.to_datetime(row[0], unit="ms", utc=True),
+                                "open": row[1],
+                                "high": row[2],
+                                "low": row[3],
+                                "close": row[4],
+                                "volume": 0,
+                            }
+                        )
+                df = _frame_from_recs(recs)
+                if not df.empty:
+                    return df
+                break
+            except Exception:
+                sleep(0.8 * (attempt + 1))
                 continue
-            recs.append(
-                {
-                    "date": pd.to_datetime(row[0], unit="ms", utc=True),
-                    "open": row[1],
-                    "high": row[2],
-                    "low": row[3],
-                    "close": row[4],
-                    "volume": 0,
-                }
-            )
-        if not recs:
-            return pd.DataFrame()
-        raw = pd.DataFrame(recs).set_index("date").sort_index()
-        return _normalize_ohlcv(raw)
-    except Exception:
+    return pd.DataFrame()
+
+
+COINBASE_PRODUCTS = {
+    "BTC": "BTC-USD",
+    "ETH": "ETH-USD",
+    "SOL": "SOL-USD",
+    "XRP": "XRP-USD",
+    "BNB": "BNB-USD",
+    "DOGE": "DOGE-USD",
+    "ONDO": "ONDO-USD",
+}
+
+BINANCE_SYMBOLS = {
+    "BTC": "BTCUSDT",
+    "ETH": "ETHUSDT",
+    "SOL": "SOLUSDT",
+    "XRP": "XRPUSDT",
+    "BNB": "BNBUSDT",
+    "DOGE": "DOGEUSDT",
+    "ONDO": "ONDOUSDT",
+}
+
+
+def _fetch_coinbase_daily(key: str, start: date, end: date) -> pd.DataFrame:
+    """Yahoo/CoinGecko가 막힌 코인 일봉. Streamlit Cloud(미국 IP)에서 잘 된다."""
+    from time import sleep
+
+    import requests
+
+    raw = str(key or "").strip().upper()
+    product = COINBASE_PRODUCTS.get(raw) or f"{raw}-USD"
+    if not raw:
         return pd.DataFrame()
+    recs: list[dict] = []
+    cur = start
+    headers = {"User-Agent": "Mozilla/5.0"}
+    while cur <= end:
+        nxt = min(cur + timedelta(days=280), end)
+        start_iso = datetime(cur.year, cur.month, cur.day, tzinfo=timezone.utc).strftime(
+            "%Y-%m-%dT%H:%M:%SZ"
+        )
+        end_iso = datetime(nxt.year, nxt.month, nxt.day, 23, 59, tzinfo=timezone.utc).strftime(
+            "%Y-%m-%dT%H:%M:%SZ"
+        )
+        got = False
+        for attempt in range(2):
+            try:
+                resp = requests.get(
+                    f"https://api.exchange.coinbase.com/products/{product}/candles",
+                    params={"granularity": 86400, "start": start_iso, "end": end_iso},
+                    headers=headers,
+                    timeout=20,
+                )
+                if resp.status_code == 429:
+                    sleep(1.2 * (attempt + 1))
+                    continue
+                if resp.status_code >= 400:
+                    return _frame_from_recs(recs)
+                rows = resp.json()
+                if isinstance(rows, list):
+                    for row in rows:
+                        if not isinstance(row, (list, tuple)) or len(row) < 6:
+                            continue
+                        recs.append(
+                            {
+                                "date": pd.to_datetime(row[0], unit="s", utc=True),
+                                "low": row[1],
+                                "high": row[2],
+                                "open": row[3],
+                                "close": row[4],
+                                "volume": row[5],
+                            }
+                        )
+                got = True
+                break
+            except Exception:
+                sleep(0.6)
+                continue
+        if not got:
+            break
+        cur = nxt + timedelta(days=1)
+    return _frame_from_recs(recs)
+
+
+def _fetch_binance_daily(key: str, start: date, end: date) -> pd.DataFrame:
+    """Coinbase 다음 코인 일봉. 미국 IP면 vision/binance.us 를 쓴다."""
+    import requests
+
+    raw = str(key or "").strip().upper()
+    symbol = BINANCE_SYMBOLS.get(raw) or f"{raw}USDT"
+    if not raw:
+        return pd.DataFrame()
+    start_ms = int(datetime(start.year, start.month, start.day, tzinfo=timezone.utc).timestamp() * 1000)
+    end_ms = int(
+        datetime(end.year, end.month, end.day, 23, 59, tzinfo=timezone.utc).timestamp() * 1000
+    )
+    headers = {"User-Agent": "Mozilla/5.0"}
+    for base in (
+        "https://data-api.binance.vision",
+        "https://api.binance.com",
+        "https://api.binance.us",
+    ):
+        recs: list[dict] = []
+        cursor = start_ms
+        ok = True
+        while cursor < end_ms:
+            try:
+                resp = requests.get(
+                    f"{base}/api/v3/klines",
+                    params={
+                        "symbol": symbol,
+                        "interval": "1d",
+                        "startTime": cursor,
+                        "endTime": end_ms,
+                        "limit": 1000,
+                    },
+                    headers=headers,
+                    timeout=20,
+                )
+                if resp.status_code >= 400:
+                    ok = False
+                    break
+                rows = resp.json()
+                if not isinstance(rows, list) or not rows:
+                    break
+                for row in rows:
+                    if not isinstance(row, (list, tuple)) or len(row) < 6:
+                        continue
+                    recs.append(
+                        {
+                            "date": pd.to_datetime(row[0], unit="ms", utc=True),
+                            "open": row[1],
+                            "high": row[2],
+                            "low": row[3],
+                            "close": row[4],
+                            "volume": row[5],
+                        }
+                    )
+                last_open = int(rows[-1][0])
+                if last_open <= cursor:
+                    break
+                cursor = last_open + 1
+                if len(rows) < 1000:
+                    break
+            except Exception:
+                ok = False
+                break
+        if not ok:
+            continue
+        df = _frame_from_recs(recs)
+        if not df.empty:
+            return df
+    return pd.DataFrame()
+
+
+def _fetch_nasdaq_daily(symbol: str, start: date, end: date) -> pd.DataFrame:
+    """Yahoo가 막힌 미국 주식 일봉. limit 없이 치면 최근 15봉만 온다."""
+    import requests
+
+    raw = str(symbol or "").strip().upper().replace("/", "-")
+    if not raw or raw.endswith("-USD"):
+        return pd.DataFrame()
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Accept": "application/json",
+        "Origin": "https://www.nasdaq.com",
+        "Referer": f"https://www.nasdaq.com/market-activity/stocks/{raw.lower()}/historical",
+    }
+    for assetclass in ("stocks", "etf"):
+        try:
+            resp = requests.get(
+                f"https://api.nasdaq.com/api/quote/{raw}/historical",
+                params={
+                    "assetclass": assetclass,
+                    "fromdate": start.strftime("%Y-%m-%d"),
+                    "todate": end.strftime("%Y-%m-%d"),
+                    "limit": 9999,
+                },
+                headers=headers,
+                timeout=20,
+            )
+            if resp.status_code >= 400:
+                continue
+            table = (((resp.json() or {}).get("data") or {}).get("tradesTable") or {})
+            rows = table.get("rows") or []
+            recs = []
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                day = pd.to_datetime(row.get("date"), errors="coerce")
+                if pd.isna(day):
+                    continue
+                recs.append(
+                    {
+                        "date": day,
+                        "open": _parse_price(row.get("open")),
+                        "high": _parse_price(row.get("high")),
+                        "low": _parse_price(row.get("low")),
+                        "close": _parse_price(row.get("close")),
+                        "volume": _parse_price(row.get("volume")) or 0,
+                    }
+                )
+            df = _frame_from_recs(recs)
+            if not df.empty:
+                return df
+        except Exception:
+            continue
+    return pd.DataFrame()
 
 
 def _kr_yahoo_symbols(code: str) -> list[str]:
@@ -575,7 +863,7 @@ def _parse_price(val) -> float | None:
     if isinstance(val, (int, float)):
         px = float(val)
         return px if px > 0 else None
-    text = str(val).replace(",", "").replace(" ", "").strip()
+    text = str(val).replace(",", "").replace(" ", "").replace("$", "").strip()
     if not text:
         return None
     try:
@@ -835,6 +1123,13 @@ def fetch_ohlcv(
                     break
         if df.empty:
             for symbol in symbols:
+                df = _fetch_nasdaq_daily(symbol, start, as_of)
+                if not df.empty:
+                    meta["source"] = "Nasdaq"
+                    meta["ticker"] = symbol
+                    break
+        if df.empty:
+            for symbol in symbols:
                 try:
                     df = _fetch_fdr(symbol, start, as_of)
                 except Exception:
@@ -870,6 +1165,14 @@ def fetch_ohlcv(
             df = _fetch_daily(symbol, start, as_of)
             if not df.empty:
                 meta["source"] = "Yahoo Finance"
+        if df.empty:
+            df = _fetch_coinbase_daily(key, start, as_of)
+            if not df.empty:
+                meta["source"] = "Coinbase"
+        if df.empty:
+            df = _fetch_binance_daily(key, start, as_of)
+            if not df.empty:
+                meta["source"] = "Binance"
         if df.empty:
             df = _fetch_stooq_daily(symbol, start, as_of, crypto=True)
             if not df.empty:
