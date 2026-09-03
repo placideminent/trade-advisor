@@ -107,6 +107,24 @@ WEIGHT_FIELDS = [
     ("option_wall", "옵션 월", "기존 매수/매도 이후 추가. 만기 14일 안 콜·풋월. 매도 때 근처 콜두껍/풋얇 −1, 반대 +1. 매수 때 근처 풋얇+콜두껍 −1"),
 ]
 
+# 간략 분석: 1개월·6개월 급등락과 '둘 다 상승+1개월 하락'은 쓰지 않음.
+SIMPLE_ZERO_KEYS = (
+    "trendline_up_1m_down",
+    "chg1_50",
+    "chg1_down1",
+    "chg1_down30",
+    "chg1_down40",
+    "chg6_50",
+    "chg6_200",
+    "chg6_800",
+)
+SIMPLE_DEFAULT_WEIGHTS = dict(DEFAULT_WEIGHTS)
+SIMPLE_DEFAULT_WEIGHTS["support_break"] = -1
+SIMPLE_DEFAULT_WEIGHTS["vah"] = -2
+for _k in SIMPLE_ZERO_KEYS:
+    SIMPLE_DEFAULT_WEIGHTS[_k] = 0
+SIMPLE_WEIGHT_FIELDS = [row for row in WEIGHT_FIELDS if row[0] not in SIMPLE_ZERO_KEYS]
+
 _OLD_SELL_TRIOS = (
     (40, 35, 30),
     (35, 30, 25),
@@ -719,7 +737,7 @@ def recommend(
         f"합산 {score_pct}% ({score}점, 범위 {lo}~{hi}) · "
         f"{cut_kind} 컷 · 약한매수 {buy_weak}%↑ / 매수 {buy_mid}%↑ / 강한매수 {buy_strong}%↑ · "
         f"약한매도 {sell_weak}%↓ / 매도 {sell_mid}%↓ / 강한매도 {sell_strong}%↓"
-        f" · 규칙 v{SIGNAL_RULE_VERSION}"
+        f" · 규칙 {'간단' if isinstance(rule, dict) and rule.get('mode') == 'simple' else f'v{SIGNAL_RULE_VERSION}'}"
     )
     if action != action_base:
         reasons.append(f"기존 규칙 {action_base} → 옵션 월 반영 후 {action}")

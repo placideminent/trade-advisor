@@ -215,6 +215,7 @@ def _empty() -> dict:
         "rule_ver": SIGNAL_RULE_VERSION,
         "favorites": [],
         "plan": {"months": 12, "monthly_krw": 0, "weights": {}, "pcts": {}},
+        "simple": {"weights": {}, "cuts": {}, "cuts_crypto": {}},
     }
 
 
@@ -324,6 +325,12 @@ def _normalize(raw: dict | None) -> dict:
             continue
     plan["weights"] = wout
     data["plan"] = plan
+    simple_raw = raw.get("simple") if isinstance(raw.get("simple"), dict) else {}
+    data["simple"] = {
+        "weights": dict(simple_raw.get("weights") or {}) if isinstance(simple_raw.get("weights"), dict) else {},
+        "cuts": dict(simple_raw.get("cuts") or {}) if isinstance(simple_raw.get("cuts"), dict) else {},
+        "cuts_crypto": dict(simple_raw.get("cuts_crypto") or {}) if isinstance(simple_raw.get("cuts_crypto"), dict) else {},
+    }
     try:
         data["ts"] = int(raw.get("ts") or 0)
     except (TypeError, ValueError):

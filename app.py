@@ -90,6 +90,9 @@ from src.signals import (
     DEFAULT_CUTS_STOCK,
     DEFAULT_WEIGHTS,
     SIGNAL_RULE_VERSION,
+    SIMPLE_DEFAULT_WEIGHTS,
+    SIMPLE_WEIGHT_FIELDS,
+    SIMPLE_ZERO_KEYS,
     WEIGHT_FIELDS,
     migrate_sell_cuts,
     period_return,
@@ -177,13 +180,53 @@ def _make_signal(
                 return recommend(an)
 
 
-def _weight_bounds(key: str) -> tuple[int, int]:
-    default = int(DEFAULT_WEIGHTS[key])
+def _weight_bounds(key: str, *, simple: bool = False) -> tuple[int, int]:
+    src = SIMPLE_DEFAULT_WEIGHTS if simple else DEFAULT_WEIGHTS
+    default = int(src.get(key, DEFAULT_WEIGHTS[key]))
     if key == "base":
         return 0, 30
     if default >= 0:
         return 0, 10
     return -10, 10
+
+
+def _init_simple_rule_widgets() -> None:
+    for key, default in SIMPLE_DEFAULT_WEIGHTS.items():
+        if key in SIMPLE_ZERO_KEYS:
+            continue
+        st.session_state.setdefault(f"sw_{key}", int(default))
+    for key, default in DEFAULT_CUTS_STOCK.items():
+        st.session_state.setdefault(f"sc_stock_{key}", int(default))
+    for key, default in DEFAULT_CUTS_CRYPTO.items():
+        st.session_state.setdefault(f"sc_crypto_{key}", int(default))
+
+
+def _read_simple_rule() -> dict:
+    weights = dict(SIMPLE_DEFAULT_WEIGHTS)
+    for key, default in SIMPLE_DEFAULT_WEIGHTS.items():
+        if key in SIMPLE_ZERO_KEYS:
+            weights[key] = 0
+            continue
+        try:
+            weights[key] = int(st.session_state.get(f"sw_{key}", default))
+        except (TypeError, ValueError):
+            weights[key] = int(default)
+    cuts = {key: int(st.session_state.get(f"sc_stock_{key}", default)) for key, default in DEFAULT_CUTS_STOCK.items()}
+    cuts_crypto = {
+        key: int(st.session_state.get(f"sc_crypto_{key}", default)) for key, default in DEFAULT_CUTS_CRYPTO.items()
+    }
+    return {"weights": weights, "cuts": cuts, "cuts_crypto": cuts_crypto, "mode": "simple"}
+
+
+def _reset_simple_rule_widgets() -> None:
+    for key, default in SIMPLE_DEFAULT_WEIGHTS.items():
+        if key in SIMPLE_ZERO_KEYS:
+            continue
+        st.session_state[f"sw_{key}"] = int(default)
+    for key, default in DEFAULT_CUTS_STOCK.items():
+        st.session_state[f"sc_stock_{key}"] = int(default)
+    for key, default in DEFAULT_CUTS_CRYPTO.items():
+        st.session_state[f"sc_crypto_{key}"] = int(default)
 
 
 def _safe_set_widget(key: str, value: int) -> None:
@@ -720,6 +763,7 @@ def _prefs_payload(rule: dict) -> dict:
                 {key: st.session_state.get(f"plan_p_{key}", default) for key, default in DEFAULT_PLAN_PCTS.items()}
             ),
         },
+        "simple": _read_simple_rule(),
     }
 
 
@@ -799,6 +843,27 @@ def _apply_loaded_prefs(loaded: dict) -> None:
     pcts = normalize_plan_pcts(plan.get("pcts") if isinstance(plan.get("pcts"), dict) else None)
     for key, default in DEFAULT_PLAN_PCTS.items():
         st.session_state[f"plan_p_{key}"] = float(pcts.get(key, default))
+    simple = loaded.get("simple") if isinstance(loaded.get("simple"), dict) else {}
+    sw = simple.get("weights") if isinstance(simple.get("weights"), dict) else {}
+    for key, default in SIMPLE_DEFAULT_WEIGHTS.items():
+        if key in SIMPLE_ZERO_KEYS:
+            continue
+        try:
+            st.session_state[f"sw_{key}"] = int(sw.get(key, default))
+        except (TypeError, ValueError):
+            st.session_state[f"sw_{key}"] = int(default)
+    sc = simple.get("cuts") if isinstance(simple.get("cuts"), dict) else {}
+    scc = simple.get("cuts_crypto") if isinstance(simple.get("cuts_crypto"), dict) else {}
+    for key, default in DEFAULT_CUTS_STOCK.items():
+        try:
+            st.session_state[f"sc_stock_{key}"] = int(sc.get(key, default))
+        except (TypeError, ValueError):
+            st.session_state[f"sc_stock_{key}"] = int(default)
+    for key, default in DEFAULT_CUTS_CRYPTO.items():
+        try:
+            st.session_state[f"sc_crypto_{key}"] = int(scc.get(key, default))
+        except (TypeError, ValueError):
+            st.session_state[f"sc_crypto_{key}"] = int(default)
 
 
 def _bootstrap_prefs() -> None:
@@ -1406,9 +1471,9 @@ def _fav_bar_markup(
     return f"<div class='{css_class} fav-bar'><div class='fav-meta'>{meta_e}</div>{body}</div>"
 
 
-def _render_fav_row(row: dict, as_of, *, analyzed: bool) -> None:
+def _render_fav_row(row: dict, as_of, *, analyzed: bool, jump_page: str = "종목 분석", key_prefix: str = "") -> None:
     cols = st.columns([6, 1], gap="small", vertical_alignment="center")
-    safe = f"{row['market']}_{str(row.get('ticker') or '').replace('.', '_')}"
+    safe = f"{key_prefix}{row['market']}_{str(row.get('ticker') or '').replace('.', '_')}"
     name = row.get("name") or row.get("ticker")
     ticker = row.get("ticker")
     meta = f"{name} ({ticker})"
@@ -1460,6 +1525,7 @@ def _render_fav_row(row: dict, as_of, *, analyzed: bool) -> None:
                     "ticker": row["ticker"],
                     "name": name,
                     "as_of": as_of.isoformat(),
+                    "page": jump_page,
                 }
                 st.rerun()
     with cols[1]:
@@ -1471,8 +1537,19 @@ def _render_fav_row(row: dict, as_of, *, analyzed: bool) -> None:
         )
 
 
-def _render_favorites(as_of, lookback_days: int, timeframe: str, lookback_label: str, rule: dict) -> None:
-    st.subheader("즐겨찾기")
+def _render_favorites(
+    as_of,
+    lookback_days: int,
+    timeframe: str,
+    lookback_label: str,
+    rule: dict,
+    *,
+    title: str = "즐겨찾기",
+    board_key: str = "fav_board",
+    run_key: str = "fav_run_btn",
+    jump_page: str = "종목 분석",
+) -> None:
+    st.subheader(title)
     st.caption(
         f"조회 기간 {lookback_label} · 분석일 {as_of} · "
         "추가만 하면 목록에만 들어갑니다. **분석하기**를 누를 때마다 시세를 다시 받습니다. "
@@ -1484,7 +1561,7 @@ def _render_favorites(as_of, lookback_days: int, timeframe: str, lookback_label:
     if not favs:
         st.info("아직 즐겨찾기한 종목이 없습니다. 위에서 검색해 추가하세요.")
         return
-    run = st.button("분석하기", type="primary", width="stretch", key="fav_run_btn")
+    run = st.button("분석하기", type="primary", width="stretch", key=run_key)
     if run:
         _cached_ohlcv.clear()
         _cached_spot.clear()
@@ -1511,7 +1588,7 @@ def _render_favorites(as_of, lookback_days: int, timeframe: str, lookback_label:
                 failed_once = True
             results.append(row)
         bar.empty()
-        st.session_state.fav_board = {
+        st.session_state[board_key] = {
             "as_of": as_of.isoformat(),
             "lookback": lookback_label,
             "results": results,
@@ -1519,7 +1596,7 @@ def _render_favorites(as_of, lookback_days: int, timeframe: str, lookback_label:
         n_fail = sum(1 for r in results if r.get("error"))
         if n_fail:
             st.warning(f"{n_fail}종목은 시세를 받지 못했습니다. **분석하기**를 다시 누르면 전부 다시 받습니다.")
-    board = st.session_state.get("fav_board") or {}
+    board = st.session_state.get(board_key) or {}
     same_ctx = (
         board.get("as_of") == as_of.isoformat()
         and board.get("lookback") == lookback_label
@@ -1534,9 +1611,9 @@ def _render_favorites(as_of, lookback_days: int, timeframe: str, lookback_label:
         key = _fav_row_key(item["market"], item["ticker"])
         row = by_key.get(key)
         if row:
-            _render_fav_row(row, as_of, analyzed=True)
+            _render_fav_row(row, as_of, analyzed=True, jump_page=jump_page, key_prefix=run_key)
         else:
-            _render_fav_row(item, as_of, analyzed=False)
+            _render_fav_row(item, as_of, analyzed=False, jump_page=jump_page, key_prefix=run_key)
 
 
 def _market_name(code: str) -> str:
@@ -2072,7 +2149,9 @@ def _apply_analysis_jump() -> None:
     market = str(jump.get("market") or "")
     ticker = str(jump.get("ticker") or "")
     name = str(jump.get("name") or ticker)
-    st.session_state.app_page = "종목 분석"
+    st.session_state.app_page = str(jump.get("page") or "종목 분석")
+    if st.session_state.app_page == "간략 분석":
+        st.session_state.simple_scope = "종목"
     for label, code in MARKETS.items():
         if code == market:
             st.session_state.market_pick = label
@@ -2101,9 +2180,18 @@ def _apply_analysis_jump() -> None:
 
 with st.sidebar:
     _apply_analysis_jump()
-    page = st.radio("화면", ["종목 분석", "즐겨찾기", "시뮬레이션", "투자계획"], horizontal=True, key="app_page")
+    page = st.radio(
+        "화면",
+        ["종목 분석", "즐겨찾기", "간략 분석", "시뮬레이션", "투자계획"],
+        horizontal=True,
+        key="app_page",
+    )
     st.header("조회 조건")
     sim_scope = "선택한 종목"
+    simple_scope = "종목"
+    if page == "간략 분석":
+        simple_scope = st.radio("대상", ["종목", "즐겨찾기"], horizontal=True, key="simple_scope")
+        st.caption("지금 규칙은 그대로 두고, 간단 점수표만 씁니다. 1개월·6개월 급등락 항목은 넣지 않습니다.")
     if page == "시뮬레이션":
         sim_scope = st.radio(
             "대상",
@@ -2124,7 +2212,7 @@ with st.sidebar:
             "옵션 체인은 시뮬 종료일 기준 현재 포지션입니다.",
         )
     pick_one = page not in ("투자계획",) and (page != "시뮬레이션" or sim_scope == "선택한 종목")
-    if page == "즐겨찾기":
+    if page in ("즐겨찾기", "간략 분석"):
         pick_one = True
     market = "KR"
     ticker = ""
@@ -2244,6 +2332,9 @@ with st.sidebar:
     elif page == "시뮬레이션":
         lb_key = "lookback_sim"
         lb_default = "3개월"
+    elif page == "간략 분석":
+        lb_key = "lookback_simple"
+        lb_default = "1년"
     else:
         lb_key = "lookback_v2"
         lb_default = "1년"
@@ -2260,6 +2351,7 @@ with st.sidebar:
     timeframe = str(lookback_spec["timeframe"])
 
     _init_rule_widgets()
+    _init_simple_rule_widgets()
     rule = _read_rule_from_sidebar()
     sim = dict(DEFAULT_SIM)
     run = False
@@ -2269,34 +2361,62 @@ with st.sidebar:
         run = st.button("분석하기", type="primary", width="stretch")
         if st.session_state.pop("_auto_run", False):
             run = True
+    elif page == "간략 분석" and simple_scope == "종목":
+        run = st.button("분석하기", type="primary", width="stretch", key="simple_run")
+        if st.session_state.pop("_auto_run", False):
+            run = True
     elif page == "시뮬레이션":
         run_sim = st.button("시뮬레이션 실행", type="primary", width="stretch")
     elif page == "투자계획":
         run_plan_btn = st.button("투자계획 실행", type="primary", width="stretch")
 
     try:
-        with st.expander("평가 배점·기준", expanded=False):
-            st.caption("합산 % 눈금(-5~19점)은 그대로 두고, 항목 점수와 매수/매도 컷만 바꿉니다. 바꾼 값은 리부트 후에도 남깁니다.")
-            _cut_group_inputs("c_stock_", "매수 / 매도 기준 · 주식")
-            _cut_group_inputs("c_crypto_", "매수 / 매도 기준 · 코인")
-            st.markdown("**항목 배점**")
-            w_cols = st.columns(2)
-            for i, (key, label, hint) in enumerate(WEIGHT_FIELDS):
-                with w_cols[i % 2]:
-                    lo, hi = _weight_bounds(key)
-                    st.number_input(
-                        label,
-                        min_value=lo,
-                        max_value=hi,
-                        step=1,
-                        key=f"w_{key}",
-                        help=hint,
-                    )
-            st.button(
-                "기본값으로 되돌리기",
-                use_container_width=True,
-                on_click=_reset_rule_widgets,
-            )
+        if page == "간략 분석":
+            with st.expander("간단 평가 배점·기준", expanded=False):
+                st.caption("간략 분석 전용입니다. 지금 규칙(종목 분석) 배점은 건드리지 않습니다. 1개월·6개월 급등락은 쓰지 않습니다.")
+                _cut_group_inputs("sc_stock_", "매수 / 매도 기준 · 주식")
+                _cut_group_inputs("sc_crypto_", "매수 / 매도 기준 · 코인")
+                st.markdown("**항목 배점**")
+                w_cols = st.columns(2)
+                for i, (key, label, hint) in enumerate(SIMPLE_WEIGHT_FIELDS):
+                    with w_cols[i % 2]:
+                        lo, hi = _weight_bounds(key, simple=True)
+                        st.number_input(
+                            label,
+                            min_value=lo,
+                            max_value=hi,
+                            step=1,
+                            key=f"sw_{key}",
+                            help=hint,
+                        )
+                st.button(
+                    "간단 기본값으로 되돌리기",
+                    width="stretch",
+                    on_click=_reset_simple_rule_widgets,
+                )
+        else:
+            with st.expander("평가 배점·기준", expanded=False):
+                st.caption("합산 % 눈금(-5~19점)은 그대로 두고, 항목 점수와 매수/매도 컷만 바꿉니다. 바꾼 값은 리부트 후에도 남깁니다.")
+                _cut_group_inputs("c_stock_", "매수 / 매도 기준 · 주식")
+                _cut_group_inputs("c_crypto_", "매수 / 매도 기준 · 코인")
+                st.markdown("**항목 배점**")
+                w_cols = st.columns(2)
+                for i, (key, label, hint) in enumerate(WEIGHT_FIELDS):
+                    with w_cols[i % 2]:
+                        lo, hi = _weight_bounds(key)
+                        st.number_input(
+                            label,
+                            min_value=lo,
+                            max_value=hi,
+                            step=1,
+                            key=f"w_{key}",
+                            help=hint,
+                        )
+                st.button(
+                    "기본값으로 되돌리기",
+                    use_container_width=True,
+                    on_click=_reset_rule_widgets,
+                )
         sim = dict(DEFAULT_SIM)
         if page == "시뮬레이션":
             crypto_qty = (pick_one and market == "CRYPTO") or (
@@ -2356,6 +2476,8 @@ with st.sidebar:
         rule = _read_rule_from_sidebar()
         _persist_prefs(rule)
         _emit_prefs_cookie()
+        if page == "간략 분석":
+            rule = _read_simple_rule()
     except Exception as _set_exc:
         st.error(f"설정 칸을 건너뛰었습니다: {_set_exc}")
         try:
@@ -2410,6 +2532,20 @@ if page == "즐겨찾기":
     _render_favorites(as_of, lookback_days, timeframe, lookback_label, rule)
     st.stop()
 
+if page == "간략 분석" and simple_scope == "즐겨찾기":
+    _render_favorites(
+        as_of,
+        lookback_days,
+        timeframe,
+        lookback_label,
+        rule,
+        title="간략 즐겨찾기",
+        board_key="simple_fav_board",
+        run_key="simple_fav_run",
+        jump_page="간략 분석",
+    )
+    st.stop()
+
 if page == "투자계획":
     _render_plan(
         lookback_label,
@@ -2442,20 +2578,31 @@ if page == "시뮬레이션":
 
 if not run:
     st.info("왼쪽에서 시장·종목·시점을 고른 뒤 **분석하기**를 누르세요.")
-    st.markdown(
-        """
-        #### 이 프로그램이 하는 일
-        1. 한국 주식, 미국 주식, 비트코인·이더리움·솔라나·XRP·온도 등 원하는 종목을 고릅니다.
-        2. **과거 특정 날짜**를 시점으로 넣으면 그 날 이후 시세는 보지 않습니다.
-        3. 그 시점의 추세선, 지지/저항, 주요 매물대를 그린 뒤 매수·매도·홀딩을 제안합니다.
-        4. 종목을 즐겨찾기에 넣으면 한 화면에서 제안만 모아 볼 수 있습니다.
-        5. 시뮬레이션 화면에서 한 종목 또는 즐겨찾기 전체를 돌립니다. 즐겨찾기는 종목별 수량을 따로 저장합니다.
-        6. 투자계획 화면에서는 월 적립금을 즐겨찾기 비중대로 나누고, 신호 비율만큼 사고팝니다. 남은 돈은 현금으로 모입니다.
+    if page == "간략 분석":
+        st.markdown(
+            """
+            #### 간략 분석
+            종목 분석·즐겨찾기와 같은 차트·제안을 쓰되, **간단 점수표**만 적용합니다.
+            지금 규칙(1개월·6개월 급등락, 추세선 둘 다 상승+1개월 하락)은 이 화면에서 쓰지 않습니다.
+            왼쪽 **간단 평가 배점·기준**에서 점수를 바꿀 수 있고, 종목 분석 배점은 그대로 남습니다.
+            """
+        )
+    else:
+        st.markdown(
+            """
+            #### 이 프로그램이 하는 일
+            1. 한국 주식, 미국 주식, 비트코인·이더리움·솔라나·XRP·온도 등 원하는 종목을 고릅니다.
+            2. **과거 특정 날짜**를 시점으로 넣으면 그 날 이후 시세는 보지 않습니다.
+            3. 그 시점의 추세선, 지지/저항, 주요 매물대를 그린 뒤 매수·매도·홀딩을 제안합니다.
+            4. 종목을 즐겨찾기에 넣으면 한 화면에서 제안만 모아 볼 수 있습니다.
+            5. **간략 분석**은 같은 기능에 간단한 점수표만 적용합니다.
+            6. 시뮬레이션 화면에서 한 종목 또는 즐겨찾기 전체를 돌립니다. 즐겨찾기는 종목별 수량을 따로 저장합니다.
+            7. 투자계획 화면에서는 월 적립금을 즐겨찾기 비중대로 나누고, 신호 비율만큼 사고팝니다. 남은 돈은 현금으로 모입니다.
 
-        1개월은 1시간봉, 2·3개월은 4시간봉, 6개월·1년은 일봉으로 계산합니다.
-        평가 배점·즐겨찾기·시뮬레이션 수량은 접속자마다 따로 저장됩니다. 다른 기기는 저장 코드로 이어갑니다.
-        """
-    )
+            1개월은 1시간봉, 2·3개월은 4시간봉, 6개월·1년은 일봉으로 계산합니다.
+            평가 배점·즐겨찾기·시뮬레이션 수량은 접속자마다 따로 저장됩니다. 다른 기기는 저장 코드로 이어갑니다.
+            """
+        )
     st.stop()
 
 if not ticker:
