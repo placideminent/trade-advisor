@@ -89,19 +89,19 @@ def write_browser_store(uid: str, token: str = "") -> None:
     return
 
 try:
-    from .backtest import DEFAULT_SIM, normalize_sim
+    from .backtest import DEFAULT_SIM, migrate_sim_defaults, normalize_sim
 except ImportError:
     DEFAULT_SIM = {
-        "buy_weak": 5,
-        "buy_mid": 10,
-        "buy_strong": 15,
-        "share_cut": 30,
-        "sell_weak_pct": 10,
-        "sell_mid_pct": 20,
-        "sell_strong_pct": 30,
-        "sell_weak_qty": 3,
-        "sell_mid_qty": 5,
-        "sell_strong_qty": 10,
+        "buy_weak": 10,
+        "buy_mid": 20,
+        "buy_strong": 30,
+        "share_cut": 100,
+        "sell_weak_pct": 2,
+        "sell_mid_pct": 5,
+        "sell_strong_pct": 10,
+        "sell_weak_qty": 2,
+        "sell_mid_qty": 4,
+        "sell_strong_qty": 6,
     }
 
     def normalize_sim(raw: dict | None) -> dict:
@@ -120,28 +120,8 @@ except ImportError:
                 data[key] = default
         return data
 
-try:
-    from .plan import normalize_plan_pcts
-except ImportError:
-    def normalize_plan_pcts(raw: dict | None) -> dict:
-        data = {
-            "buy_weak": 10.0,
-            "buy_mid": 30.0,
-            "buy_strong": 50.0,
-            "sell_weak": 5.0,
-            "sell_mid": 10.0,
-            "sell_strong": 20.0,
-        }
-        if not isinstance(raw, dict):
-            return data
-        for key, default in list(data.items()):
-            if key not in raw:
-                continue
-            try:
-                data[key] = max(0.0, min(100.0, float(raw[key])))
-            except (TypeError, ValueError):
-                data[key] = default
-        return data
+    def migrate_sim_defaults(raw: dict | None) -> dict:
+        return normalize_sim(raw)
 
 LEGACY_DEFAULT_CUTS = {
     "buy_weak": 65,
@@ -214,7 +194,7 @@ def _empty() -> dict:
         "sim_options": 0,
         "rule_ver": SIGNAL_RULE_VERSION,
         "favorites": [],
-        "plan": {"months": 12, "monthly_krw": 0, "weights": {}, "pcts": {}},
+        "fav_weights": {},
     }
 
 
@@ -281,7 +261,7 @@ def _normalize(raw: dict | None) -> dict:
         data["cuts_crypto"] = dict(DEFAULT_CUTS_CRYPTO)
         rule_ver = 54
     data["rule_ver"] = rule_ver
-    data["sim"] = normalize_sim(sim)
+    data["sim"] = migrate_sim_defaults(sim)
     try:
         data["sim_options"] = 1 if int(raw.get("sim_options") or 0) else 0
     except (TypeError, ValueError):
@@ -299,31 +279,22 @@ def _normalize(raw: dict | None) -> dict:
             ticker = ticker.zfill(6) if ticker.isdigit() else ticker
         entry = {"market": market, "ticker": ticker, "name": name}
         if isinstance(item.get("sim"), dict):
-            entry["sim"] = normalize_sim(item.get("sim"))
+            entry["sim"] = migrate_sim_defaults(item.get("sim"))
         out_favs.append(entry)
         if len(out_favs) >= MAX_FAVORITES:
             break
     data["favorites"] = out_favs
-    plan_raw = raw.get("plan") if isinstance(raw.get("plan"), dict) else {}
-    plan = {"months": 12, "monthly_krw": 0.0, "weights": {}, "pcts": {}}
-    try:
-        plan["months"] = max(1, int(plan_raw.get("months") or 12))
-    except (TypeError, ValueError):
-        pass
-    try:
-        plan["monthly_krw"] = max(0.0, float(plan_raw.get("monthly_krw") or 0))
-    except (TypeError, ValueError):
-        pass
-    plan["pcts"] = normalize_plan_pcts(plan_raw.get("pcts") if isinstance(plan_raw.get("pcts"), dict) else None)
-    wsrc = plan_raw.get("weights") if isinstance(plan_raw.get("weights"), dict) else {}
+    wsrc = raw.get("fav_weights") if isinstance(raw.get("fav_weights"), dict) else {}
+    if not wsrc:
+        plan_raw = raw.get("plan") if isinstance(raw.get("plan"), dict) else {}
+        wsrc = plan_raw.get("weights") if isinstance(plan_raw.get("weights"), dict) else {}
     wout = {}
     for k, v in wsrc.items():
         try:
             wout[str(k)] = float(v)
         except (TypeError, ValueError):
             continue
-    plan["weights"] = wout
-    data["plan"] = plan
+    data["fav_weights"] = wout
     try:
         data["ts"] = int(raw.get("ts") or 0)
     except (TypeError, ValueError):
@@ -343,7 +314,7 @@ def snapshot_key(data: dict) -> str:
         "sim_options": int(data.get("sim_options") or 0),
         "rule_ver": int(data.get("rule_ver") or 0),
         "favorites": data.get("favorites") or [],
-        "plan": data.get("plan") or {},
+        "fav_weights": data.get("fav_weights") or {},
     }
     return json.dumps(payload, sort_keys=True, ensure_ascii=False)
 

@@ -13,18 +13,10 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 from src.analysis import analyze
-from src.backtest import BacktestResult, DEFAULT_SIM, SIM_QTY_KEYS, normalize_sim, run_backtest, spy_hold_return
-from src.plan import (
-    DEFAULT_PLAN_PCTS,
-    PLAN_PCT_FIELDS,
-    normalize_plan_pcts,
-    run_plan,
-)
+from src.backtest import BacktestResult, DEFAULT_SIM, SIM_QTY_KEYS, migrate_sim_defaults, normalize_sim, run_backtest, spy_hold_return
 from src.chart import (
     build_chart,
-    build_plan_pnl_fig,
     build_plan_return_fig,
-    build_plan_value_fig,
     build_return_vs_spy_fig,
     build_sim_chart,
     build_ticker_vs_spy_fig,
@@ -313,7 +305,7 @@ def _init_rule_widgets() -> None:
             pass
         st.session_state._cuts_split_v60 = True
     for key, default in DEFAULT_SIM.items():
-        st.session_state.setdefault(f"s_{key}", int(default))
+        st.session_state.setdefault(f"s_{key}", float(default) if key in SIM_QTY_KEYS else int(default))
     st.session_state.setdefault("sim_eval_mode", "기존 규칙만")
 
 
@@ -418,53 +410,9 @@ def _cut_group_inputs(prefix: str, heading: str) -> None:
             )
 
 
-def _init_plan_pct_widgets() -> None:
-    for key, default in DEFAULT_PLAN_PCTS.items():
-        sk = f"plan_p_{key}"
-        if sk not in st.session_state:
-            st.session_state[sk] = float(default)
-
-
-def _reset_plan_pct_widgets() -> None:
-    for key, default in DEFAULT_PLAN_PCTS.items():
-        st.session_state[f"plan_p_{key}"] = float(default)
-
-
-def _plan_pct_fields() -> None:
-    st.caption("매수")
-    bcols = st.columns(3)
-    buy = [row for row in PLAN_PCT_FIELDS if str(row[0]).startswith("buy_")]
-    for i, (key, label) in enumerate(buy):
-        with bcols[i]:
-            st.number_input(
-                f"{label} %",
-                min_value=0.0,
-                max_value=100.0,
-                step=1.0,
-                key=f"plan_p_{key}",
-            )
-    st.caption("매도")
-    scols = st.columns(3)
-    sell = [row for row in PLAN_PCT_FIELDS if str(row[0]).startswith("sell_")]
-    for i, (key, label) in enumerate(sell):
-        with scols[i]:
-            st.number_input(
-                f"{label} %",
-                min_value=0.0,
-                max_value=100.0,
-                step=1.0,
-                key=f"plan_p_{key}",
-            )
-
-
-def _read_plan_pcts() -> dict:
-    raw = {key: st.session_state.get(f"plan_p_{key}", default) for key, default in DEFAULT_PLAN_PCTS.items()}
-    return normalize_plan_pcts(raw)
-
-
 def _render_fav_weight_inputs(caption: str) -> None:
     favs_now = _fav_list()
-    saved_w = dict(st.session_state.get("plan_weights") or {})
+    saved_w = dict(st.session_state.get("fav_weights") or {})
     with st.expander("종목 비중(%)", expanded=True):
         if not favs_now:
             st.caption("즐겨찾기가 없습니다. 종목 분석에서 별표로 넣으세요.")
@@ -499,11 +447,11 @@ def _render_fav_weight_inputs(caption: str) -> None:
             new_w[k] = float(val or 0)
             wsum += float(val or 0)
         st.caption(f"비중 합계 {wsum:.1f}%")
-        st.session_state.plan_weights = new_w
+        st.session_state.fav_weights = new_w
 
 
 def _normalized_fav_weights() -> dict[str, float]:
-    raw = dict(st.session_state.get("plan_weights") or {})
+    raw = dict(st.session_state.get("fav_weights") or {})
     out = {}
     total = 0.0
     for k, v in raw.items():
@@ -554,13 +502,14 @@ def _init_fav_sim_widgets(global_sim: dict) -> None:
     for item in _fav_list():
         prefix = _fav_sim_prefix(item["market"], item["ticker"])
         src = item.get("sim") if isinstance(item.get("sim"), dict) else None
+        src = migrate_sim_defaults(src) if src else None
         for key, default in DEFAULT_SIM.items():
             sk = f"{prefix}{key}"
             if sk in st.session_state:
                 continue
             if src and key in src:
                 try:
-                    st.session_state[sk] = int(src[key])
+                    st.session_state[sk] = float(src[key]) if key in SIM_QTY_KEYS else int(src[key])
                     continue
                 except (TypeError, ValueError):
                     pass
@@ -712,14 +661,7 @@ def _prefs_payload(rule: dict) -> dict:
         "sim_options": 1 if st.session_state.get("sim_eval_mode") == "옵션 월 포함" else 0,
         "rule_ver": SIGNAL_RULE_VERSION,
         "favorites": list(st.session_state.get("favorites") or []),
-        "plan": {
-            "months": int(st.session_state.get("plan_months") or 12),
-            "monthly_krw": float(st.session_state.get("plan_monthly_krw") or 0),
-            "weights": dict(st.session_state.get("plan_weights") or {}),
-            "pcts": normalize_plan_pcts(
-                {key: st.session_state.get(f"plan_p_{key}", default) for key, default in DEFAULT_PLAN_PCTS.items()}
-            ),
-        },
+        "fav_weights": dict(st.session_state.get("fav_weights") or {}),
     }
 
 
@@ -781,24 +723,16 @@ def _apply_loaded_prefs(loaded: dict) -> None:
     st.session_state._cuts_migrated_v53 = True
     st.session_state._cuts_migrated_v58 = True
     st.session_state._cuts_split_v60 = True
-    sim = normalize_sim(loaded.get("sim") or {})
+    sim = migrate_sim_defaults(loaded.get("sim") or {})
     for key, default in DEFAULT_SIM.items():
-        st.session_state[f"s_{key}"] = sim.get(key, default)
+        st.session_state[f"s_{key}"] = float(sim.get(key, default)) if key in SIM_QTY_KEYS else int(sim.get(key, default))
     st.session_state.sim_eval_mode = "옵션 월 포함" if loaded.get("sim_options") else "기존 규칙만"
     st.session_state.favorites = list(loaded.get("favorites") or [])
-    plan = loaded.get("plan") or {}
-    try:
-        st.session_state.plan_months = int(plan.get("months") or 12)
-    except (TypeError, ValueError):
-        st.session_state.plan_months = 12
-    try:
-        st.session_state.plan_monthly_krw = float(plan.get("monthly_krw") or 0)
-    except (TypeError, ValueError):
-        st.session_state.plan_monthly_krw = 0.0
-    st.session_state.plan_weights = dict(plan.get("weights") or {}) if isinstance(plan.get("weights"), dict) else {}
-    pcts = normalize_plan_pcts(plan.get("pcts") if isinstance(plan.get("pcts"), dict) else None)
-    for key, default in DEFAULT_PLAN_PCTS.items():
-        st.session_state[f"plan_p_{key}"] = float(pcts.get(key, default))
+    fav_w = loaded.get("fav_weights") if isinstance(loaded.get("fav_weights"), dict) else {}
+    if not fav_w:
+        plan = loaded.get("plan") if isinstance(loaded.get("plan"), dict) else {}
+        fav_w = plan.get("weights") if isinstance(plan.get("weights"), dict) else {}
+    st.session_state.fav_weights = dict(fav_w or {})
 
 
 def _bootstrap_prefs() -> None:
@@ -1924,185 +1858,6 @@ def _render_simulation(
     _show_sim_result(result)
 
 
-def _render_plan(lookback_label: str, rule: dict, start: date, months: int, monthly_krw: float, pcts: dict, run: bool) -> None:
-    st.subheader("투자계획")
-    st.caption(
-        "매달 투자금을 종목 비중대로 나눕니다. 신호가 나면 그달 종목 한도의 비율만큼 사고팝니다. "
-        "1주가 안 되어도 금액만큼 주식을 쪼개 산다고 봅니다. "
-        "못 쓴 한도와 매도대금은 현금으로 모이고, 한도가 모자라면 현금에서 삽니다. "
-        "미국 주식·코인은 그날 원/달러 종가로 환산합니다."
-    )
-    favs = _fav_list()
-    if not favs:
-        st.info("종목 분석 화면에서 즐겨찾기를 넣은 뒤 비중을 정하세요.")
-        return
-    weights = dict(st.session_state.get("plan_weights") or {})
-    items = []
-    for item in favs:
-        entry = dict(item)
-        k = _fav_row_key(item["market"], item["ticker"])
-        entry["weight"] = float(weights.get(k) or 0)
-        items.append(entry)
-    st.write(
-        f"**{len(items)}종목** · {start}부터 {int(months)}개월 · "
-        f"월 {monthly_krw:,.0f}원 · 조회 {lookback_label}"
-    )
-    if float(monthly_krw or 0) <= 0:
-        st.warning("월 투자금액이 0원입니다. 왼쪽에서 금액을 넣은 뒤 다시 실행하세요.")
-    if run:
-        bar = st.progress(0, text="투자계획 계산 중...")
-
-        def _prog(i, n, msg):
-            bar.progress(min((i + 1) / max(n, 1), 1.0), text=str(msg))
-
-        try:
-            with st.spinner("즐겨찾기 신호와 환율을 모으는 중..."):
-                st.session_state.plan_result = run_plan(
-                    items,
-                    start,
-                    int(months),
-                    float(monthly_krw),
-                    lookback_label,
-                    rule,
-                    pcts=pcts,
-                    progress=_prog,
-                )
-        except Exception as extra:
-            bar.empty()
-            st.error(f"투자계획 계산에 실패했습니다: {extra}")
-            return
-        bar.empty()
-    result = st.session_state.get("plan_result")
-    if not result:
-        st.info("왼쪽에서 기간·월 투자금·비중을 정한 뒤 **투자계획 실행**을 누르세요.")
-        return
-    if getattr(result, "error", None):
-        st.error(result.error)
-        return
-    counts = dict(getattr(result, "signal_counts", None) or {})
-    buy_n = sum(int(counts.get(a) or 0) for a in ("약한 매수", "매수", "강한 매수"))
-    sell_n = sum(int(counts.get(a) or 0) for a in ("약한 매도", "매도", "강한 매도"))
-    hold_n = int(counts.get("홀딩") or 0)
-    fills = [t for t in (result.trades or []) if t.get("체결") in ("매수", "매도")]
-    buy_fills = sum(1 for t in fills if t.get("체결") == "매수")
-    st.write(
-        f"신호 합계 · 매수 {buy_n}일 · 매도 {sell_n}일 · 홀딩 {hold_n}일 · 체결 {buy_fills}건"
-    )
-    if getattr(result, "equal_weights", False):
-        st.caption("종목 비중이 비어 있어 균등 비중으로 나눴습니다.")
-    if buy_n == 0:
-        st.warning(
-            "이 기간·조회 설정에서는 매수 신호가 하루도 없었습니다. "
-            "종목 분석과 **같은 조회 기간(예: 1년)** 으로 맞춘 뒤 다시 실행해 보세요. "
-            "3개월 조회는 4시간봉이라 종목 분석 1년(일봉)과 신호가 다릅니다."
-        )
-    skips = list(getattr(result, "skips", None) or [])
-    if buy_n > 0 and buy_fills == 0:
-        st.error("매수 신호는 있었는데 체결이 없습니다. 월 투자금·비중을 확인하세요.")
-    contributed = float(result.contributed_krw or 0)
-    cash = float(result.cash_krw or 0)
-    hold_val = sum(float(h.get("평가(원)") or 0) for h in (result.holdings or []))
-    total = hold_val + cash
-    pnl = float(result.pnl_krw if result.pnl_krw is not None else total - contributed)
-    pct = float(result.pnl_pct if result.pnl_pct is not None else ((pnl / contributed * 100.0) if contributed else 0.0))
-    with st.container(horizontal=True):
-        st.metric("납입 합계", f"{contributed:,.0f}원", border=True)
-        st.metric("평가+현금", f"{total:,.0f}원", border=True)
-        st.metric("전체 수익금", f"{pnl:+,.0f}원", border=True)
-        st.metric("전체 수익률", f"{pct:+.2f}%" if contributed else "-", border=True)
-        st.metric("현금 잔액", f"{cash:,.0f}원", border=True)
-    if result.fx_note:
-        st.caption(f"환율: {result.fx_note}")
-    st.caption("현금 잔액은 그달 못 쓴 한도와 매도대금입니다.")
-    hold_rows = []
-    for h in result.holdings or []:
-        invested = float(h.get("투입") or 0)
-        ticker_pnl = float(h.get("수익금") or 0)
-        ticker_pct = h.get("수익률")
-        hold_rows.append(
-            {
-                "종목": h.get("종목"),
-                "시장": h.get("시장"),
-                "잔량": _fmt_qty(h.get("잔량"), h.get("시장")),
-                "투입": f"{invested:,.0f}",
-                "평가(원)": f"{float(h.get('평가(원)') or 0):,.0f}",
-                "수익금": f"{ticker_pnl:+,.0f}",
-                "수익률": f"{float(ticker_pct):+.2f}%" if ticker_pct is not None else "-",
-                "실제%": f"{float(h.get('실제비중') or 0):.1f}",
-                "월배정%": f"{float(h.get('월배정비중') or 0):.1f}",
-            }
-        )
-    if hold_rows:
-        st.markdown("**종목별 수익**")
-        st.caption("종목 수익률은 그 종목 매수 투입 대비 (평가+매도대금−투입)입니다. 월배정%는 매달 넣는 돈을 나눈 비율입니다.")
-        _show_table(pd.DataFrame(hold_rows))
-        names, pcts, pnls, invested_l, value_l = [], [], [], [], []
-        for h in result.holdings or []:
-            name = str(h.get("종목") or h.get("티커") or "")
-            names.append(name)
-            raw_pct = h.get("수익률")
-            pcts.append(float(raw_pct) if raw_pct is not None else 0.0)
-            pnls.append(float(h.get("수익금") or 0))
-            invested_l.append(float(h.get("투입") or 0))
-            value_l.append(float(h.get("평가(원)") or 0))
-        if names:
-            g1, g2 = st.columns(2)
-            with g1:
-                st.plotly_chart(build_plan_return_fig(names, pcts))
-            with g2:
-                st.plotly_chart(build_plan_pnl_fig(names, pnls))
-            st.plotly_chart(build_plan_value_fig(names, invested_l, value_l))
-    spy_val = result.spy_value_krw
-    st.subheader("S&P 500 비교")
-    if spy_val is None:
-        st.info(f"S&P 500 동일 월적립을 받지 못했습니다: {result.spy_note or '알 수 없음'}")
-    else:
-        spy_pnl = float(result.spy_pnl_krw or 0)
-        spy_pct = float(result.spy_pct or 0)
-        cmp_rows = [
-            {
-                "구분": "투자계획",
-                "납입": f"{contributed:,.0f}원",
-                "최종": f"{total:,.0f}원",
-                "수익금": f"{pnl:+,.0f}원",
-                "수익률": f"{pct:+.2f}%" if contributed else "-",
-            },
-            {
-                "구분": "S&P 500 같은 월적립",
-                "납입": f"{contributed:,.0f}원",
-                "최종": f"{spy_val:,.0f}원",
-                "수익금": f"{spy_pnl:+,.0f}원",
-                "수익률": f"{spy_pct:+.2f}%" if contributed else "-",
-            },
-        ]
-        if contributed:
-            cmp_rows.append(
-                {
-                    "구분": "차이 (계획−S&P)",
-                    "납입": "-",
-                    "최종": f"{total - spy_val:+,.0f}원",
-                    "수익금": f"{pnl - spy_pnl:+,.0f}원",
-                    "수익률": f"{pct - spy_pct:+.2f}%p",
-                }
-            )
-        _show_table(pd.DataFrame(cmp_rows))
-        with st.container(horizontal=True):
-            st.metric(
-                "계획 수익률",
-                f"{pct:+.2f}%" if contributed else "-",
-                f"{pct - spy_pct:+.2f}%p vs S&P" if contributed else None,
-                border=True,
-            )
-            st.metric("S&P 500 월적립", f"{spy_pct:+.2f}%", border=True)
-            beat = "지수보다 나음" if contributed and pct >= spy_pct else "지수보다 못함"
-            st.metric("상대평가", beat if contributed else "-", border=True)
-        st.plotly_chart(build_return_vs_spy_fig(pct, spy_pct, "투자계획", "S&P 500 월적립"))
-        st.caption(
-            f"{result.start} ~ {result.end} 동안 매달 같은 금액을 SPY(S&P 500 ETF)에 넣은 경우와 비교합니다. "
-            "달러 환산은 그날 원/달러, 소수점 좌수는 허용합니다. 계획의 최종액은 보유 평가+현금입니다."
-        )
-
-
 def _apply_analysis_jump() -> None:
     jump = st.session_state.pop("_jump_analysis", None)
     if not jump:
@@ -2111,7 +1866,7 @@ def _apply_analysis_jump() -> None:
     ticker = str(jump.get("ticker") or "")
     name = str(jump.get("name") or ticker)
     st.session_state.app_page = str(jump.get("page") or "종목 분석")
-    if st.session_state.app_page not in ("종목 분석", "즐겨찾기", "시뮬레이션", "투자계획"):
+    if st.session_state.app_page not in ("종목 분석", "즐겨찾기", "시뮬레이션"):
         st.session_state.app_page = "종목 분석"
     for label, code in MARKETS.items():
         if code == market:
@@ -2141,11 +1896,11 @@ def _apply_analysis_jump() -> None:
 
 with st.sidebar:
     _apply_analysis_jump()
-    if st.session_state.get("app_page") not in ("종목 분석", "즐겨찾기", "시뮬레이션", "투자계획"):
+    if st.session_state.get("app_page") not in ("종목 분석", "즐겨찾기", "시뮬레이션"):
         st.session_state.app_page = "종목 분석"
     page = st.radio(
         "화면",
-        ["종목 분석", "즐겨찾기", "시뮬레이션", "투자계획"],
+        ["종목 분석", "즐겨찾기", "시뮬레이션"],
         horizontal=True,
         key="app_page",
     )
@@ -2170,7 +1925,7 @@ with st.sidebar:
             help="옵션 월 포함은 미국 주식만 적용됩니다. 홀딩인 날에는 옵션을 넣지 않습니다. "
             "옵션 체인은 시뮬 종료일 기준 현재 포지션입니다.",
         )
-    pick_one = page not in ("투자계획",) and (page != "시뮬레이션" or sim_scope == "선택한 종목")
+    pick_one = page != "시뮬레이션" or sim_scope == "선택한 종목"
     if page == "즐겨찾기":
         pick_one = True
     market = "KR"
@@ -2242,22 +1997,7 @@ with st.sidebar:
         if cur > today_m:
             st.session_state[key] = today_m
 
-    plan_start = today_m - timedelta(days=365)
-    if page == "투자계획":
-        _clamp_date_key("plan_start", plan_start)
-        plan_start = st.date_input(
-            "시작일",
-            value=today_m - timedelta(days=365),
-            max_value=today_m,
-            key="plan_start",
-        )
-        if "plan_months" not in st.session_state:
-            st.session_state.plan_months = 12
-        if "plan_monthly_krw" not in st.session_state:
-            st.session_state.plan_monthly_krw = 1_000_000
-        st.number_input("총 투자기간(개월)", min_value=1, max_value=120, step=1, key="plan_months")
-        st.number_input("월 투자금액(원)", min_value=0, max_value=2_000_000_000, step=10000, key="plan_monthly_krw")
-    elif page == "시뮬레이션":
+    if page == "시뮬레이션":
         d1, d2 = st.columns(2)
         date_key = market if pick_one else "fav"
         _clamp_date_key(f"sim_start_{date_key}", sim_start)
@@ -2285,10 +2025,7 @@ with st.sidebar:
             key=f"as_of_{market}",
         )
     lookback_keys = list(LOOKBACK_OPTIONS.keys())
-    if page == "투자계획":
-        lb_key = "lookback_plan"
-        lb_default = "1년"
-    elif page == "시뮬레이션":
+    if page == "시뮬레이션":
         lb_key = "lookback_sim"
         lb_default = "3개월"
     else:
@@ -2311,15 +2048,12 @@ with st.sidebar:
     sim = dict(DEFAULT_SIM)
     run = False
     run_sim = False
-    run_plan_btn = False
     if page == "종목 분석":
         run = st.button("분석하기", type="primary", width="stretch")
         if st.session_state.pop("_auto_run", False):
             run = True
     elif page == "시뮬레이션":
         run_sim = st.button("시뮬레이션 실행", type="primary", width="stretch")
-    elif page == "투자계획":
-        run_plan_btn = st.button("투자계획 실행", type="primary", width="stretch")
 
     try:
         with st.expander("평가 배점·기준", expanded=False):
@@ -2351,8 +2085,9 @@ with st.sidebar:
             )
             with st.expander("기본 매매 수량", expanded=sim_scope != "즐겨찾기 전체"):
                 st.caption(
-                    "약한 매수 / 매수 / 강한 매수 수량, 잔량 기준 이상이면 % 매도, 미만이면 고정 수량. "
-                    "코인은 소수점 5자리까지 넣을 수 있습니다. 바꾼 값은 저장됩니다."
+                    "약한 매수 10 / 매수 20 / 강한 매수 30주, 100주 이상이면 % 매도(2/5/10), "
+                    "미만이면 2/4/6주. 코인은 소수점 5자리까지. "
+                    "바꾼 값은 이 브라우저에 남고, **지금 클라우드에 저장**을 누르면 다른 기기에서도 유지됩니다."
                 )
                 _sim_qty_fields("s_", crypto=crypto_qty)
                 st.button("수량 기본값", use_container_width=True, on_click=_reset_sim_widgets)
@@ -2387,19 +2122,6 @@ with st.sidebar:
                 _render_fav_weight_inputs(
                     "종목 수익률을 이 비중으로 가중 평균해 전체 수익률을 냅니다. 합이 100이 아니면 비율로 맞춥니다. 전부 0이면 균등 비중입니다."
                 )
-        elif page == "투자계획":
-            _init_plan_pct_widgets()
-            with st.expander("매수·매도 비율(%)", expanded=True):
-                st.caption(
-                    "그달 종목 배정액 기준입니다. 약한 매수 10, 매수 30, 강한 매수 50, "
-                    "약한 매도 5, 매도 10, 강한 매도 20이 기본값입니다. "
-                    "1주가 안 되어도 그 금액만큼 쪼개 삽니다. 못 쓴 한도는 현금으로 갑니다."
-                )
-                _plan_pct_fields()
-                st.button("비율 기본값", width="stretch", on_click=_reset_plan_pct_widgets)
-            _render_fav_weight_inputs(
-                "매달 넣는 돈을 이 비율로 나눕니다. 합이 100이 아니면 비율로 맞춥니다. 전부 0이면 균등 비중으로 넣습니다."
-            )
         rule = _read_rule_from_sidebar()
         _persist_prefs(rule)
         _emit_prefs_cookie()
@@ -2457,18 +2179,6 @@ if page == "즐겨찾기":
     _render_favorites(as_of, lookback_days, timeframe, lookback_label, rule)
     st.stop()
 
-if page == "투자계획":
-    _render_plan(
-        lookback_label,
-        rule,
-        plan_start,
-        int(st.session_state.get("plan_months") or 12),
-        float(st.session_state.get("plan_monthly_krw") or 0),
-        _read_plan_pcts(),
-        run_plan_btn,
-    )
-    st.stop()
-
 if page == "시뮬레이션":
     _render_simulation(
         market,
@@ -2497,7 +2207,6 @@ if not run:
         3. 그 시점의 추세선, 지지/저항, 주요 매물대를 그린 뒤 매수·매도·홀딩을 제안합니다.
         4. 종목을 즐겨찾기에 넣으면 한 화면에서 제안만 모아 볼 수 있습니다.
         5. 시뮬레이션 화면에서 한 종목 또는 즐겨찾기 전체를 돌립니다. 즐겨찾기는 종목별 수량을 따로 저장합니다.
-        6. 투자계획 화면에서는 월 적립금을 즐겨찾기 비중대로 나누고, 신호 비율만큼 사고팝니다. 남은 돈은 현금으로 모입니다.
 
         1개월은 1시간봉, 2·3개월은 4시간봉, 6개월·1년은 일봉으로 계산합니다.
         평가 배점·즐겨찾기·시뮬레이션 수량은 접속자마다 따로 저장됩니다. 다른 기기는 저장 코드로 이어갑니다.

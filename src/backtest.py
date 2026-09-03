@@ -18,6 +18,18 @@ from .data import (
 from .signals import period_return, recommend
 
 DEFAULT_SIM = {
+    "buy_weak": 10,
+    "buy_mid": 20,
+    "buy_strong": 30,
+    "share_cut": 100,
+    "sell_weak_pct": 2,
+    "sell_mid_pct": 5,
+    "sell_strong_pct": 10,
+    "sell_weak_qty": 2,
+    "sell_mid_qty": 4,
+    "sell_strong_qty": 6,
+}
+LEGACY_DEFAULT_SIM = {
     "buy_weak": 5,
     "buy_mid": 10,
     "buy_strong": 15,
@@ -54,6 +66,26 @@ def normalize_sim(raw: dict | None) -> dict:
                 data[key] = max(0, min(100, int(raw[key])))
         except (TypeError, ValueError):
             data[key] = default
+    return data
+
+
+def _sim_same(a: dict, b: dict) -> bool:
+    left = normalize_sim(a)
+    right = normalize_sim(b)
+    for key in DEFAULT_SIM:
+        if key in SIM_QTY_KEYS:
+            if abs(float(left[key]) - float(right[key])) > 1e-9:
+                return False
+        elif int(left[key]) != int(right[key]):
+            return False
+    return True
+
+
+def migrate_sim_defaults(raw: dict | None) -> dict:
+    """예전에 저장만 된 기본값(5/10/15…)은 새 기본값으로 올린다. 직접 바꾼 값은 유지."""
+    data = normalize_sim(raw)
+    if _sim_same(data, LEGACY_DEFAULT_SIM):
+        return dict(DEFAULT_SIM)
     return data
 
 BUY_ACTIONS = ("약한 매수", "매수", "강한 매수")
