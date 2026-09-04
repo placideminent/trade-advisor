@@ -14,12 +14,18 @@ def _price_text(value: float) -> str:
     return _fmt(value)
 
 
+def _idle_drag(fig: go.Figure) -> go.Figure:
+    """드래그·터치는 아무것도 하지 않는다. 확대는 툴바 버튼을 누른 뒤에만."""
+    fig.update_layout(dragmode=False)
+    return fig
+
+
 def build_chart(an: Analysis, sig: Signal, title: str) -> go.Figure:
     df = an.df
     if df is None or df.empty:
         fig = go.Figure()
         fig.update_layout(title="데이터 없음")
-        return fig
+        return _idle_drag(fig)
 
     fig = make_subplots(
         rows=2,
@@ -222,7 +228,7 @@ def build_chart(an: Analysis, sig: Signal, title: str) -> go.Figure:
     fig.update_xaxes(title_text="", showticklabels=False, showgrid=False, zeroline=False, row=1, col=2)
     fig.update_yaxes(title_text="거래량", row=2, col=1)
     fig.update_xaxes(rangeslider_visible=False, row=1, col=1)
-    return fig
+    return _idle_drag(fig)
 
 
 def _day_bars(df: pd.DataFrame) -> dict:
@@ -247,7 +253,7 @@ def build_sim_chart(df: pd.DataFrame, marks: list[dict], title: str) -> go.Figur
     )
     if df is None or getattr(df, "empty", True):
         fig.update_layout(title="데이터 없음")
-        return fig
+        return _idle_drag(fig)
 
     fig.add_trace(
         go.Candlestick(
@@ -376,7 +382,7 @@ def build_sim_chart(df: pd.DataFrame, marks: list[dict], title: str) -> go.Figur
     )
     fig.update_yaxes(title_text="가격", row=1, col=1)
     fig.update_yaxes(title_text="거래량", row=2, col=1)
-    return fig
+    return _idle_drag(fig)
 
 
 def build_return_vs_spy_fig(
@@ -407,7 +413,7 @@ def build_return_vs_spy_fig(
         plot_bgcolor="#f8fafc",
         bargap=0.45,
     )
-    return fig
+    return _idle_drag(fig)
 
 
 def build_ticker_vs_spy_fig(names: list[str], pcts: list[float], spy_pct: float) -> go.Figure:
@@ -443,7 +449,7 @@ def build_ticker_vs_spy_fig(names: list[str], pcts: list[float], spy_pct: float)
         plot_bgcolor="#f8fafc",
         showlegend=False,
     )
-    return fig
+    return _idle_drag(fig)
 
 
 def build_plan_return_fig(names: list[str], pcts: list[float]) -> go.Figure:
@@ -470,7 +476,7 @@ def build_plan_return_fig(names: list[str], pcts: list[float]) -> go.Figure:
         plot_bgcolor="#f8fafc",
         showlegend=False,
     )
-    return fig
+    return _idle_drag(fig)
 
 
 def build_pnl_split_fig(realized: float, m2m: float, title: str = "손익 구성") -> go.Figure:
@@ -499,4 +505,4 @@ def build_pnl_split_fig(realized: float, m2m: float, title: str = "손익 구성
         plot_bgcolor="#f8fafc",
         bargap=0.45,
     )
-    return fig
+    return _idle_drag(fig)

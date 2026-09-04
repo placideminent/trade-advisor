@@ -1188,6 +1188,29 @@ def _preset_label(code: str, name: str) -> str:
     return f"{name} ({code})"
 
 
+PLOTLY_CONFIG = {
+    "displayModeBar": True,
+    "displaylogo": False,
+    "responsive": True,
+    "scrollZoom": False,
+    "doubleClick": "reset",
+    "modeBarButtonsToRemove": ["lasso2d", "select2d"],
+}
+
+
+def _show_chart(fig) -> None:
+    """기본은 드래그·터치로 확대되지 않고, 툴바 확대 버튼을 누른 뒤에만 확대된다."""
+    try:
+        fig.update_layout(dragmode=False)
+    except Exception:
+        pass
+    kw = dict(use_container_width=True, config=PLOTLY_CONFIG)
+    try:
+        st.plotly_chart(fig, on_select="ignore", **kw)
+    except TypeError:
+        st.plotly_chart(fig, **kw)
+
+
 def _show_table(df: pd.DataFrame) -> None:
     if df is None or getattr(df, "empty", True):
         return
@@ -1609,7 +1632,7 @@ def _show_spy_compare(results: list, start: date, end: date, overall_pct: float 
         beat = "지수보다 나음" if has and overall_pct >= spy_pct else "지수보다 못함"
         st.metric("상대평가", beat if has else "-", border=True)
     if has:
-        st.plotly_chart(build_return_vs_spy_fig(overall_pct, spy_pct, "전략" if len(ok) != 1 else (ok[0].name or "전략")))
+        _show_chart(build_return_vs_spy_fig(overall_pct, spy_pct, "전략" if len(ok) != 1 else (ok[0].name or "전략")))
     if len(ok) > 1:
         names, pcts = [], []
         for result in ok:
@@ -1617,7 +1640,7 @@ def _show_spy_compare(results: list, start: date, end: date, overall_pct: float 
             names.append(str(result.name or result.ticker))
             pcts.append(pct)
         if names:
-            st.plotly_chart(build_ticker_vs_spy_fig(names, pcts, spy_pct))
+            _show_chart(build_ticker_vs_spy_fig(names, pcts, spy_pct))
     st.caption(
         f"{start} ~ {end} SPY(SPDR S&P 500 ETF)를 기간 첫날 사서 끝날까지 보유한 수익률과 비교합니다. "
         "여러 종목일 때 전체 수익률은 설정한 비중으로 종목 수익률을 가중 평균합니다."
@@ -1675,13 +1698,12 @@ def _show_sim_result(result, *, with_spy: bool = True) -> None:
         ]
     chart_df = getattr(result, "chart_df", None)
     if chart_df is not None and not getattr(chart_df, "empty", True):
-        st.plotly_chart(
+        _show_chart(
             build_sim_chart(
                 chart_df,
                 marks,
                 f"{result.name} · {result.start} ~ {result.end}",
-            ),
-            use_container_width=True,
+            )
         )
         st.caption("초록 ▲ 매수 신호 · 빨강 ▼ 매도 신호. 약한/보통/강할수록 마커가 큽니다.")
     else:
@@ -1759,7 +1781,7 @@ def _show_sim_favorites(results: list) -> None:
     st.caption("전체 수익률은 종목별 수익률을 왼쪽에서 정한 비중으로 가중 평균한 값입니다. 손익 금액은 넣지 않습니다.")
     _show_table(pd.DataFrame(rows))
     if names:
-        st.plotly_chart(build_plan_return_fig(names, pcts))
+        _show_chart(build_plan_return_fig(names, pcts))
     starts = [r.start for r in results if getattr(r, "start", None)]
     ends = [r.end for r in results if getattr(r, "end", None)]
     if starts and ends:
@@ -2496,11 +2518,7 @@ last_txt = (
     else str(analysis.last_bar.date())
 )
 title = f"{meta.get('name', ticker)} ({meta.get('ticker', ticker)})  ·  {bar_name}  ·  {analysis.price_label} {_fmt(analysis.price)}"
-st.plotly_chart(
-    build_chart(analysis, signal, title),
-    use_container_width=True,
-    config={"displayModeBar": False, "responsive": True},
-)
+_show_chart(build_chart(analysis, signal, title))
 
 st.caption(
     f"데이터: {meta.get('source')} · {bar_name} · "
