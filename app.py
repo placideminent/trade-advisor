@@ -305,7 +305,7 @@ def _init_rule_widgets() -> None:
             pass
         st.session_state._cuts_split_v60 = True
     for key, default in DEFAULT_SIM.items():
-        st.session_state.setdefault(f"s_{key}", float(default) if key in SIM_QTY_KEYS else int(default))
+        st.session_state.setdefault(f"s_{key}", int(default))
     st.session_state.setdefault("sim_eval_mode", "기존 규칙만")
 
 
@@ -334,23 +334,43 @@ def _read_sim_from_sidebar() -> dict:
 
 def _reset_sim_widgets() -> None:
     for key, default in DEFAULT_SIM.items():
-        st.session_state[f"s_{key}"] = float(default) if key in SIM_QTY_KEYS else int(default)
+        st.session_state[f"s_{key}"] = int(default)
 
 
 def _fav_sim_prefix(market: str, ticker: str) -> str:
     return f"sf_{market}_{ticker}_"
 
 
+def _sim_qty_cast(value, key: str, *, crypto: bool):
+    default = DEFAULT_SIM[key]
+    try:
+        num = float(value)
+    except (TypeError, ValueError):
+        num = float(default)
+    if num < 0:
+        num = 0.0
+    if crypto:
+        return round(num, 5)
+    if key in SIM_QTY_KEYS:
+        return int(num)
+    return int(min(100, num))
+
+
+def _prime_sim_qty_widgets(prefix: str, *, crypto: bool) -> None:
+    """칸이 비거나 타입 때문에 0으로 보이지 않게, 위젯 전에 기본값·형을 맞춘다."""
+    for key, default in DEFAULT_SIM.items():
+        sk = f"{prefix}{key}"
+        raw = st.session_state.get(sk, default)
+        st.session_state[sk] = _sim_qty_cast(raw, key, crypto=crypto)
+    if all(float(st.session_state.get(f"{prefix}{k}") or 0) == 0 for k in DEFAULT_SIM):
+        for key, default in DEFAULT_SIM.items():
+            st.session_state[f"{prefix}{key}"] = _sim_qty_cast(default, key, crypto=crypto)
+
+
 def _sim_qty_fields(prefix: str, *, crypto: bool = False) -> None:
+    _prime_sim_qty_widgets(prefix, crypto=crypto)
     unit = "수량" if crypto else "주"
     if crypto:
-        for key in SIM_QTY_KEYS:
-            sk = f"{prefix}{key}"
-            if sk in st.session_state:
-                try:
-                    st.session_state[sk] = float(st.session_state[sk])
-                except (TypeError, ValueError):
-                    pass
         qty_kw = {"min_value": 0.0, "max_value": 1_000_000.0, "step": 0.00001, "format": "%.5f"}
         cut_kw = {"min_value": 0.0, "max_value": 1_000_000.0, "step": 0.00001, "format": "%.5f"}
         sell_kw = {"min_value": 0.0, "max_value": 1_000_000.0, "step": 0.00001, "format": "%.5f"}
@@ -410,6 +430,34 @@ def _cut_group_inputs(prefix: str, heading: str) -> None:
             )
 
 
+def _fav_weight_key(item: dict) -> str:
+    return f"plan_w_{item['market']}_{item['ticker']}"
+
+
+def _fav_input_weight(item: dict) -> float:
+    k = _fav_row_key(item["market"], item["ticker"])
+    sk = _fav_weight_key(item)
+    raw = st.session_state.get(sk)
+    if raw is None:
+        raw = (st.session_state.get("fav_weights") or {}).get(k, 0)
+    try:
+        return max(0.0, float(raw or 0))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _favs_for_sim(favs: list) -> tuple[list, int]:
+    """비중 0 종목은 계산하지 않는다. 전부 0이면 예전처럼 균등 비중으로 모두 돌린다."""
+    if not favs:
+        return [], 0
+    weights = [_fav_input_weight(item) for item in favs]
+    total = sum(weights)
+    if total <= 0:
+        return list(favs), 0
+    picked = [item for item, w in zip(favs, weights) if w > 0]
+    return picked, len(favs) - len(picked)
+
+
 def _render_fav_weight_inputs(caption: str) -> None:
     favs_now = _fav_list()
     saved_w = dict(st.session_state.get("fav_weights") or {})
@@ -417,9 +465,6 @@ def _render_fav_weight_inputs(caption: str) -> None:
         if not favs_now:
             st.caption("즐겨찾기가 없습니다. 종목 분석에서 별표로 넣으세요.")
             return
-        st.caption(caption)
-        wsum = 0.0
-        new_w = {}
         saved_total = 0.0
         for v in saved_w.values():
             try:
@@ -429,7 +474,7 @@ def _render_fav_weight_inputs(caption: str) -> None:
         even = round(100.0 / max(len(favs_now), 1), 1) if saved_total <= 0 else 0.0
         for item in favs_now:
             k = _fav_row_key(item["market"], item["ticker"])
-            sk = f"plan_w_{item['market']}_{item['ticker']}"
+            sk = _fav_weight_key(item)
             if sk not in st.session_state:
                 try:
                     st.session_state[sk] = float(saved_w.get(k) or 0)
@@ -437,16 +482,23 @@ def _render_fav_weight_inputs(caption: str) -> None:
                     st.session_state[sk] = 0.0
                 if float(st.session_state[sk] or 0) <= 0 and even:
                     st.session_state[sk] = even
+        sum_box = st.empty()
+        st.caption(caption)
+        st.caption("비중이 0인 종목은 시뮬레이션에서 빼 둡니다.")
+        new_w = {}
+        wsum = 0.0
+        for item in favs_now:
+            k = _fav_row_key(item["market"], item["ticker"])
             val = st.number_input(
                 f"{item.get('name') or item['ticker']} ({item['ticker']})",
                 min_value=0.0,
                 max_value=100.0,
                 step=1.0,
-                key=sk,
+                key=_fav_weight_key(item),
             )
             new_w[k] = float(val or 0)
             wsum += float(val or 0)
-        st.caption(f"비중 합계 {wsum:.1f}%")
+        sum_box.markdown(f"### 비중 합계 {wsum:.1f}%")
         st.session_state.fav_weights = new_w
 
 
@@ -509,7 +561,8 @@ def _init_fav_sim_widgets(global_sim: dict) -> None:
                 continue
             if src and key in src:
                 try:
-                    st.session_state[sk] = float(src[key]) if key in SIM_QTY_KEYS else int(src[key])
+                    crypto = item.get("market") == "CRYPTO"
+                    st.session_state[sk] = _sim_qty_cast(src[key], key, crypto=crypto)
                     continue
                 except (TypeError, ValueError):
                     pass
@@ -534,14 +587,16 @@ def _copy_global_sim_to_favs() -> None:
     global_sim = _read_sim_from_sidebar()
     for item in _fav_list():
         prefix = _fav_sim_prefix(item["market"], item["ticker"])
+        crypto = item.get("market") == "CRYPTO"
         for key, val in global_sim.items():
-            st.session_state[f"{prefix}{key}"] = val
+            st.session_state[f"{prefix}{key}"] = _sim_qty_cast(val, key, crypto=crypto)
 
 
 def _reset_one_fav_sim(market: str, ticker: str) -> None:
     prefix = _fav_sim_prefix(market, ticker)
+    crypto = str(market or "").upper() == "CRYPTO"
     for key, default in DEFAULT_SIM.items():
-        st.session_state[f"{prefix}{key}"] = default
+        st.session_state[f"{prefix}{key}"] = _sim_qty_cast(default, key, crypto=crypto)
 
 
 ACTION_CLASS = {
@@ -725,7 +780,7 @@ def _apply_loaded_prefs(loaded: dict) -> None:
     st.session_state._cuts_split_v60 = True
     sim = migrate_sim_defaults(loaded.get("sim") or {})
     for key, default in DEFAULT_SIM.items():
-        st.session_state[f"s_{key}"] = float(sim.get(key, default)) if key in SIM_QTY_KEYS else int(sim.get(key, default))
+        st.session_state[f"s_{key}"] = _sim_qty_cast(sim.get(key, default), key, crypto=False)
     st.session_state.sim_eval_mode = "옵션 월 포함" if loaded.get("sim_options") else "기존 규칙만"
     st.session_state.favorites = list(loaded.get("favorites") or [])
     fav_w = loaded.get("fav_weights") if isinstance(loaded.get("fav_weights"), dict) else {}
@@ -1755,15 +1810,20 @@ def _render_simulation(
         if not favs:
             st.info("아직 즐겨찾기한 종목이 없습니다. 종목 분석 화면에서 별표로 추가하세요.")
             return
+        sim_favs, skipped = _favs_for_sim(favs)
+        skip_txt = f" · 비중 0인 {skipped}종목 제외" if skipped else ""
         st.write(
-            f"**즐겨찾기 {len(favs)}종목** · {start} ~ {end} · 조회 {lookback_label} · "
-            f"종목별 수량 · {eval_txt}"
+            f"**즐겨찾기 {len(sim_favs)}종목** · {start} ~ {end} · 조회 {lookback_label} · "
+            f"종목별 수량 · {eval_txt}{skip_txt}"
         )
+        if not sim_favs:
+            st.warning("비중이 있는 종목이 없습니다. 왼쪽에서 비중을 넣은 뒤 다시 실행하세요.")
+            return
         if run:
             bar = st.progress(0, text="즐겨찾기 시뮬레이션 중...")
             out = []
-            n_fav = len(favs)
-            for i, item in enumerate(favs):
+            n_fav = len(sim_favs)
+            for i, item in enumerate(sim_favs):
                 name = item.get("name") or item.get("ticker")
                 item_sim = normalize_sim(item.get("sim") or sim)
                 if i:

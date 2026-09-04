@@ -86,6 +86,8 @@ def migrate_sim_defaults(raw: dict | None) -> dict:
     data = normalize_sim(raw)
     if _sim_same(data, LEGACY_DEFAULT_SIM):
         return dict(DEFAULT_SIM)
+    if isinstance(raw, dict) and raw and all(float(data.get(k) or 0) == 0 for k in DEFAULT_SIM):
+        return dict(DEFAULT_SIM)
     return data
 
 BUY_ACTIONS = ("약한 매수", "매수", "강한 매수")
