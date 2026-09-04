@@ -60,7 +60,7 @@ def resolve_lookback(label) -> dict:
         else:
             tf = "1d"
         return {"days": spec, "timeframe": tf}
-    return LOOKBACK_OPTIONS["1년"]
+    return LOOKBACK_OPTIONS["6개월"]
 
 MARKETS = {
     "한국 주식": "KR",

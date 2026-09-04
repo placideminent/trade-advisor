@@ -1161,9 +1161,77 @@ st.markdown(
         .proposal-action { font-size: 1.12rem; }
         .proposal-price { font-size: 1.45rem; }
       }
+      .stPlotlyChart,
+      .stPlotlyChart .js-plotly-plot,
+      .stPlotlyChart .plotly,
+      .stPlotlyChart .svg-container,
+      .stPlotlyChart .draglayer,
+      .stPlotlyChart .overlay,
+      .stPlotlyChart .nsewdrag,
+      .stPlotlyChart .nsdrag,
+      .stPlotlyChart .ewdrag,
+      .stPlotlyChart .nwdrag,
+      .stPlotlyChart .nedrag,
+      .stPlotlyChart .swdrag,
+      .stPlotlyChart .sedrag,
+      .stPlotlyChart .cursor-crosshair,
+      .stPlotlyChart .cursor-ew-resize,
+      .stPlotlyChart .cursor-ns-resize {
+        touch-action: pan-y !important;
+      }
     </style>
     """,
     unsafe_allow_html=True,
+)
+
+components.html(
+    """
+<script>
+(function() {
+  var doc;
+  try { doc = window.parent && window.parent.document ? window.parent.document : document; }
+  catch (e) { return; }
+  function zooming(plot) {
+    var active = plot.querySelector(".modebar-btn.active");
+    if (!active) return false;
+    var title = (
+      active.getAttribute("data-title") ||
+      active.getAttribute("data-attr") ||
+      active.getAttribute("aria-label") ||
+      ""
+    ).toLowerCase();
+    return /zoom|pan|확대|이동/.test(title);
+  }
+  function apply() {
+    var coarse = false;
+    try {
+      coarse = !!(window.parent || window).matchMedia &&
+        (window.parent || window).matchMedia("(pointer: coarse)").matches;
+    } catch (e) {}
+    doc.querySelectorAll(".js-plotly-plot").forEach(function(plot) {
+      var capture = zooming(plot);
+      plot.querySelectorAll(".nsewdrag,.draglayer,.overlay").forEach(function(el) {
+        el.style.setProperty("touch-action", capture ? "none" : "pan-y", "important");
+        if (coarse) {
+          el.style.setProperty("pointer-events", capture ? "all" : "none", "important");
+        }
+      });
+    });
+  }
+  try {
+    new MutationObserver(apply).observe(doc.body, {
+      subtree: true,
+      childList: true,
+      attributes: true,
+      attributeFilter: ["class"],
+    });
+  } catch (e) {}
+  apply();
+  setInterval(apply, 1000);
+})();
+</script>
+    """,
+    height=0,
 )
 
 st.title("자산 트레이드 분석기")
@@ -2108,11 +2176,11 @@ with st.sidebar:
         )
     lookback_keys = list(LOOKBACK_OPTIONS.keys())
     if page == "시뮬레이션":
-        lb_key = "lookback_sim"
-        lb_default = "3개월"
+        lb_key = "lookback_sim_v3"
+        lb_default = "6개월"
     else:
-        lb_key = "lookback_v2"
-        lb_default = "1년"
+        lb_key = "lookback_v3"
+        lb_default = "6개월"
     if st.session_state.get(lb_key) not in lookback_keys:
         st.session_state.pop(lb_key, None)
     lookback_label = st.selectbox(
