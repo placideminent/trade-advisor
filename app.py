@@ -962,11 +962,8 @@ def _remove_fav(market: str, ticker: str) -> None:
 
 from src.universe import (
     CRYPTO,
-    KR_PRESETS,
     LOOKBACK_OPTIONS,
     MARKETS,
-    US_PRESETS,
-    crypto_choices,
     resolve_lookback,
 )
 
@@ -1252,8 +1249,18 @@ if st.session_state.get("_prefs_await_ls"):
         st.rerun()
 
 
-def _preset_label(code: str, name: str) -> str:
-    return f"{name} ({code})"
+def _fav_choice_label(item: dict) -> str:
+    ticker = str(item.get("ticker") or "")
+    name = str(item.get("name") or ticker).strip()
+    if not name or name.upper() == ticker.upper():
+        return ticker
+    if ticker and ticker in name:
+        return name
+    return f"{name} ({ticker})"
+
+
+def _favs_in_market(market: str) -> list[dict]:
+    return [f for f in _fav_list() if str(f.get("market") or "") == market]
 
 
 PLOTLY_CONFIG = {
@@ -2022,14 +2029,19 @@ def _apply_analysis_jump() -> None:
         if code == market:
             st.session_state.market_pick = label
             break
-    if market == "KR":
-        preset_map = {_preset_label(c, n): c for c, n in KR_PRESETS}
-        reverse = {code: lab for lab, code in preset_map.items()}
-        if ticker in reverse:
-            st.session_state.kr_preset = reverse[ticker]
-            st.session_state.kr_search = ""
-        else:
-            st.session_state.kr_search = ticker
+    pick_key = f"fav_pick_{market}"
+    fav_lab = ""
+    for item in _favs_in_market(market):
+        if str(item.get("ticker") or "") == ticker:
+            fav_lab = _fav_choice_label(item)
+            break
+    if fav_lab:
+        st.session_state[pick_key] = fav_lab
+        st.session_state.kr_search = ""
+        st.session_state.us_custom = ""
+        st.session_state.crypto_custom = ""
+    elif market == "KR":
+        st.session_state.kr_search = ticker
     elif market == "US":
         st.session_state.us_custom = ticker
     else:
@@ -2081,54 +2093,50 @@ with st.sidebar:
     market = "KR"
     ticker = ""
     display_name = ""
+    hypo_px = 0.0
     if pick_one:
         market_label = st.radio("시장", list(MARKETS.keys()), horizontal=False, key="market_pick")
         market = MARKETS[market_label]
-
-    if pick_one and market == "KR":
-        preset_map = {_preset_label(c, n): c for c, n in KR_PRESETS}
-        choice = st.selectbox("대표 종목", list(preset_map.keys()), key="kr_preset")
-        query = st.text_input("종목명 또는 코드 검색", placeholder="예: 삼성전자, 005930", key="kr_search")
-        if query.strip():
-            try:
-                hits = search_kr(query.strip())
-            except Exception as exc:
-                st.warning(f"종목 검색 실패: {exc}")
-                hits = pd.DataFrame()
-            if hits is not None and not hits.empty:
-                options = [f"{r.Name} ({r.Code})" for r in hits.itertuples()]
-                picked = st.selectbox("검색 결과", options)
-                ticker = picked.split("(")[-1].rstrip(")")
-                display_name = picked
-            else:
-                st.info("검색 결과가 없습니다. 대표 종목을 사용합니다.")
-                ticker = preset_map[choice]
-                display_name = choice
+        fav_items = _favs_in_market(market)
+        pick_key = f"fav_pick_{market}"
+        if fav_items:
+            labels = [_fav_choice_label(it) for it in fav_items]
+            if st.session_state.get(pick_key) not in labels:
+                st.session_state.pop(pick_key, None)
+            choice = st.selectbox("즐겨찾기", labels, key=pick_key)
+            for item, lab in zip(fav_items, labels):
+                if lab == choice:
+                    ticker = str(item.get("ticker") or "")
+                    display_name = str(item.get("name") or ticker)
+                    break
         else:
-            ticker = preset_map[choice]
-            display_name = choice
-    elif pick_one and market == "US":
-        preset_map = {_preset_label(c, n): c for c, n in US_PRESETS}
-        choice = st.selectbox("대표 종목", list(preset_map.keys()), key="us_preset")
-        custom = st.text_input("티커 직접 입력", placeholder="예: AAPL, NVDA", key="us_custom")
-        if custom.strip():
-            ticker = custom.strip().upper()
-            display_name = ticker
+            st.caption("이 시장 즐겨찾기가 없습니다. 아래에서 검색하거나 직접 입력하세요.")
+        if market == "KR":
+            query = st.text_input("종목명 또는 코드 검색", placeholder="예: 삼성전자, 005930", key="kr_search")
+            if query.strip():
+                try:
+                    hits = search_kr(query.strip())
+                except Exception as exc:
+                    st.warning(f"종목 검색 실패: {exc}")
+                    hits = pd.DataFrame()
+                if hits is not None and not hits.empty:
+                    options = [f"{r.Name} ({r.Code})" for r in hits.itertuples()]
+                    picked = st.selectbox("검색 결과", options)
+                    ticker = picked.split("(")[-1].rstrip(")")
+                    display_name = picked
+                else:
+                    st.info("검색 결과가 없습니다.")
+        elif market == "US":
+            custom = st.text_input("티커 직접 입력", placeholder="예: AAPL, NVDA", key="us_custom")
+            if custom.strip():
+                ticker = custom.strip().upper()
+                display_name = ticker
         else:
-            ticker = preset_map[choice]
-            display_name = choice
-    elif pick_one:
-        cmap = {label: key for key, label in crypto_choices()}
-        labels = [label for _, label in crypto_choices()]
-        choice = st.selectbox("코인", labels, index=0, key="crypto_preset")
-        custom = st.text_input("심볼 직접 입력", placeholder="예: BTC, ETH, ONDO", key="crypto_custom")
-        if custom.strip():
-            ticker = custom.strip().upper()
-            info = CRYPTO.get(ticker)
-            display_name = f"{info['name']} ({ticker})" if info else ticker
-        else:
-            ticker = cmap[choice]
-            display_name = choice
+            custom = st.text_input("심볼 직접 입력", placeholder="예: BTC, ETH, ONDO", key="crypto_custom")
+            if custom.strip():
+                ticker = custom.strip().upper()
+                info = CRYPTO.get(ticker)
+                display_name = f"{info['name']} ({ticker})" if info else ticker
 
     today_m = market_today(market) if pick_one else date.today()
     as_of = today_m
@@ -2174,6 +2182,24 @@ with st.sidebar:
             max_value=today_m,
             key=f"as_of_{market}",
         )
+        if page == "종목 분석":
+            if market == "CRYPTO":
+                hypo_kw = {"min_value": 0.0, "max_value": 1.0e12, "step": 0.00001, "format": "%.5f"}
+            elif market == "US":
+                hypo_kw = {"min_value": 0.0, "max_value": 1.0e12, "step": 0.01, "format": "%.2f"}
+            else:
+                hypo_kw = {"min_value": 0.0, "max_value": 1.0e12, "step": 1.0, "format": "%.0f"}
+            hypo_key = f"hypo_px_{market}"
+            st.session_state.setdefault(hypo_key, 0.0)
+            hypo_px = st.number_input(
+                "가상 현재가",
+                key=hypo_key,
+                help="0이면 실제 현재가(또는 해당일 종가)로 봅니다. 값을 넣으면 오늘 시세 구조에서 그 가격을 가정해 분석합니다.",
+                **hypo_kw,
+            )
+            if float(hypo_px or 0) > 0:
+                as_of = today_m
+                st.caption("가상 현재가가 있어 **오늘 시점**으로 분석합니다.")
     lookback_keys = list(LOOKBACK_OPTIONS.keys())
     if page == "시뮬레이션":
         lb_key = "lookback_sim_v3"
@@ -2352,8 +2378,8 @@ if not run:
     st.markdown(
         """
         #### 이 프로그램이 하는 일
-        1. 한국 주식, 미국 주식, 비트코인·이더리움·솔라나·XRP·온도 등 원하는 종목을 고릅니다.
-        2. **과거 특정 날짜**를 시점으로 넣으면 그 날 이후 시세는 보지 않습니다.
+        1. 즐겨찾기에서 종목을 고르거나, 검색·티커로 직접 넣습니다.
+        2. **과거 특정 날짜**를 시점으로 넣으면 그 날 이후 시세는 보지 않습니다. 가상 현재가를 넣으면 오늘 시점에서 그 가격을 가정해 분석합니다.
         3. 그 시점의 추세선, 지지/저항, 주요 매물대를 그린 뒤 매수·매도·홀딩을 제안합니다.
         4. 종목을 즐겨찾기에 넣으면 한 화면에서 제안만 모아 볼 수 있습니다.
         5. 시뮬레이션 화면에서 한 종목 또는 즐겨찾기 전체를 돌립니다. 즐겨찾기는 종목별 수량을 따로 저장합니다.
@@ -2394,7 +2420,19 @@ last_bar_price = float(df["close"].iloc[-1])
 spot_price = None
 spot_source = ""
 is_live = as_of == market_today(market)
-if is_live:
+hypo_on = page == "종목 분석" and float(hypo_px or 0) > 0
+live_px_shown = None
+live_src_shown = ""
+if hypo_on:
+    spot_price = float(hypo_px)
+    spot_source = "가상 현재가"
+    is_live = True
+    try:
+        live_px_shown, live_src_shown = fetch_spot_price(market, ticker)
+    except Exception:
+        live_px_shown, live_src_shown = None, ""
+    df = drop_incomplete_session(df, as_of)
+elif is_live:
     try:
         spot_price, spot_source = fetch_spot_price(market, ticker)
     except Exception:
@@ -2515,7 +2553,9 @@ with px_col:
         help=analysis.price_source or None,
         icon=":material/payments:",
     )
-    if is_live and last_bar_price and abs(float(analysis.price) - last_bar_price) > 1e-9:
+    if hypo_on and live_px_shown:
+        st.caption(f"실제 {live_src_shown or '현재가'} {_fmt(live_px_shown)}")
+    elif is_live and last_bar_price and abs(float(analysis.price) - last_bar_price) > 1e-9:
         st.caption(f"봉 {_fmt(last_bar_price)}")
 
 _kv_rows = []

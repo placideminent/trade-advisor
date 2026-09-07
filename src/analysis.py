@@ -267,7 +267,10 @@ def analyze(
     bar_close = float(last["close"])
     if spot_price is not None and spot_price > 0:
         price = float(spot_price)
-        price_label = "현재가" if live else "해당일 종가"
+        if "가상" in str(price_source or ""):
+            price_label = "가상 현재가"
+        else:
+            price_label = "현재가" if live else "해당일 종가"
     else:
         price = bar_close
         price_label = "종가"
