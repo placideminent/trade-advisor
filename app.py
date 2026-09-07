@@ -2116,7 +2116,7 @@ with st.sidebar:
             lab_map = {k: _fav_choice_label(it) for k, it in zip(keys, fav_items)}
             if st.session_state.get("fav_pick_all") not in keys:
                 st.session_state.pop("fav_pick_all", None)
-            choice = st.radio(
+            choice = st.selectbox(
                 f"즐겨찾기 ({len(fav_items)}종목)",
                 keys,
                 format_func=lambda k: lab_map.get(k, k),
