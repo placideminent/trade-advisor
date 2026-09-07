@@ -1252,15 +1252,31 @@ if st.session_state.get("_prefs_await_ls"):
 def _fav_choice_label(item: dict) -> str:
     ticker = str(item.get("ticker") or "")
     name = str(item.get("name") or ticker).strip()
+    market = str(item.get("market") or "")
+    mname = {"KR": "한국", "US": "미국", "CRYPTO": "코인"}.get(market, market)
     if not name or name.upper() == ticker.upper():
-        return ticker
-    if ticker and ticker in name:
-        return name
-    return f"{name} ({ticker})"
+        core = ticker
+    elif ticker and ticker in name:
+        core = name
+    else:
+        core = f"{name} ({ticker})"
+    return f"{mname} · {core}" if mname else core
 
 
-def _favs_in_market(market: str) -> list[dict]:
-    return [f for f in _fav_list() if str(f.get("market") or "") == market]
+def _fav_choice_key(item: dict) -> str:
+    return f"{item.get('market')}|{item.get('ticker')}"
+
+
+def _clear_custom_ticker() -> None:
+    st.session_state.kr_search = ""
+    st.session_state.us_custom = ""
+    st.session_state.crypto_custom = ""
+    raw = str(st.session_state.get("fav_pick_all") or "")
+    market = raw.split("|", 1)[0] if "|" in raw else ""
+    for label, code in MARKETS.items():
+        if code == market:
+            st.session_state.market_pick = label
+            break
 
 
 PLOTLY_CONFIG = {
@@ -2029,14 +2045,13 @@ def _apply_analysis_jump() -> None:
         if code == market:
             st.session_state.market_pick = label
             break
-    pick_key = f"fav_pick_{market}"
-    fav_lab = ""
-    for item in _favs_in_market(market):
-        if str(item.get("ticker") or "") == ticker:
-            fav_lab = _fav_choice_label(item)
+    fav_key = ""
+    for item in _fav_list():
+        if str(item.get("market") or "") == market and str(item.get("ticker") or "") == ticker:
+            fav_key = _fav_choice_key(item)
             break
-    if fav_lab:
-        st.session_state[pick_key] = fav_lab
+    if fav_key:
+        st.session_state.fav_pick_all = fav_key
         st.session_state.kr_search = ""
         st.session_state.us_custom = ""
         st.session_state.crypto_custom = ""
@@ -2095,48 +2110,62 @@ with st.sidebar:
     display_name = ""
     hypo_px = 0.0
     if pick_one:
-        market_label = st.radio("시장", list(MARKETS.keys()), horizontal=False, key="market_pick")
-        market = MARKETS[market_label]
-        fav_items = _favs_in_market(market)
-        pick_key = f"fav_pick_{market}"
+        fav_items = _fav_list()
         if fav_items:
-            labels = [_fav_choice_label(it) for it in fav_items]
-            if st.session_state.get(pick_key) not in labels:
-                st.session_state.pop(pick_key, None)
-            choice = st.selectbox("즐겨찾기", labels, key=pick_key)
-            for item, lab in zip(fav_items, labels):
-                if lab == choice:
+            keys = [_fav_choice_key(it) for it in fav_items]
+            lab_map = {k: _fav_choice_label(it) for k, it in zip(keys, fav_items)}
+            if st.session_state.get("fav_pick_all") not in keys:
+                st.session_state.pop("fav_pick_all", None)
+            choice = st.radio(
+                f"즐겨찾기 ({len(fav_items)}종목)",
+                keys,
+                format_func=lambda k: lab_map.get(k, k),
+                key="fav_pick_all",
+                on_change=_clear_custom_ticker,
+            )
+            for item, k in zip(fav_items, keys):
+                if k == choice:
+                    market = str(item.get("market") or "KR")
                     ticker = str(item.get("ticker") or "")
                     display_name = str(item.get("name") or ticker)
                     break
         else:
-            st.caption("이 시장 즐겨찾기가 없습니다. 아래에서 검색하거나 직접 입력하세요.")
-        if market == "KR":
-            query = st.text_input("종목명 또는 코드 검색", placeholder="예: 삼성전자, 005930", key="kr_search")
-            if query.strip():
-                try:
-                    hits = search_kr(query.strip())
-                except Exception as exc:
-                    st.warning(f"종목 검색 실패: {exc}")
-                    hits = pd.DataFrame()
-                if hits is not None and not hits.empty:
-                    options = [f"{r.Name} ({r.Code})" for r in hits.itertuples()]
-                    picked = st.selectbox("검색 결과", options)
-                    ticker = picked.split("(")[-1].rstrip(")")
-                    display_name = picked
-                else:
-                    st.info("검색 결과가 없습니다.")
-        elif market == "US":
-            custom = st.text_input("티커 직접 입력", placeholder="예: AAPL, NVDA", key="us_custom")
-            if custom.strip():
-                ticker = custom.strip().upper()
-                display_name = ticker
-        else:
-            custom = st.text_input("심볼 직접 입력", placeholder="예: BTC, ETH, ONDO", key="crypto_custom")
-            if custom.strip():
-                ticker = custom.strip().upper()
-                info = CRYPTO.get(ticker)
-                display_name = f"{info['name']} ({ticker})" if info else ticker
+            st.caption("즐겨찾기가 없습니다. 아래에서 검색하거나 직접 입력하세요.")
+        with st.expander("즐겨찾기 외 검색·직접 입력", expanded=not fav_items):
+            market_label = st.radio("시장", list(MARKETS.keys()), horizontal=False, key="market_pick")
+            other_market = MARKETS[market_label]
+            other_ticker = ""
+            other_name = ""
+            if other_market == "KR":
+                query = st.text_input("종목명 또는 코드 검색", placeholder="예: 삼성전자, 005930", key="kr_search")
+                if query.strip():
+                    try:
+                        hits = search_kr(query.strip())
+                    except Exception as extra:
+                        st.warning(f"종목 검색 실패: {extra}")
+                        hits = pd.DataFrame()
+                    if hits is not None and not hits.empty:
+                        options = ["{} ({})".format(r.Name, r.Code) for r in hits.itertuples()]
+                        picked = st.selectbox("검색 결과", options)
+                        other_ticker = picked.split("(")[-1].rstrip(")")
+                        other_name = picked
+                    else:
+                        st.info("검색 결과가 없습니다.")
+            elif other_market == "US":
+                custom = st.text_input("티커 직접 입력", placeholder="예: AAPL, NVDA", key="us_custom")
+                if custom.strip():
+                    other_ticker = custom.strip().upper()
+                    other_name = other_ticker
+            else:
+                custom = st.text_input("심볼 직접 입력", placeholder="예: BTC, ETH, ONDO", key="crypto_custom")
+                if custom.strip():
+                    other_ticker = custom.strip().upper()
+                    info = CRYPTO.get(other_ticker)
+                    other_name = f"{info['name']} ({other_ticker})" if info else other_ticker
+            if other_ticker:
+                market = other_market
+                ticker = other_ticker
+                display_name = other_name or other_ticker
 
     today_m = market_today(market) if pick_one else date.today()
     as_of = today_m
