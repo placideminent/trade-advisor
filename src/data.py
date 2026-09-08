@@ -357,7 +357,7 @@ def fetch_intraday_range(market: str, ticker: str, start: date, end: date) -> pd
     frames: list[pd.DataFrame] = []
     cur = start
     while cur <= end:
-        if _yahoo_blocked() and not frames:
+        if market != "CRYPTO" and _yahoo_blocked() and not frames:
             break
         nxt = min(cur + timedelta(days=55), end)
         chunk = pd.DataFrame()
@@ -383,7 +383,12 @@ def fetch_intraday_range(market: str, ticker: str, start: date, end: date) -> pd
                 key = ticker.strip().upper().replace("-USD", "").replace("USDT", "").replace("/", "")
                 info = CRYPTO.get(key)
                 symbol = info["symbol"] if info else f"{key}-USD"
-                chunk = _fetch_intraday(symbol, cur - timedelta(days=1), nxt)
+                try:
+                    chunk = _fetch_coinbase_ohlcv(key, cur - timedelta(days=1), nxt, 3600)
+                except Exception:
+                    chunk = pd.DataFrame()
+                if chunk.empty:
+                    chunk = _fetch_intraday(symbol, cur - timedelta(days=1), nxt)
         except Exception:
             chunk = pd.DataFrame()
         if not chunk.empty:
@@ -540,8 +545,8 @@ BINANCE_SYMBOLS = {
 }
 
 
-def _fetch_coinbase_daily(key: str, start: date, end: date) -> pd.DataFrame:
-    """Yahoo/CoinGecko가 막힌 코인 일봉. Streamlit Cloud(미국 IP)에서 잘 된다."""
+def _fetch_coinbase_ohlcv(key: str, start: date, end: date, granularity: int = 86400) -> pd.DataFrame:
+    """Coinbase 봉. 86400=일봉, 3600=1시간봉. 한 번에 300개까지라 구간을 나눠 받는다."""
     from time import sleep
 
     import requests
@@ -550,11 +555,12 @@ def _fetch_coinbase_daily(key: str, start: date, end: date) -> pd.DataFrame:
     product = COINBASE_PRODUCTS.get(raw) or f"{raw}-USD"
     if not raw:
         return pd.DataFrame()
+    chunk_days = 280 if int(granularity) >= 86400 else 12
     recs: list[dict] = []
     cur = start
     headers = {"User-Agent": "Mozilla/5.0"}
     while cur <= end:
-        nxt = min(cur + timedelta(days=280), end)
+        nxt = min(cur + timedelta(days=chunk_days), end)
         start_iso = datetime(cur.year, cur.month, cur.day, tzinfo=timezone.utc).strftime(
             "%Y-%m-%dT%H:%M:%SZ"
         )
@@ -566,7 +572,7 @@ def _fetch_coinbase_daily(key: str, start: date, end: date) -> pd.DataFrame:
             try:
                 resp = requests.get(
                     f"https://api.exchange.coinbase.com/products/{product}/candles",
-                    params={"granularity": 86400, "start": start_iso, "end": end_iso},
+                    params={"granularity": int(granularity), "start": start_iso, "end": end_iso},
                     headers=headers,
                     timeout=20,
                 )
@@ -599,6 +605,10 @@ def _fetch_coinbase_daily(key: str, start: date, end: date) -> pd.DataFrame:
             break
         cur = nxt + timedelta(days=1)
     return _frame_from_recs(recs)
+
+
+def _fetch_coinbase_daily(key: str, start: date, end: date) -> pd.DataFrame:
+    return _fetch_coinbase_ohlcv(key, start, end, 86400)
 
 
 def _fetch_binance_daily(key: str, start: date, end: date) -> pd.DataFrame:
@@ -1158,13 +1168,15 @@ def fetch_ohlcv(
         want_intra = timeframe in ("1h", "4h")
         used_intra = False
         if want_intra:
-            df = _fetch_intraday(symbol, start, as_of)
+            df = _fetch_coinbase_ohlcv(key, start, as_of, 3600)
             if not df.empty:
                 used_intra = True
-        if df.empty:
-            df = _fetch_daily(symbol, start, as_of)
-            if not df.empty:
-                meta["source"] = "Yahoo Finance"
+                meta["source"] = "Coinbase"
+            if df.empty:
+                df = _fetch_intraday(symbol, start, as_of)
+                if not df.empty:
+                    used_intra = True
+                    meta["source"] = "Yahoo Finance"
         if df.empty:
             df = _fetch_coinbase_daily(key, start, as_of)
             if not df.empty:
@@ -1173,6 +1185,10 @@ def fetch_ohlcv(
             df = _fetch_binance_daily(key, start, as_of)
             if not df.empty:
                 meta["source"] = "Binance"
+        if df.empty:
+            df = _fetch_daily(symbol, start, as_of)
+            if not df.empty:
+                meta["source"] = "Yahoo Finance"
         if df.empty:
             df = _fetch_stooq_daily(symbol, start, as_of, crypto=True)
             if not df.empty:

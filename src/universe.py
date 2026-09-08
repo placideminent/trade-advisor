@@ -12,6 +12,23 @@ CRYPTO = {
     "DOGE": {"symbol": "DOGE-USD", "name": "도지코인", "name_en": "Dogecoin"},
 }
 
+
+def crypto_key(ticker: str | None) -> str:
+    return (
+        str(ticker or "")
+        .strip()
+        .upper()
+        .replace("-USD", "")
+        .replace("USDT", "")
+        .replace("/", "")
+    )
+
+
+def is_crypto(market: str | None, ticker: str | None = None) -> bool:
+    if str(market or "").upper() == "CRYPTO":
+        return True
+    return crypto_key(ticker) in CRYPTO
+
 KR_PRESETS = [
     ("005930", "삼성전자"),
     ("000660", "SK하이닉스"),

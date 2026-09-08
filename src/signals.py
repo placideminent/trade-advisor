@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
+from .universe import is_crypto
+
 SIGNAL_RULE_VERSION = 77
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 10
@@ -382,12 +384,13 @@ def recommend(
     rule: dict | None = None,
     option_walls: dict | None = None,
     market: str | None = None,
+    ticker: str | None = None,
     df_1m=None,
     **_unused,
 ) -> Signal:
     cfg = merge_rule(rule)
     w = cfg["weights"]
-    crypto = str(market or "").upper() == "CRYPTO"
+    crypto = is_crypto(market, ticker)
     cuts = dict(cfg["cuts_crypto"] if crypto else cfg["cuts"])
     cut_kind = "코인" if crypto else "주식"
 

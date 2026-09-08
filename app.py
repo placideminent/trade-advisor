@@ -158,6 +158,7 @@ def _make_signal(
             rule=rule,
             option_walls=walls,
             market=market,
+            ticker=ticker,
             df_1m=df_1m,
         )
     except TypeError:

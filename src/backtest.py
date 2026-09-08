@@ -261,12 +261,22 @@ def run_backtest(
         df_1d = pd.DataFrame()
     df_1m_src = pd.DataFrame()
     if str(timeframe or "") != "1h" and int(lookback_days) > 60:
+        h1_start = start - timedelta(days=40)
         try:
-            df_1m_src, _ = fetch_ohlcv(
-                market, ticker, end, (end - start).days + 45, "1h"
-            )
+            df_1m_src = fetch_intraday_range(market, ticker, h1_start, end)
         except Exception:
             df_1m_src = pd.DataFrame()
+        if df_1m_src is None or df_1m_src.empty:
+            try:
+                got, meta_1m = fetch_ohlcv(
+                    market, ticker, end, (end - start).days + 45, "1h"
+                )
+                if str((meta_1m or {}).get("timeframe") or "") == "1h" and got is not None and not got.empty:
+                    df_1m_src = got
+                else:
+                    df_1m_src = pd.DataFrame()
+            except Exception:
+                df_1m_src = pd.DataFrame()
     result.name = str(meta.get("name") or ticker)
     result.ticker = str(meta.get("ticker") or ticker)
 
@@ -357,10 +367,19 @@ def run_backtest(
                 rule=rule,
                 option_walls=option_walls,
                 market=market,
+                ticker=ticker,
                 df_1m=w1m,
             )
         except TypeError:
-            sig = recommend(an, six_month_chg=chg6)
+            sig = recommend(
+                an,
+                six_month_chg=chg6,
+                lookback_days=lookback_days,
+                rule=rule,
+                market=market,
+                ticker=ticker,
+                df_1m=w1m,
+            )
 
         action = sig.action
         counts[action] = counts.get(action, 0) + 1
