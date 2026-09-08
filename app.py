@@ -84,6 +84,7 @@ from src.signals import (
     SIGNAL_RULE_VERSION,
     WEIGHT_FIELDS,
     migrate_sell_cuts,
+    migrate_stock_buy_cuts,
     period_return,
     recommend,
     _fmt,
@@ -304,6 +305,18 @@ def _init_rule_widgets() -> None:
         except Exception:
             pass
         st.session_state._cuts_split_v60 = True
+    if not st.session_state.get("_stock_buy_cuts_v78"):
+        try:
+            stock = {
+                key: int(st.session_state.get(f"c_stock_{key}", DEFAULT_CUTS_STOCK[key]))
+                for key in DEFAULT_CUTS_STOCK
+            }
+            migrate_stock_buy_cuts(stock)
+            for key, val in stock.items():
+                _safe_set_widget(f"c_stock_{key}", int(val))
+        except Exception:
+            pass
+        st.session_state._stock_buy_cuts_v78 = True
     for key, default in DEFAULT_SIM.items():
         st.session_state.setdefault(f"s_{key}", int(default))
     st.session_state.setdefault("sim_eval_mode", "기존 규칙만")
@@ -759,7 +772,8 @@ def _apply_loaded_prefs(loaded: dict) -> None:
         if key == "ma20" and val == -1:
             val = 1
         st.session_state[f"w_{key}"] = val
-    stock_cuts = loaded.get("cuts") or DEFAULT_CUTS_STOCK
+    stock_cuts = dict(loaded.get("cuts") or DEFAULT_CUTS_STOCK)
+    migrate_stock_buy_cuts(stock_cuts)
     crypto_cuts = loaded.get("cuts_crypto") or DEFAULT_CUTS_CRYPTO
     for key, default in DEFAULT_CUTS_STOCK.items():
         st.session_state[f"c_stock_{key}"] = int(stock_cuts.get(key, default))
@@ -778,6 +792,7 @@ def _apply_loaded_prefs(loaded: dict) -> None:
     st.session_state._cuts_migrated_v53 = True
     st.session_state._cuts_migrated_v58 = True
     st.session_state._cuts_split_v60 = True
+    st.session_state._stock_buy_cuts_v78 = True
     sim = migrate_sim_defaults(loaded.get("sim") or {})
     for key, default in DEFAULT_SIM.items():
         st.session_state[f"s_{key}"] = _sim_qty_cast(sim.get(key, default), key, crypto=False)

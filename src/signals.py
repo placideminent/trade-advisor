@@ -131,6 +131,23 @@ def migrate_sell_cuts(cuts: dict) -> dict:
     return cuts
 
 
+def migrate_stock_buy_cuts(cuts: dict) -> dict:
+    """예전 주식 매수 컷 65/70/75를 70/75/79로 올린다. 직접 바꾼 값은 유지."""
+    try:
+        trio = (
+            int(cuts.get("buy_weak") or 0),
+            int(cuts.get("buy_mid") or 0),
+            int(cuts.get("buy_strong") or 0),
+        )
+    except (TypeError, ValueError):
+        return cuts
+    if trio == (65, 70, 75):
+        cuts["buy_weak"] = int(DEFAULT_CUTS_STOCK["buy_weak"])
+        cuts["buy_mid"] = int(DEFAULT_CUTS_STOCK["buy_mid"])
+        cuts["buy_strong"] = int(DEFAULT_CUTS_STOCK["buy_strong"])
+    return cuts
+
+
 def _copy_cuts(src: dict | None, defaults: dict) -> dict:
     data = dict(defaults)
     if not isinstance(src, dict):
