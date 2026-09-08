@@ -260,6 +260,18 @@ def _normalize(raw: dict | None) -> dict:
         data["cuts"] = dict(DEFAULT_CUTS_STOCK)
         data["cuts_crypto"] = dict(DEFAULT_CUTS_CRYPTO)
         rule_ver = 54
+    try:
+        buy_trio = (
+            int(data["cuts"].get("buy_weak") or 0),
+            int(data["cuts"].get("buy_mid") or 0),
+            int(data["cuts"].get("buy_strong") or 0),
+        )
+    except (TypeError, ValueError):
+        buy_trio = None
+    if buy_trio == (65, 70, 75):
+        data["cuts"]["buy_weak"] = int(DEFAULT_CUTS_STOCK["buy_weak"])
+        data["cuts"]["buy_mid"] = int(DEFAULT_CUTS_STOCK["buy_mid"])
+        data["cuts"]["buy_strong"] = int(DEFAULT_CUTS_STOCK["buy_strong"])
     data["rule_ver"] = rule_ver
     data["sim"] = migrate_sim_defaults(sim)
     try:

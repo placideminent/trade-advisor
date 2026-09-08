@@ -44,9 +44,9 @@ DEFAULT_WEIGHTS = {
 }
 
 DEFAULT_CUTS_STOCK = {
-    "buy_weak": 65,
-    "buy_mid": 70,
-    "buy_strong": 75,
+    "buy_weak": 70,
+    "buy_mid": 75,
+    "buy_strong": 79,
     "sell_weak": 35,
     "sell_mid": 30,
     "sell_strong": 25,

@@ -1848,17 +1848,21 @@ def _show_sim_favorites(results: list) -> None:
                     "종목": result.name or result.ticker,
                     "시장": _market_name(market),
                     "비중%": f"{w:.1f}",
+                    "평단": "-",
                     "수익률": "-",
                     "비고": result.error,
                 }
             )
             continue
         _inv, _pnl, pct = _strategy_pnl(result)
+        avg = getattr(result, "avg", 0) or 0
+        shares = getattr(result, "shares", 0) or 0
         rows.append(
             {
                 "종목": f"{result.name} ({result.ticker})",
                 "시장": _market_name(market),
                 "비중%": f"{w:.1f}",
+                "평단": _fmt(avg) if shares else "-",
                 "수익률": f"{pct:+.2f}%",
                 "비고": "" if _inv else "매수 없음",
             }
@@ -1883,7 +1887,10 @@ def _show_sim_favorites(results: list) -> None:
             title += " · 실패"
         else:
             _inv, _pnl, pct = _strategy_pnl(result)
-            title += f" · 수익률 {pct:+.2f}%"
+            avg = getattr(result, "avg", 0) or 0
+            shares = getattr(result, "shares", 0) or 0
+            avg_txt = f" · 평단 {_fmt(avg)}" if shares else ""
+            title += f" · 수익률 {pct:+.2f}%{avg_txt}"
         with st.expander(title, expanded=False):
             _show_sim_result(result, with_spy=False)
 
