@@ -207,7 +207,7 @@ def _weight_bounds(key: str) -> tuple[int, int]:
 
 def _wkey(key: str) -> str:
     """배점 위젯 키. 설명을 바꾼 뒤 Streamlit이 예전 help를 붙이지 않게 버전을 붙인다."""
-    return f"w84_{key}"
+    return f"w85_{key}"
 
 
 def _safe_set_widget(key: str, value: int) -> None:
@@ -249,9 +249,11 @@ def _init_rule_widgets() -> None:
         except (TypeError, ValueError):
             pass
     for key, default in DEFAULT_WEIGHTS.items():
+        if key in DROPPED_WEIGHT_KEYS:
+            continue
         sk = _wkey(key)
         if sk not in st.session_state:
-            for old in (f"w82_{key}", f"w81_{key}", f"w80_{key}", f"w79_{key}", f"w_{key}"):
+            for old in (f"w84_{key}", f"w82_{key}", f"w81_{key}", f"w80_{key}", f"w79_{key}", f"w_{key}"):
                 if old in st.session_state:
                     try:
                         st.session_state[sk] = int(st.session_state[old])
@@ -274,7 +276,7 @@ def _init_rule_widgets() -> None:
             _safe_set_widget(_wkey(key), int(val))
         st.session_state._sheet_v82 = True
     for dropped in DROPPED_WEIGHT_KEYS:
-        for prefix in ("w_", "w79_", "w80_", "w81_", "w82_", "w84_"):
+        for prefix in ("w_", "w79_", "w80_", "w81_", "w82_", "w84_", "w85_"):
             st.session_state.pop(f"{prefix}{dropped}", None)
     for key, default in DEFAULT_CUTS_STOCK.items():
         sk = f"c_stock_{key}"
@@ -2442,21 +2444,25 @@ with st.sidebar:
         run_sim = st.button("시뮬레이션 실행", type="primary", width="stretch")
 
     try:
-        with st.expander("평가 배점·기준", expanded=False):
+        try:
+            rule_box = st.expander("평가 배점·기준", expanded=False, key="rule_box_v82")
+        except TypeError:
+            rule_box = st.expander("평가 배점·기준", expanded=False)
+        with rule_box:
             st.caption("합산 % 눈금(-5~19점)은 그대로 두고, 항목 점수와 매수/매도 컷만 바꿉니다. 바꾼 값은 리부트 후에도 남깁니다.")
             _cut_group_inputs("c_stock_", "매수 / 매도 기준 · 주식")
             _cut_group_inputs("c_crypto_", "매수 / 매도 기준 · 코인")
             st.markdown("**항목 배점**")
             st.caption("규칙 v82. 엑셀 점수표 기준. 상승선 상방 근접 +1, 완만·하방 이탈 −1. RSI 35/70.")
             try:
-                fields_box = st.container(key="weight_fields_v84")
+                fields_box = st.container(key="weight_fields_v85")
             except TypeError:
                 fields_box = st.container()
             with fields_box:
                 w_cols = st.columns(2)
                 ui_weights = visible_weight_fields()
                 for i, (key, label, hint) in enumerate(ui_weights):
-                    if key in DROPPED_WEIGHT_KEYS or "상승선 근접" in label:
+                    if key in DROPPED_WEIGHT_KEYS or "스윙" in key or "스윙" in label:
                         continue
                     with w_cols[i % 2]:
                         lo, hi = _weight_bounds(key)
