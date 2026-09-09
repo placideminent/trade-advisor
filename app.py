@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import copy
 import html
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, timedelta
 from functools import partial
 
@@ -31,7 +33,15 @@ from src.chart import (
     build_sim_chart,
     build_ticker_vs_spy_fig,
 )
-from src.data import drop_incomplete_session, fetch_ohlcv, fetch_spot_price, fetch_usdkrw, market_today, search_kr
+from src.data import (
+    drop_incomplete_session,
+    fetch_ohlcv,
+    fetch_spot_price,
+    fetch_usdkrw,
+    market_today,
+    reset_yahoo_gate,
+    search_kr,
+)
 from src.options import fetch_option_walls
 from src.fundamentals import fetch_fundamentals, fmt_per, fmt_pct, fmt_pp, per_gap_text
 
@@ -117,14 +127,14 @@ def _want_option_walls(market: str, as_of) -> bool:
     return day >= market_today("US") - timedelta(days=1)
 
 
-def _load_df_1m(market, ticker, as_of, lookback_days, timeframe, live=False):
+def _load_df_1m(market, ticker, as_of, lookback_days, timeframe, live=False, cached=True):
     """3개월 이상 조회에서 1개월 창은 1개월 조회와 같은 1시간봉 30일을 쓴다."""
     try:
         if lookback_days is None or int(lookback_days) <= 60:
             return None
         if str(timeframe or "") == "1h":
             return None
-        df, _meta = _load_ohlcv(market, ticker, as_of, 30, "1h", retries=1)
+        df, _meta = _load_ohlcv(market, ticker, as_of, 30, "1h", retries=1, cached=cached)
         if df is None or getattr(df, "empty", True):
             return None
         if live:
@@ -157,7 +167,10 @@ def _make_signal(
             if not as_iso:
                 as_iso = date.today().isoformat()
             if px > 0:
-                walls = _cached_option_walls(str(ticker).strip().upper(), f"{px:.4f}", as_iso)
+                try:
+                    walls = _cached_option_walls(str(ticker).strip().upper(), f"{px:.4f}", as_iso)
+                except Exception:
+                    walls = fetch_option_walls(str(ticker).strip().upper(), date.fromisoformat(as_iso), px)
         except Exception as extra:
             walls = {"error": str(extra)[:120], "soon": False}
     try:
@@ -1380,15 +1393,27 @@ def _cached_spot(market: str, ticker: str):
     return px, src
 
 
-def _load_ohlcv(market: str, ticker: str, as_of, lookback_days: int, timeframe: str, retries: int = 2):
+def _load_ohlcv(
+    market: str,
+    ticker: str,
+    as_of,
+    lookback_days: int,
+    timeframe: str,
+    retries: int = 2,
+    cached: bool = True,
+):
     last_meta = {"ticker": ticker, "name": ticker, "timeframe": timeframe}
     as_of_iso = as_of.isoformat() if hasattr(as_of, "isoformat") else str(as_of)
+    as_day = date.fromisoformat(str(as_of_iso)[:10])
     tries = 1 + max(0, int(retries))
     for i in range(tries):
         if i:
             time.sleep(min(0.8 * i, 2.4))
         try:
-            df, meta = _cached_ohlcv(market, ticker, as_of_iso, lookback_days, timeframe)
+            if cached:
+                df, meta = _cached_ohlcv(market, ticker, as_of_iso, lookback_days, timeframe)
+            else:
+                df, meta = fetch_ohlcv(market, ticker, as_day, lookback_days, timeframe)
             if df is not None and not getattr(df, "empty", True):
                 return df.copy(), dict(meta)
         except Exception:
@@ -1396,10 +1421,20 @@ def _load_ohlcv(market: str, ticker: str, as_of, lookback_days: int, timeframe: 
     return pd.DataFrame(), last_meta
 
 
-def _quick_signal(market: str, ticker: str, as_of, lookback_days: int, timeframe: str, rule: dict) -> dict:
+def _quick_signal(
+    market: str,
+    ticker: str,
+    as_of,
+    lookback_days: int,
+    timeframe: str,
+    rule: dict,
+    cached: bool = True,
+) -> dict:
     as_of = min(as_of, market_today(market))
     try:
-        df, meta = _load_ohlcv(market, ticker, as_of, lookback_days, timeframe, retries=2)
+        df, meta = _load_ohlcv(
+            market, ticker, as_of, lookback_days, timeframe, retries=2, cached=cached
+        )
         df = df.copy()
         meta = dict(meta)
         tf = str(meta.get("timeframe") or timeframe)
@@ -1413,7 +1448,10 @@ def _quick_signal(market: str, ticker: str, as_of, lookback_days: int, timeframe
     spot_source = "해당일 종가"
     if is_live:
         try:
-            live_px, live_src = _cached_spot(market, ticker)
+            if cached:
+                live_px, live_src = _cached_spot(market, ticker)
+            else:
+                live_px, live_src = fetch_spot_price(market, ticker)
         except Exception:
             live_px, live_src = None, ""
         if live_px:
@@ -1433,7 +1471,7 @@ def _quick_signal(market: str, ticker: str, as_of, lookback_days: int, timeframe
         six_month_chg = None
         try:
             src_6m = df
-            src_6m, _ = _load_ohlcv(market, ticker, as_of, 220, "1d", retries=1)
+            src_6m, _ = _load_ohlcv(market, ticker, as_of, 220, "1d", retries=1, cached=cached)
             if src_6m is None or getattr(src_6m, "empty", True):
                 src_6m = df
             six_month_chg = period_return(src_6m, as_of, spot_price, 180)
@@ -1448,7 +1486,9 @@ def _quick_signal(market: str, ticker: str, as_of, lookback_days: int, timeframe
             ticker=ticker,
             live=is_live,
             use_options=_want_option_walls(market, as_of),
-            df_1m=_load_df_1m(market, ticker, as_of, lookback_days, tf, live=is_live),
+            df_1m=_load_df_1m(
+                market, ticker, as_of, lookback_days, tf, live=is_live, cached=cached
+            ),
         )
     except Exception as extra:
         return {
@@ -1470,6 +1510,30 @@ def _quick_signal(market: str, ticker: str, as_of, lookback_days: int, timeframe
         "price_label": analysis.price_label,
         "error": None,
     }
+
+
+def _parallel_jobs(jobs: list, worker, label: str) -> list:
+    """여러 종목을 동시에 돌린다. jobs는 (표시이름, payload). 순서는 그대로 돌려준다."""
+    n = len(jobs)
+    if n == 0:
+        return []
+    out: list = [None] * n
+    bar = st.progress(0, text=label)
+    workers = min(8, max(1, n))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futs = {pool.submit(worker, payload): i for i, (_name, payload) in enumerate(jobs)}
+        done = 0
+        for fut in as_completed(futs):
+            i = futs[fut]
+            name = jobs[i][0]
+            try:
+                out[i] = fut.result()
+            except Exception as extra:
+                out[i] = extra
+            done += 1
+            bar.progress(min(done / n, 1.0), text=f"{label} {done}/{n} · {name}")
+    bar.empty()
+    return out
 
 
 def _render_fav_add() -> None:
@@ -1634,28 +1698,53 @@ def _render_favorites(
         _cached_ohlcv.clear()
         _cached_spot.clear()
         _cached_option_walls.clear()
-        results = []
-        bar = st.progress(0, text="즐겨찾기 계산 중...")
-        n_fav = len(favs)
-        failed_once = False
-        for i, item in enumerate(favs, 1):
+        reset_yahoo_gate()
+        rule_c = copy.deepcopy(rule)
+        jobs = []
+        for item in favs:
             name = item.get("name") or item.get("ticker")
-            if i > 1:
-                time.sleep(1.1 if failed_once else 0.35)
-            bar.progress(i / n_fav, text=f"{name} 계산 중...")
-            row = _quick_signal(
-                item["market"],
-                item["ticker"],
-                as_of,
-                lookback_days,
-                timeframe,
-                rule,
+            jobs.append(
+                (
+                    name,
+                    {
+                        "market": item["market"],
+                        "ticker": item["ticker"],
+                        "name": name,
+                        "as_of": as_of,
+                        "lookback_days": lookback_days,
+                        "timeframe": timeframe,
+                        "rule": rule_c,
+                    },
+                )
             )
-            row["name"] = name or row.get("name") or item["ticker"]
-            if row.get("error"):
-                failed_once = True
-            results.append(row)
-        bar.empty()
+
+        def _fav_job(payload: dict) -> dict:
+            row = _quick_signal(
+                payload["market"],
+                payload["ticker"],
+                payload["as_of"],
+                payload["lookback_days"],
+                payload["timeframe"],
+                payload["rule"],
+                cached=False,
+            )
+            row["name"] = payload["name"] or row.get("name") or payload["ticker"]
+            return row
+
+        raw = _parallel_jobs(jobs, _fav_job, "즐겨찾기 계산 중")
+        results = []
+        for item, row in zip(favs, raw):
+            if isinstance(row, dict):
+                results.append(row)
+            else:
+                results.append(
+                    {
+                        "market": item["market"],
+                        "ticker": item["ticker"],
+                        "name": item.get("name") or item["ticker"],
+                        "error": str(row)[:160],
+                    }
+                )
         st.session_state[board_key] = {
             "as_of": as_of.isoformat(),
             "lookback": lookback_label,
@@ -1987,50 +2076,59 @@ def _render_simulation(
             st.warning("비중이 있는 종목이 없습니다. 왼쪽에서 비중을 넣은 뒤 다시 실행하세요.")
             return
         if run:
-            bar = st.progress(0, text="즐겨찾기 시뮬레이션 중...")
-            out = []
-            n_fav = len(sim_favs)
-            for i, item in enumerate(sim_favs):
+            reset_yahoo_gate()
+            rule_c = copy.deepcopy(rule)
+            jobs = []
+            for item in sim_favs:
                 name = item.get("name") or item.get("ticker")
-                item_sim = normalize_sim(item.get("sim") or sim)
-                if i:
-                    time.sleep(1.0)
-                def _prog(j, n, as_of, i=i, name=name, n_fav=n_fav):
-                    bar.progress(
-                        min((i + j / max(n, 1)) / max(n_fav, 1), 1.0),
-                        text=f"{name} {as_of} ({i + 1}/{n_fav})",
+                jobs.append(
+                    (
+                        name,
+                        {
+                            "market": item["market"],
+                            "ticker": item["ticker"],
+                            "name": name,
+                            "sim": normalize_sim(item.get("sim") or sim),
+                        },
                     )
-                with st.spinner(f"{name} 계산 중..."):
-                    try:
-                        result = run_backtest(
-                            item["market"],
-                            item["ticker"],
-                            start,
-                            end,
-                            lookback_days,
-                            timeframe,
-                            lookback_label,
-                            rule,
-                            item_sim,
-                            progress=_prog,
-                            use_options=use_options,
-                        )
-                    except Exception as extra:
-                        result = BacktestResult(
+                )
+
+            def _sim_job(payload: dict):
+                return run_backtest(
+                    payload["market"],
+                    payload["ticker"],
+                    start,
+                    end,
+                    lookback_days,
+                    timeframe,
+                    lookback_label,
+                    rule_c,
+                    payload["sim"],
+                    progress=None,
+                    use_options=use_options,
+                    reset_gate=False,
+                )
+
+            raw = _parallel_jobs(jobs, _sim_job, "즐겨찾기 시뮬레이션 중")
+            out = []
+            for item, result in zip(sim_favs, raw):
+                name = item.get("name") or item.get("ticker")
+                if isinstance(result, BacktestResult):
+                    if item.get("name"):
+                        result.name = item["name"]
+                    out.append(result)
+                else:
+                    out.append(
+                        BacktestResult(
                             name=name,
                             ticker=item["ticker"],
                             start=start,
                             end=end,
                             lookback_label=lookback_label,
                             market=item["market"],
-                            error=f"시세를 받지 못했습니다: {extra}",
+                            error=f"시세를 받지 못했습니다: {result}",
                         )
-                if item.get("name"):
-                    result.name = item["name"]
-                out.append(result)
-                if getattr(result, "error", None):
-                    time.sleep(2.5)
-            bar.empty()
+                    )
             st.session_state.sim_fav_results = out
             st.session_state.sim_result = None
         results = st.session_state.get("sim_fav_results")

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+from threading import Lock
 from time import monotonic
 from zoneinfo import ZoneInfo
 
@@ -156,28 +157,32 @@ def _index_naive_wall(idx) -> pd.DatetimeIndex:
 
 _yahoo_fail_streak = 0
 _yahoo_skip_until = 0.0
+_yahoo_lock = Lock()
 
 
 def _yahoo_blocked() -> bool:
-    return monotonic() < _yahoo_skip_until
+    with _yahoo_lock:
+        return monotonic() < _yahoo_skip_until
 
 
 def reset_yahoo_gate() -> None:
     """종목을 바꿀 때 Yahoo 차단을 풀어 다음 종목이 바로 건너뛰지 않게 한다."""
     global _yahoo_fail_streak, _yahoo_skip_until
-    _yahoo_fail_streak = 0
-    _yahoo_skip_until = 0.0
+    with _yahoo_lock:
+        _yahoo_fail_streak = 0
+        _yahoo_skip_until = 0.0
 
 
 def _mark_yahoo(ok: bool) -> None:
     """연속 실패면 잠시 Yahoo를 건너뛰고 FDR/Naver로 넘어가게 한다."""
     global _yahoo_fail_streak, _yahoo_skip_until
-    if ok:
-        _yahoo_fail_streak = 0
-        return
-    _yahoo_fail_streak += 1
-    if _yahoo_fail_streak >= 2:
-        _yahoo_skip_until = monotonic() + 5.0
+    with _yahoo_lock:
+        if ok:
+            _yahoo_fail_streak = 0
+            return
+        _yahoo_fail_streak += 1
+        if _yahoo_fail_streak >= 2:
+            _yahoo_skip_until = monotonic() + 5.0
 
 
 def _fetch_yf(

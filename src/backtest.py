@@ -185,6 +185,7 @@ def run_backtest(
     sim: dict | None = None,
     progress=None,
     use_options: bool = False,
+    reset_gate: bool = True,
 ) -> BacktestResult:
     sim = {**DEFAULT_SIM, **(sim or {})}
     buy_map, sell_pct, sell_fixed, share_cut = _qty_maps(sim)
@@ -201,7 +202,8 @@ def run_backtest(
         return result
 
     span = max((end - start).days, 1) + int(lookback_days) + 30
-    reset_yahoo_gate()
+    if reset_gate:
+        reset_yahoo_gate()
     df_main = pd.DataFrame()
     meta: dict = {"ticker": ticker, "name": ticker}
     notes: list[str] = []
