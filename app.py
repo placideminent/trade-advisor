@@ -103,7 +103,7 @@ from src.signals import (
     DEFAULT_WEIGHTS,
     SIGNAL_RULE_VERSION,
     DROPPED_WEIGHT_KEYS,
-    WEIGHT_FIELDS,
+    visible_weight_fields,
     migrate_sell_cuts,
     migrate_stock_buy_cuts,
     period_return,
@@ -206,7 +206,7 @@ def _weight_bounds(key: str) -> tuple[int, int]:
 
 def _wkey(key: str) -> str:
     """배점 위젯 키. 설명을 바꾼 뒤 Streamlit이 예전 help를 붙이지 않게 버전을 붙인다."""
-    return f"w80_{key}"
+    return f"w81_{key}"
 
 
 def _safe_set_widget(key: str, value: int) -> None:
@@ -250,7 +250,7 @@ def _init_rule_widgets() -> None:
     for key, default in DEFAULT_WEIGHTS.items():
         sk = _wkey(key)
         if sk not in st.session_state:
-            for old in (f"w79_{key}", f"w_{key}"):
+            for old in (f"w80_{key}", f"w79_{key}", f"w_{key}"):
                 if old in st.session_state:
                     try:
                         st.session_state[sk] = int(st.session_state[old])
@@ -269,9 +269,8 @@ def _init_rule_widgets() -> None:
         if val < lo or val > hi:
             _safe_set_widget(sk, int(default))
     for dropped in DROPPED_WEIGHT_KEYS:
-        st.session_state[_wkey(dropped)] = 0
-        st.session_state[f"w_{dropped}"] = 0
-        st.session_state[f"w79_{dropped}"] = 0
+        for prefix in ("w_", "w79_", "w80_", "w81_"):
+            st.session_state.pop(f"{prefix}{dropped}", None)
     for key, default in DEFAULT_CUTS_STOCK.items():
         sk = f"c_stock_{key}"
         if sk not in st.session_state:
@@ -2435,23 +2434,29 @@ with st.sidebar:
             _cut_group_inputs("c_stock_", "매수 / 매도 기준 · 주식")
             _cut_group_inputs("c_crypto_", "매수 / 매도 기준 · 코인")
             st.markdown("**항목 배점**")
-            st.caption("상승 추세선 근접·60일선 근접·1개월 상승선 근접은 삭제했습니다. 상승 추세선 이탈은 그대로입니다.")
-            st.caption("스윙 저점 근접은 +1, 스윙 고점 근접은 −1입니다. 근처 기준은 다른 근접 규칙과 같습니다.")
-            w_cols = st.columns(2)
-            ui_weights = [row for row in WEIGHT_FIELDS if row[0] not in DROPPED_WEIGHT_KEYS]
-            for i, (key, label, hint) in enumerate(ui_weights):
-                with w_cols[i % 2]:
-                    lo, hi = _weight_bounds(key)
-                    st.number_input(
-                        label,
-                        min_value=lo,
-                        max_value=hi,
-                        step=1,
-                        key=_wkey(key),
-                        help=hint,
-                    )
-                    if key in ("swing_low_near", "swing_high_near"):
-                        st.caption(hint)
+            st.caption("규칙 v80. 스윙 저점 근접 +1, 스윙 고점 근접 −1. 상승 추세선 이탈은 그대로입니다.")
+            try:
+                fields_box = st.container(key="weight_fields_v81")
+            except TypeError:
+                fields_box = st.container()
+            with fields_box:
+                w_cols = st.columns(2)
+                ui_weights = visible_weight_fields()
+                for i, (key, label, hint) in enumerate(ui_weights):
+                    if key in DROPPED_WEIGHT_KEYS or "상승선 근접" in label:
+                        continue
+                    with w_cols[i % 2]:
+                        lo, hi = _weight_bounds(key)
+                        st.number_input(
+                            label,
+                            min_value=lo,
+                            max_value=hi,
+                            step=1,
+                            key=_wkey(key),
+                            help=hint,
+                        )
+                        if key in ("swing_low_near", "swing_high_near"):
+                            st.caption(hint)
             st.button(
                 "기본값으로 되돌리기",
                 use_container_width=True,

@@ -88,7 +88,7 @@ WEIGHT_FIELDS = [
     ("swing_high_near", "스윙 고점 근접", "현재가가 조회 기간 스윙 고점 근처이면 −1"),
     ("down_line_near", "하락 추세선 근접", "현재가가 하락 추세선 근처이면 −1"),
     ("trendline_dir_down", "추세선 둘 다 하락", "상승선·하락선이 동시에 하락이면 −1"),
-    ("trendline_up_1m_down", "추세선 상승·1개월 하락", "6개월·1년 조회에서 상승선·하락선이 둘 다 상승이고, 1개월 창(1시간봉)이 하락이면 +1"),
+    ("trendline_up_1m_down", "양쪽 추세선 상승·단기하락", "6개월·1년 조회에서 상승선·하락선이 둘 다 상승이고, 1개월 창(1시간봉)이 하락이면 +1"),
     ("up_line_break", "상승 추세선 이탈", "완전 이탈 −1. 이탈 후 4봉이 지나면 무효"),
     ("support_near", "지지 근접", "근접하고 강도 4 이상일 때만 +1"),
     ("support_break", "지지 이탈", "지지 아래로 이탈"),
@@ -112,7 +112,20 @@ WEIGHT_FIELDS = [
 
 # 점수에서도, 배점 창에서도 쓰지 않음.
 DROPPED_WEIGHT_KEYS = frozenset({"up_line_near", "ma60_near", "trend_1m"})
+_HIDDEN_WEIGHT_LABELS = ("1개월 상승선 근접", "상승 추세선 근접", "60일선 근접", "60일봉 근접")
 WEIGHT_FIELDS = [row for row in WEIGHT_FIELDS if row[0] not in DROPPED_WEIGHT_KEYS]
+
+
+def visible_weight_fields() -> list[tuple[str, str, str]]:
+    """배점 창에 그릴 항목만. 삭제한 규칙 이름·키는 여기서 한 번 더 걸러 낸다."""
+    rows: list[tuple[str, str, str]] = []
+    for key, label, hint in WEIGHT_FIELDS:
+        if key in DROPPED_WEIGHT_KEYS:
+            continue
+        if any(snip in label for snip in _HIDDEN_WEIGHT_LABELS):
+            continue
+        rows.append((key, label, hint))
+    return rows
 
 _OLD_SELL_TRIOS = (
     (40, 35, 30),
