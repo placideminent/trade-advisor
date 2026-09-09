@@ -218,10 +218,10 @@ def cluster_prices(prices: list[float], threshold: float) -> list[tuple[float, i
 
 
 def long_ma_period(lookback_days: int | None) -> int:
-    """6개월(180일) 조회는 180일선, 1년은 200일선."""
+    """6개월(180일) 조회는 180일선, 1년은 300일선."""
     if lookback_days is not None and lookback_days <= 210:
         return 180
-    return 200
+    return 300
 
 
 def analyze(
@@ -252,6 +252,8 @@ def analyze(
         period = ma_long_n
         if n_daily < period and lookback_days is not None and lookback_days <= 210 and n_daily >= 80:
             period = n_daily
+        elif n_daily < period and n_daily >= 250:
+            period = n_daily
         if n_daily >= period:
             daily_ma = daily_close.rolling(period).mean()
             work["ma200"] = daily_ma.reindex(work.index, method="ffill")
@@ -260,6 +262,11 @@ def analyze(
                 ma200 = float(last_ma)
     except (TypeError, ValueError):
         ma200 = None
+    if lookback_days is not None and as_of is not None:
+        window_start = pd.Timestamp(as_of) - pd.Timedelta(days=int(lookback_days))
+        sliced = work.loc[work.index >= window_start]
+        if len(sliced) >= 9:
+            work = sliced
     work["rsi"] = rsi(work["close"])
     work["atr"] = atr(work)
 

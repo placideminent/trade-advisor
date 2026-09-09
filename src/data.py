@@ -1060,7 +1060,9 @@ def fetch_ohlcv(
         timeframe = "1d"
     interval = "1h" if timeframe in ("1h", "4h") else "1d"
     pad = 7 if timeframe in ("1h", "4h") else 10
-    start = as_of - timedelta(days=int(lookback_days * 1.2) + pad)
+    extra_ma = 220 if timeframe == "1d" and int(lookback_days) >= 300 else 0
+    hist_days = int(lookback_days) + extra_ma
+    start = as_of - timedelta(days=int(hist_days * 1.2) + pad)
     meta = {
         "market": market,
         "ticker": ticker,
@@ -1237,7 +1239,8 @@ def fetch_ohlcv(
         return df, meta
 
     cutoff = pd.Timestamp(as_of) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
-    window_start = pd.Timestamp(as_of) - pd.Timedelta(days=lookback_days)
+    extra_ma = 220 if timeframe == "1d" and int(lookback_days) >= 300 else 0
+    window_start = pd.Timestamp(as_of) - pd.Timedelta(days=int(lookback_days) + extra_ma)
     work = df.copy()
     work.index = _index_naive_wall(work.index)
     sliced = work.loc[(work.index >= window_start) & (work.index <= cutoff)]

@@ -207,7 +207,7 @@ def _weight_bounds(key: str) -> tuple[int, int]:
 
 def _wkey(key: str) -> str:
     """배점 위젯 키. 설명을 바꾼 뒤 Streamlit이 예전 help를 붙이지 않게 버전을 붙인다."""
-    return f"w82_{key}"
+    return f"w84_{key}"
 
 
 def _safe_set_widget(key: str, value: int) -> None:
@@ -251,7 +251,7 @@ def _init_rule_widgets() -> None:
     for key, default in DEFAULT_WEIGHTS.items():
         sk = _wkey(key)
         if sk not in st.session_state:
-            for old in (f"w81_{key}", f"w80_{key}", f"w79_{key}", f"w_{key}"):
+            for old in (f"w82_{key}", f"w81_{key}", f"w80_{key}", f"w79_{key}", f"w_{key}"):
                 if old in st.session_state:
                     try:
                         st.session_state[sk] = int(st.session_state[old])
@@ -269,12 +269,12 @@ def _init_rule_widgets() -> None:
             val = int(default)
         if val < lo or val > hi:
             _safe_set_widget(sk, int(default))
-    if not st.session_state.get("_return_tiers_v81"):
+    if not st.session_state.get("_sheet_v82"):
         for key, val in RETURN_TIER_DEFAULTS.items():
             _safe_set_widget(_wkey(key), int(val))
-        st.session_state._return_tiers_v81 = True
+        st.session_state._sheet_v82 = True
     for dropped in DROPPED_WEIGHT_KEYS:
-        for prefix in ("w_", "w79_", "w80_", "w81_", "w82_"):
+        for prefix in ("w_", "w79_", "w80_", "w81_", "w82_", "w84_"):
             st.session_state.pop(f"{prefix}{dropped}", None)
     for key, default in DEFAULT_CUTS_STOCK.items():
         sk = f"c_stock_{key}"
@@ -825,10 +825,10 @@ def _apply_loaded_prefs(loaded: dict) -> None:
         loaded_ver = int(loaded.get("rule_ver") or 0)
     except (TypeError, ValueError):
         loaded_ver = 0
-    if loaded_ver < 81:
+    if loaded_ver < 82:
         for key, val in RETURN_TIER_DEFAULTS.items():
             st.session_state[_wkey(key)] = int(val)
-    st.session_state._return_tiers_v81 = True
+    st.session_state._sheet_v82 = True
     stock_cuts = dict(loaded.get("cuts") or DEFAULT_CUTS_STOCK)
     migrate_stock_buy_cuts(stock_cuts)
     crypto_cuts = loaded.get("cuts_crypto") or DEFAULT_CUTS_CRYPTO
@@ -2447,9 +2447,9 @@ with st.sidebar:
             _cut_group_inputs("c_stock_", "매수 / 매도 기준 · 주식")
             _cut_group_inputs("c_crypto_", "매수 / 매도 기준 · 코인")
             st.markdown("**항목 배점**")
-            st.caption("규칙 v81. 1개월 상승 50% −1, 하락 30% +1 / 40% +2. 6개월 상승 200% −1 / 600% −2.")
+            st.caption("규칙 v82. 엑셀 점수표 기준. 상승선 상방 근접 +1, 완만·하방 이탈 −1. RSI 35/70.")
             try:
-                fields_box = st.container(key="weight_fields_v82")
+                fields_box = st.container(key="weight_fields_v84")
             except TypeError:
                 fields_box = st.container()
             with fields_box:
@@ -2469,13 +2469,15 @@ with st.sidebar:
                             help=hint,
                         )
                         if key in (
-                            "swing_low_near",
-                            "swing_high_near",
+                            "up_line_near",
+                            "up_line_break",
                             "chg1_50",
                             "chg1_down30",
                             "chg1_down40",
+                            "chg1_down50",
                             "chg6_200",
-                            "chg6_600",
+                            "chg6_500",
+                            "chg6_800",
                         ):
                             st.caption(hint)
             st.button(

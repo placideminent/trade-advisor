@@ -277,12 +277,12 @@ def _normalize(raw: dict | None) -> dict:
         data["cuts"]["buy_strong"] = int(DEFAULT_CUTS_STOCK["buy_strong"])
     for dropped in DROPPED_WEIGHT_KEYS:
         data["weights"][dropped] = 0
-    if rule_ver < 81:
+    if rule_ver < 82:
         migrate_return_tiers(data["weights"])
-        rule_ver = 81
+        rule_ver = 82
     for key, val in RETURN_TIER_DEFAULTS.items():
         data["weights"].setdefault(key, int(val))
-    data["rule_ver"] = max(rule_ver, 81)
+    data["rule_ver"] = max(rule_ver, 82)
     data["sim"] = migrate_sim_defaults(sim)
     try:
         data["sim_options"] = 1 if int(raw.get("sim_options") or 0) else 0
