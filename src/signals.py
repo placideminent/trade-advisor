@@ -107,6 +107,10 @@ WEIGHT_FIELDS = [
     ("option_wall", "옵션 월", "기존 매수/매도 이후 추가. 만기 14일 안 콜·풋월. 매도 때 근처 콜두껍/풋얇 −1, 반대 +1. 매수 때 근처 풋얇+콜두껍 −1"),
 ]
 
+# 점수에서도, 배점 창에서도 쓰지 않음.
+DROPPED_WEIGHT_KEYS = frozenset({"up_line_near", "ma60_near"})
+WEIGHT_FIELDS = [row for row in WEIGHT_FIELDS if row[0] not in DROPPED_WEIGHT_KEYS]
+
 _OLD_SELL_TRIOS = (
     (40, 35, 30),
     (35, 30, 25),

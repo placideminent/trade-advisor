@@ -102,6 +102,7 @@ from src.signals import (
     DEFAULT_CUTS_STOCK,
     DEFAULT_WEIGHTS,
     SIGNAL_RULE_VERSION,
+    DROPPED_WEIGHT_KEYS,
     WEIGHT_FIELDS,
     migrate_sell_cuts,
     migrate_stock_buy_cuts,
@@ -2418,8 +2419,10 @@ with st.sidebar:
             _cut_group_inputs("c_stock_", "매수 / 매도 기준 · 주식")
             _cut_group_inputs("c_crypto_", "매수 / 매도 기준 · 코인")
             st.markdown("**항목 배점**")
+            st.caption("상승 추세선 근접·60일선 근접은 삭제했습니다. 상승 추세선 이탈은 그대로입니다.")
             w_cols = st.columns(2)
-            for i, (key, label, hint) in enumerate(WEIGHT_FIELDS):
+            ui_weights = [row for row in WEIGHT_FIELDS if row[0] not in DROPPED_WEIGHT_KEYS]
+            for i, (key, label, hint) in enumerate(ui_weights):
                 with w_cols[i % 2]:
                     lo, hi = _weight_bounds(key)
                     st.number_input(
