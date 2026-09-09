@@ -8,7 +8,7 @@ import pandas as pd
 
 from .universe import is_crypto
 
-SIGNAL_RULE_VERSION = 82
+SIGNAL_RULE_VERSION = 83
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 10
 # 합산 %는 조회 기간과 상관없이 같은 눈금(이론상 최저~최고)을 쓴다.
@@ -23,6 +23,7 @@ DEFAULT_WEIGHTS = {
     "swing_high_near": 0,
     "down_line_near": -1,
     "trendline_dir_down": -1,
+    "trendline_dir_down_break": 1,
     "trendline_up_1m_down": 0,
     "up_line_near": 1,
     "up_line_break": -1,
@@ -38,9 +39,10 @@ DEFAULT_WEIGHTS = {
     "ma200_near": 1,
     "chg1_50": -1,
     "chg1_down1": 0,
-    "chg1_down30": 1,
-    "chg1_down40": 2,
-    "chg1_down50": 3,
+    "chg1_down10": 1,
+    "chg1_down30": 2,
+    "chg1_down40": 3,
+    "chg1_down50": 0,
     "chg6_50": 0,
     "chg6_200": -1,
     "chg6_500": -2,
@@ -88,7 +90,8 @@ WEIGHT_FIELDS = [
     ("base", "기본", "중립 시작점"),
     ("trend", "추세", "1·2개월은 상승 +, 3개월 이상은 하락 +"),
     ("down_line_near", "하락 추세선 근접", "현재가가 하락 추세선 근처이면 −1"),
-    ("trendline_dir_down", "추세선 둘 다 하락", "상승선·하락선이 동시에 하락이면 −1"),
+    ("trendline_dir_down", "둘 다 하락·하락선 근접", "상승선·하락선이 둘 다 하락이고 하락선 근처이면 −1"),
+    ("trendline_dir_down_break", "둘 다 하락·하락선 돌파", "둘 다 하락인데 하락선을 위로 돌파하면 +1"),
     ("up_line_near", "상승 추세선 근접", "상승 추세선이 상승이고 현재가가 근처이면 +1"),
     ("up_line_break", "상승 추세선 이탈", "상승선이 완만하거나 하방일 때 완전 이탈 −1"),
     ("support_near", "지지 근접", "근접하고 강도 4 이상일 때만 +1"),
@@ -101,9 +104,9 @@ WEIGHT_FIELDS = [
     ("ma20", "MA20 아래", "현재가 < MA20. 상승선 상방 +1, 하방 −1"),
     ("ma200_near", "장기 이평 근처", "6개월은 180일선, 1년은 300일선 근처이면 +1"),
     ("chg1_50", "1개월 상승 50%", "30일 전 대비 50% 이상 오르면 −1"),
-    ("chg1_down30", "1개월 하락 30%", "30일 전 대비 30% 이상 40% 미만 떨어지면 +1"),
-    ("chg1_down40", "1개월 하락 40%", "30일 전 대비 40% 이상 50% 미만 떨어지면 +2"),
-    ("chg1_down50", "1개월 하락 50%", "30일 전 대비 50% 이상 떨어지면 +3"),
+    ("chg1_down10", "1개월 하락 10%", "30일 전 대비 10% 이상 30% 미만 떨어지면 +1"),
+    ("chg1_down30", "1개월 하락 30%", "30일 전 대비 30% 이상 40% 미만 떨어지면 +2"),
+    ("chg1_down40", "1개월 하락 40%", "30일 전 대비 40% 이상 떨어지면 +3"),
     ("chg6_200", "6개월 상승 200%", "6개월 전 대비 200% 이상 500% 미만 −1 (모든 조회)"),
     ("chg6_500", "6개월 상승 500%", "6개월 전 대비 500% 이상 800% 미만 −2 (모든 조회)"),
     ("chg6_800", "6개월 상승 800%", "6개월 전 대비 800% 이상 −3 (모든 조회)"),
@@ -119,6 +122,7 @@ DROPPED_WEIGHT_KEYS = frozenset({
     "swing_high_near",
     "trendline_up_1m_down",
     "chg1_down1",
+    "chg1_down50",
     "chg6_50",
     "chg6_600",
 })
@@ -129,8 +133,10 @@ _HIDDEN_WEIGHT_LABELS = (
     "스윙 저점 근접",
     "스윙 고점 근접",
     "양쪽 추세선 상승·단기하락",
+    "추세선 둘 다 하락",
     "1개월 상승 30%",
     "1개월 하락 1%",
+    "1개월 하락 50%",
     "6개월 상승 50%",
     "6개월 상승 600%",
 )
@@ -138,9 +144,10 @@ _HIDDEN_WEIGHT_LABELS = (
 RETURN_TIER_DEFAULTS = {
     "chg1_50": -1,
     "chg1_down1": 0,
-    "chg1_down30": 1,
-    "chg1_down40": 2,
-    "chg1_down50": 3,
+    "chg1_down10": 1,
+    "chg1_down30": 2,
+    "chg1_down40": 3,
+    "chg1_down50": 0,
     "chg6_50": 0,
     "chg6_200": -1,
     "chg6_500": -2,
@@ -149,6 +156,8 @@ RETURN_TIER_DEFAULTS = {
     "swing_low_near": 0,
     "swing_high_near": 0,
     "trendline_up_1m_down": 0,
+    "trendline_dir_down": -1,
+    "trendline_dir_down_break": 1,
     "up_line_near": 1,
     "up_line_break": -1,
 }
@@ -540,8 +549,22 @@ def recommend(
 
     up_dir = _line_dir(up_line)
     down_dir = _line_dir(down_line)
-    if up_dir == "down" and down_dir == "down":
-        add("추세선 방향", "상승선·하락선 둘 다 하락", wp("trendline_dir_down"))
+    y_dn_now = None
+    if down_line:
+        y_dn_now = _line_y_at(down_line, float(down_line[2]))
+    near_dn = y_dn_now is not None and abs(price - y_dn_now) <= near
+    break_dn = y_dn_now is not None and price > y_dn_now + near
+    both_down = up_dir == "down" and down_dir == "down"
+    if both_down and near_dn:
+        add("추세선 방향", "둘 다 하락 · 하락선 근처", wp("trendline_dir_down"))
+    elif both_down and break_dn:
+        add(
+            "추세선 방향",
+            f"둘 다 하락 · 하락선 {_fmt(y_dn_now)} 상향 돌파",
+            wp("trendline_dir_down_break"),
+        )
+    elif both_down:
+        add("추세선 방향", "둘 다 하락 · 하락선 근처/돌파 아님", 0)
     elif not up_line or not down_line:
         add("추세선 방향", "상승선 또는 하락선 없음", 0)
     else:
@@ -694,12 +717,12 @@ def recommend(
         chg_pct = chg * 100.0
         if chg_pct >= 50 - 1e-9:
             add("1개월 상승률", f"{chg_pct:.1f}% (50% 이상 상승)", wp("chg1_50"))
-        elif chg_pct <= -50 + 1e-9:
-            add("1개월 하락률", f"{chg_pct:.1f}% (50% 이상 하락)", wp("chg1_down50"))
         elif chg_pct <= -40 + 1e-9:
-            add("1개월 하락률", f"{chg_pct:.1f}% (40% 이상 50% 미만 하락)", wp("chg1_down40"))
+            add("1개월 하락률", f"{chg_pct:.1f}% (40% 이상 하락)", wp("chg1_down40"))
         elif chg_pct <= -30 + 1e-9:
             add("1개월 하락률", f"{chg_pct:.1f}% (30% 이상 40% 미만 하락)", wp("chg1_down30"))
+        elif chg_pct <= -10 + 1e-9:
+            add("1개월 하락률", f"{chg_pct:.1f}% (10% 이상 30% 미만 하락)", wp("chg1_down10"))
         else:
             add("1개월 상승률", f"{chg_pct:.1f}%", 0)
 
