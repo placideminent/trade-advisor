@@ -204,6 +204,11 @@ def _weight_bounds(key: str) -> tuple[int, int]:
     return -10, 10
 
 
+def _wkey(key: str) -> str:
+    """배점 위젯 키. 설명을 바꾼 뒤 Streamlit이 예전 help를 붙이지 않게 버전을 붙인다."""
+    return f"w79_{key}"
+
+
 def _safe_set_widget(key: str, value: int) -> None:
     try:
         if key in st.session_state and st.session_state[key] == value:
@@ -243,7 +248,13 @@ def _init_rule_widgets() -> None:
         except (TypeError, ValueError):
             pass
     for key, default in DEFAULT_WEIGHTS.items():
-        sk = f"w_{key}"
+        sk = _wkey(key)
+        old = f"w_{key}"
+        if sk not in st.session_state and old in st.session_state:
+            try:
+                st.session_state[sk] = int(st.session_state[old])
+            except (TypeError, ValueError):
+                pass
         lo, hi = _weight_bounds(key)
         if sk not in st.session_state:
             st.session_state[sk] = int(default)
@@ -255,6 +266,7 @@ def _init_rule_widgets() -> None:
         if val < lo or val > hi:
             _safe_set_widget(sk, int(default))
     for dropped in ("up_line_near", "ma60_near"):
+        st.session_state[_wkey(dropped)] = 0
         st.session_state[f"w_{dropped}"] = 0
     for key, default in DEFAULT_CUTS_STOCK.items():
         sk = f"c_stock_{key}"
@@ -284,7 +296,7 @@ def _init_rule_widgets() -> None:
                 _safe_set_widget(sk, int(default))
     if not st.session_state.get("_rules_v54"):
         for key, default in DEFAULT_WEIGHTS.items():
-            _safe_set_widget(f"w_{key}", int(default))
+            _safe_set_widget(_wkey(key), int(default))
         for key, default in DEFAULT_CUTS_STOCK.items():
             _safe_set_widget(f"c_stock_{key}", int(default))
         for key, default in DEFAULT_CUTS_CRYPTO.items():
@@ -350,7 +362,7 @@ def _init_rule_widgets() -> None:
 
 
 def _read_rule_from_sidebar() -> dict:
-    weights = {key: int(st.session_state.get(f"w_{key}", default)) for key, default in DEFAULT_WEIGHTS.items()}
+    weights = {key: int(st.session_state.get(_wkey(key), default)) for key, default in DEFAULT_WEIGHTS.items()}
     cuts = {key: int(st.session_state.get(f"c_stock_{key}", default)) for key, default in DEFAULT_CUTS_STOCK.items()}
     cuts_crypto = {
         key: int(st.session_state.get(f"c_crypto_{key}", default)) for key, default in DEFAULT_CUTS_CRYPTO.items()
@@ -360,7 +372,7 @@ def _read_rule_from_sidebar() -> dict:
 
 def _reset_rule_widgets() -> None:
     for key, default in DEFAULT_WEIGHTS.items():
-        st.session_state[f"w_{key}"] = int(default)
+        st.session_state[_wkey(key)] = int(default)
     for key, default in DEFAULT_CUTS_STOCK.items():
         st.session_state[f"c_stock_{key}"] = int(default)
     for key, default in DEFAULT_CUTS_CRYPTO.items():
@@ -800,7 +812,7 @@ def _apply_loaded_prefs(loaded: dict) -> None:
             val = 1
         if key in ("up_line_near", "ma60_near"):
             val = 0
-        st.session_state[f"w_{key}"] = val
+        st.session_state[_wkey(key)] = val
     stock_cuts = dict(loaded.get("cuts") or DEFAULT_CUTS_STOCK)
     migrate_stock_buy_cuts(stock_cuts)
     crypto_cuts = loaded.get("cuts_crypto") or DEFAULT_CUTS_CRYPTO
@@ -812,7 +824,7 @@ def _apply_loaded_prefs(loaded: dict) -> None:
         st.session_state[f"c_crypto_{key}"] = int(val)
     if not st.session_state.get("_rules_v54"):
         for key, default in DEFAULT_WEIGHTS.items():
-            st.session_state[f"w_{key}"] = int(default)
+            st.session_state[_wkey(key)] = int(default)
         for key, default in DEFAULT_CUTS_STOCK.items():
             st.session_state[f"c_stock_{key}"] = int(default)
         for key, default in DEFAULT_CUTS_CRYPTO.items():
@@ -2420,6 +2432,7 @@ with st.sidebar:
             _cut_group_inputs("c_crypto_", "매수 / 매도 기준 · 코인")
             st.markdown("**항목 배점**")
             st.caption("상승 추세선 근접·60일선 근접은 삭제했습니다. 상승 추세선 이탈은 그대로입니다.")
+            st.caption("1개월 상승선 근접은 전체가 하락·횡보일 때만 +1입니다. 전체 상승이면 가점 없습니다.")
             w_cols = st.columns(2)
             ui_weights = [row for row in WEIGHT_FIELDS if row[0] not in DROPPED_WEIGHT_KEYS]
             for i, (key, label, hint) in enumerate(ui_weights):
@@ -2430,9 +2443,11 @@ with st.sidebar:
                         min_value=lo,
                         max_value=hi,
                         step=1,
-                        key=f"w_{key}",
+                        key=_wkey(key),
                         help=hint,
                     )
+                    if key == "trend_1m":
+                        st.caption(hint)
             st.button(
                 "기본값으로 되돌리기",
                 use_container_width=True,
