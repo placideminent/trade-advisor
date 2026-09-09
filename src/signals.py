@@ -8,7 +8,7 @@ import pandas as pd
 
 from .universe import is_crypto
 
-SIGNAL_RULE_VERSION = 78
+SIGNAL_RULE_VERSION = 79
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 10
 # 합산 %는 조회 기간과 상관없이 같은 눈금(이론상 최저~최고)을 쓴다.
@@ -82,7 +82,7 @@ PREV_DEFAULT_CUTS = {
 WEIGHT_FIELDS = [
     ("base", "기본", "중립 시작점"),
     ("trend", "추세", "1·2개월은 상승 +, 3개월 이상은 하락 +"),
-    ("trend_1m", "1개월 상승선 근접(장기)", "3개월 이상 조회에서 전체가 상승·횡보이고, 1개월 창(1시간봉) 상승 추세선 근처이면 +1"),
+    ("trend_1m", "1개월 상승선 근접(장기)", "3개월 이상 조회에서 전체가 하락·횡보이고, 1개월 창(1시간봉) 상승 추세선 근처이면 +1"),
     ("down_line_near", "하락 추세선 근접", "현재가가 하락 추세선 근처이면 −1"),
     ("trendline_dir_down", "추세선 둘 다 하락", "상승선·하락선이 동시에 하락이면 −1"),
     ("trendline_up_1m_down", "추세선 상승·1개월 하락", "6개월·1년 조회에서 상승선·하락선이 둘 다 상승이고, 1개월 창(1시간봉)이 하락이면 +1"),
@@ -452,12 +452,12 @@ def recommend(
             add("추세", f"하락 · 눌림 매수 가점. {an.price_label} {_fmt(price)}", trend_pts)
         else:
             add("추세", f"횡보. {an.price_label} {_fmt(price)}", 0)
-        if an.trend in ("up", "sideways"):
+        if an.trend in ("down", "sideways"):
             w1 = bars_1m()
             line_1m = _up_line_from_df(w1)
             y_1m = _line_y_at(line_1m, float(line_1m[2])) if line_1m else None
             if y_1m is not None and abs(price - y_1m) <= near:
-                kind = "상승" if an.trend == "up" else "횡보"
+                kind = "하락" if an.trend == "down" else "횡보"
                 add(
                     "추세",
                     f"전체 {kind} · {one_m_label} 상승선 {_fmt(y_1m)} 근처 (이격 {_fmt(abs(price - y_1m))})",
@@ -472,7 +472,7 @@ def recommend(
                     0,
                 )
         else:
-            add("추세", "전체 하락이라 1개월 상승선 가점 없음", 0)
+            add("추세", "전체 상승이라 1개월 상승선 가점 없음", 0)
 
     up_line = an.up_line
     down_line = an.down_line
