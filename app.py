@@ -103,6 +103,7 @@ from src.signals import (
     DEFAULT_WEIGHTS,
     SIGNAL_RULE_VERSION,
     DROPPED_WEIGHT_KEYS,
+    RETURN_TIER_DEFAULTS,
     visible_weight_fields,
     migrate_sell_cuts,
     migrate_stock_buy_cuts,
@@ -206,7 +207,7 @@ def _weight_bounds(key: str) -> tuple[int, int]:
 
 def _wkey(key: str) -> str:
     """배점 위젯 키. 설명을 바꾼 뒤 Streamlit이 예전 help를 붙이지 않게 버전을 붙인다."""
-    return f"w81_{key}"
+    return f"w82_{key}"
 
 
 def _safe_set_widget(key: str, value: int) -> None:
@@ -250,7 +251,7 @@ def _init_rule_widgets() -> None:
     for key, default in DEFAULT_WEIGHTS.items():
         sk = _wkey(key)
         if sk not in st.session_state:
-            for old in (f"w80_{key}", f"w79_{key}", f"w_{key}"):
+            for old in (f"w81_{key}", f"w80_{key}", f"w79_{key}", f"w_{key}"):
                 if old in st.session_state:
                     try:
                         st.session_state[sk] = int(st.session_state[old])
@@ -268,8 +269,12 @@ def _init_rule_widgets() -> None:
             val = int(default)
         if val < lo or val > hi:
             _safe_set_widget(sk, int(default))
+    if not st.session_state.get("_return_tiers_v81"):
+        for key, val in RETURN_TIER_DEFAULTS.items():
+            _safe_set_widget(_wkey(key), int(val))
+        st.session_state._return_tiers_v81 = True
     for dropped in DROPPED_WEIGHT_KEYS:
-        for prefix in ("w_", "w79_", "w80_", "w81_"):
+        for prefix in ("w_", "w79_", "w80_", "w81_", "w82_"):
             st.session_state.pop(f"{prefix}{dropped}", None)
     for key, default in DEFAULT_CUTS_STOCK.items():
         sk = f"c_stock_{key}"
@@ -816,6 +821,14 @@ def _apply_loaded_prefs(loaded: dict) -> None:
         if key in DROPPED_WEIGHT_KEYS:
             val = 0
         st.session_state[_wkey(key)] = val
+    try:
+        loaded_ver = int(loaded.get("rule_ver") or 0)
+    except (TypeError, ValueError):
+        loaded_ver = 0
+    if loaded_ver < 81:
+        for key, val in RETURN_TIER_DEFAULTS.items():
+            st.session_state[_wkey(key)] = int(val)
+    st.session_state._return_tiers_v81 = True
     stock_cuts = dict(loaded.get("cuts") or DEFAULT_CUTS_STOCK)
     migrate_stock_buy_cuts(stock_cuts)
     crypto_cuts = loaded.get("cuts_crypto") or DEFAULT_CUTS_CRYPTO
@@ -2434,9 +2447,9 @@ with st.sidebar:
             _cut_group_inputs("c_stock_", "매수 / 매도 기준 · 주식")
             _cut_group_inputs("c_crypto_", "매수 / 매도 기준 · 코인")
             st.markdown("**항목 배점**")
-            st.caption("규칙 v80. 스윙 저점 근접 +1, 스윙 고점 근접 −1. 상승 추세선 이탈은 그대로입니다.")
+            st.caption("규칙 v81. 1개월 상승 50% −1, 하락 30% +1 / 40% +2. 6개월 상승 200% −1 / 600% −2.")
             try:
-                fields_box = st.container(key="weight_fields_v81")
+                fields_box = st.container(key="weight_fields_v82")
             except TypeError:
                 fields_box = st.container()
             with fields_box:
@@ -2455,7 +2468,15 @@ with st.sidebar:
                             key=_wkey(key),
                             help=hint,
                         )
-                        if key in ("swing_low_near", "swing_high_near"):
+                        if key in (
+                            "swing_low_near",
+                            "swing_high_near",
+                            "chg1_50",
+                            "chg1_down30",
+                            "chg1_down40",
+                            "chg6_200",
+                            "chg6_600",
+                        ):
                             st.caption(hint)
             st.button(
                 "기본값으로 되돌리기",

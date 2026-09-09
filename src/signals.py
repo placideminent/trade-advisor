@@ -8,7 +8,7 @@ import pandas as pd
 
 from .universe import is_crypto
 
-SIGNAL_RULE_VERSION = 80
+SIGNAL_RULE_VERSION = 81
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 10
 # 합산 %는 조회 기간과 상관없이 같은 눈금(이론상 최저~최고)을 쓴다.
@@ -37,12 +37,13 @@ DEFAULT_WEIGHTS = {
     "ma60_near": 0,
     "ma200_near": 1,
     "chg1_50": -1,
-    "chg1_down1": 1,
-    "chg1_down30": 2,
-    "chg1_down40": 3,
-    "chg6_50": -1,
-    "chg6_200": -2,
-    "chg6_800": -3,
+    "chg1_down1": 0,
+    "chg1_down30": 1,
+    "chg1_down40": 2,
+    "chg6_50": 0,
+    "chg6_200": -1,
+    "chg6_600": -2,
+    "chg6_800": 0,
     "rr_penalty": -1,
     "option_wall": 1,
 }
@@ -99,20 +100,52 @@ WEIGHT_FIELDS = [
     ("rsi", "RSI", "30 이하 +, 70 이상 −"),
     ("ma20", "MA20 아래", "현재가 < MA20. 상승 +1, 하락 −1"),
     ("ma200_near", "장기 이평 근처", "6개월은 180일선, 1년은 200일선 근처이면 +1"),
-    ("chg1_50", "1개월 상승 30%", "30일 전 대비 30% 이상 오르면 −1"),
-    ("chg1_down1", "1개월 하락 1%", "30일 전 대비 1% 이상 30% 미만 떨어지면 +1"),
-    ("chg1_down30", "1개월 하락 30%", "30일 전 대비 30% 이상 40% 미만 떨어지면 +2"),
-    ("chg1_down40", "1개월 하락 40%", "30일 전 대비 40% 이상 떨어지면 +3"),
-    ("chg6_50", "6개월 상승 50%", "6개월 전 대비 50% 이상 200% 미만 −1 (모든 조회)"),
-    ("chg6_200", "6개월 상승 200%", "6개월 전 대비 200% 이상 800% 미만 −2 (모든 조회)"),
-    ("chg6_800", "6개월 상승 800%", "6개월 전 대비 800% 이상 −3 (모든 조회)"),
+    ("chg1_50", "1개월 상승 50%", "30일 전 대비 50% 이상 오르면 −1"),
+    ("chg1_down30", "1개월 하락 30%", "30일 전 대비 30% 이상 40% 미만 떨어지면 +1"),
+    ("chg1_down40", "1개월 하락 40%", "30일 전 대비 40% 이상 떨어지면 +2"),
+    ("chg6_200", "6개월 상승 200%", "6개월 전 대비 200% 이상 600% 미만 −1 (모든 조회)"),
+    ("chg6_600", "6개월 상승 600%", "6개월 전 대비 600% 이상 −2 (모든 조회)"),
     ("rr_penalty", "손익비 부족", "손익비 1.2 미만이고 점수가 높을 때"),
     ("option_wall", "옵션 월", "기존 매수/매도 이후 추가. 만기 14일 안 콜·풋월. 매도 때 근처 콜두껍/풋얇 −1, 반대 +1. 매수 때 근처 풋얇+콜두껍 −1"),
 ]
 
 # 점수에서도, 배점 창에서도 쓰지 않음.
-DROPPED_WEIGHT_KEYS = frozenset({"up_line_near", "ma60_near", "trend_1m"})
-_HIDDEN_WEIGHT_LABELS = ("1개월 상승선 근접", "상승 추세선 근접", "60일선 근접", "60일봉 근접")
+DROPPED_WEIGHT_KEYS = frozenset({
+    "up_line_near",
+    "ma60_near",
+    "trend_1m",
+    "chg1_down1",
+    "chg6_50",
+    "chg6_800",
+})
+_HIDDEN_WEIGHT_LABELS = (
+    "1개월 상승선 근접",
+    "상승 추세선 근접",
+    "60일선 근접",
+    "60일봉 근접",
+    "1개월 상승 30%",
+    "1개월 하락 1%",
+    "6개월 상승 50%",
+    "6개월 상승 800%",
+)
+
+RETURN_TIER_DEFAULTS = {
+    "chg1_50": -1,
+    "chg1_down1": 0,
+    "chg1_down30": 1,
+    "chg1_down40": 2,
+    "chg6_50": 0,
+    "chg6_200": -1,
+    "chg6_600": -2,
+    "chg6_800": 0,
+}
+
+
+def migrate_return_tiers(weights: dict) -> dict:
+    """1개월·6개월 수익률 구간 배점을 새 기본값으로 맞춘다."""
+    for key, val in RETURN_TIER_DEFAULTS.items():
+        weights[key] = int(val)
+    return weights
 WEIGHT_FIELDS = [row for row in WEIGHT_FIELDS if row[0] not in DROPPED_WEIGHT_KEYS]
 
 
@@ -692,14 +725,12 @@ def recommend(
         add("1개월 상승률", "계산 불가", 0)
     else:
         chg_pct = chg * 100.0
-        if chg_pct >= 30 - 1e-9:
-            add("1개월 상승률", f"{chg_pct:.1f}% (30% 이상 상승)", wp("chg1_50"))
+        if chg_pct >= 50 - 1e-9:
+            add("1개월 상승률", f"{chg_pct:.1f}% (50% 이상 상승)", wp("chg1_50"))
         elif chg_pct <= -40 + 1e-9:
             add("1개월 하락률", f"{chg_pct:.1f}% (40% 이상 하락)", wp("chg1_down40"))
         elif chg_pct <= -30 + 1e-9:
             add("1개월 하락률", f"{chg_pct:.1f}% (30% 이상 40% 미만 하락)", wp("chg1_down30"))
-        elif chg_pct <= -1 + 1e-9:
-            add("1개월 하락률", f"{chg_pct:.1f}% (1% 이상 30% 미만 하락)", wp("chg1_down1"))
         else:
             add("1개월 상승률", f"{chg_pct:.1f}%", 0)
 
@@ -708,12 +739,10 @@ def recommend(
         chg6 = period_return(an.df, an.as_of, price, 180)
     if chg6 is None:
         add("6개월 상승률", "6개월 전 가격 없음", 0)
-    elif chg6 >= 8.0:
-        add("6개월 상승률", f"{chg6 * 100:.1f}% (800% 이상)", wp("chg6_800"))
+    elif chg6 >= 6.0:
+        add("6개월 상승률", f"{chg6 * 100:.1f}% (600% 이상)", wp("chg6_600"))
     elif chg6 >= 2.0:
-        add("6개월 상승률", f"{chg6 * 100:.1f}% (200% 이상 800% 미만)", wp("chg6_200"))
-    elif chg6 >= 0.50:
-        add("6개월 상승률", f"{chg6 * 100:.1f}% (50% 이상 200% 미만)", wp("chg6_50"))
+        add("6개월 상승률", f"{chg6 * 100:.1f}% (200% 이상 600% 미만)", wp("chg6_200"))
     else:
         add("6개월 상승률", f"{chg6 * 100:.1f}%", 0)
 
