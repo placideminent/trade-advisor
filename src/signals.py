@@ -8,7 +8,7 @@ import pandas as pd
 
 from .universe import is_crypto
 
-SIGNAL_RULE_VERSION = 79
+SIGNAL_RULE_VERSION = 80
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 10
 # 합산 %는 조회 기간과 상관없이 같은 눈금(이론상 최저~최고)을 쓴다.
@@ -18,7 +18,9 @@ SCORE_HI = SCORE_BASE + 9  # 19
 DEFAULT_WEIGHTS = {
     "base": 10,
     "trend": 1,
-    "trend_1m": 1,
+    "trend_1m": 0,
+    "swing_low_near": 1,
+    "swing_high_near": -1,
     "down_line_near": -1,
     "trendline_dir_down": -1,
     "trendline_up_1m_down": 1,
@@ -82,7 +84,8 @@ PREV_DEFAULT_CUTS = {
 WEIGHT_FIELDS = [
     ("base", "기본", "중립 시작점"),
     ("trend", "추세", "1·2개월은 상승 +, 3개월 이상은 하락 +"),
-    ("trend_1m", "1개월 상승선 근접(장기·하락·횡보)", "3개월 이상 조회에서 전체가 하락·횡보일 때만. 1개월 창(1시간봉) 상승 추세선 근처이면 +1. 전체가 상승이면 가점 없음"),
+    ("swing_low_near", "스윙 저점 근접", "현재가가 조회 기간 스윙 저점 근처이면 +1"),
+    ("swing_high_near", "스윙 고점 근접", "현재가가 조회 기간 스윙 고점 근처이면 −1"),
     ("down_line_near", "하락 추세선 근접", "현재가가 하락 추세선 근처이면 −1"),
     ("trendline_dir_down", "추세선 둘 다 하락", "상승선·하락선이 동시에 하락이면 −1"),
     ("trendline_up_1m_down", "추세선 상승·1개월 하락", "6개월·1년 조회에서 상승선·하락선이 둘 다 상승이고, 1개월 창(1시간봉)이 하락이면 +1"),
@@ -108,7 +111,7 @@ WEIGHT_FIELDS = [
 ]
 
 # 점수에서도, 배점 창에서도 쓰지 않음.
-DROPPED_WEIGHT_KEYS = frozenset({"up_line_near", "ma60_near"})
+DROPPED_WEIGHT_KEYS = frozenset({"up_line_near", "ma60_near", "trend_1m"})
 WEIGHT_FIELDS = [row for row in WEIGHT_FIELDS if row[0] not in DROPPED_WEIGHT_KEYS]
 
 _OLD_SELL_TRIOS = (
@@ -195,6 +198,8 @@ def merge_rule(rule: dict | None) -> dict:
         elif rule.get("cuts"):
             cuts_crypto = _copy_cuts(rule.get("cuts"), DEFAULT_CUTS_CRYPTO)
             migrate_sell_cuts(cuts_crypto)
+    for key in DROPPED_WEIGHT_KEYS:
+        weights[key] = 0
     return {"weights": weights, "cuts": cuts, "cuts_crypto": cuts_crypto}
 
 from .analysis import Analysis, Level, classify_trend, find_swings, _line_through
@@ -292,6 +297,20 @@ def period_return(df, as_of, price: float, days: int = 180) -> float | None:
 
 
 UP_LINE_BREAK_BARS = 4
+
+
+def _nearest_swing_price(points, price: float) -> tuple[float, float] | None:
+    """스윙 점 목록에서 현재가에 가장 가까운 (가격, 이격)."""
+    best: tuple[float, float] | None = None
+    for item in points or []:
+        try:
+            level = float(item[1] if isinstance(item, (tuple, list)) else item)
+        except (TypeError, ValueError, IndexError):
+            continue
+        dist = abs(price - level)
+        if best is None or dist < best[1]:
+            best = (level, dist)
+    return best
 
 
 def _up_line_from_df(df) -> tuple[float, float, float, float] | None:
@@ -452,27 +471,46 @@ def recommend(
             add("추세", f"하락 · 눌림 매수 가점. {an.price_label} {_fmt(price)}", trend_pts)
         else:
             add("추세", f"횡보. {an.price_label} {_fmt(price)}", 0)
-        if an.trend in ("down", "sideways"):
-            w1 = bars_1m()
-            line_1m = _up_line_from_df(w1)
-            y_1m = _line_y_at(line_1m, float(line_1m[2])) if line_1m else None
-            if y_1m is not None and abs(price - y_1m) <= near:
-                kind = "하락" if an.trend == "down" else "횡보"
-                add(
-                    "추세",
-                    f"전체 {kind} · {one_m_label} 상승선 {_fmt(y_1m)} 근처 (이격 {_fmt(abs(price - y_1m))})",
-                    abs(wp("trend_1m")),
-                )
-            elif y_1m is None:
-                add("추세", f"{one_m_label} 상승선을 잡지 못함", 0)
-            else:
-                add(
-                    "추세",
-                    f"{one_m_label} 상승선 {_fmt(y_1m)} 과 이격 {_fmt(abs(price - y_1m))}",
-                    0,
-                )
-        else:
-            add("추세", "전체 상승이라 1개월 상승선 가점 없음", 0)
+
+    swing_highs, swing_lows = [], []
+    if an.df is not None and not getattr(an.df, "empty", True):
+        swing_highs, swing_lows = find_swings(an.df)
+    if not swing_lows:
+        swing_lows = an.swing_lows or []
+    if not swing_highs:
+        swing_highs = an.swing_highs or []
+
+    low_hit = _nearest_swing_price(swing_lows, price)
+    if not low_hit:
+        add("스윙 저점 근접", "스윙 저점 없음", 0)
+    elif low_hit[1] <= near:
+        add(
+            "스윙 저점 근접",
+            f"스윙 저점 {_fmt(low_hit[0])} 근처 (이격 {_fmt(low_hit[1])})",
+            wp("swing_low_near"),
+        )
+    else:
+        add(
+            "스윙 저점 근접",
+            f"스윙 저점 {_fmt(low_hit[0])} 과 이격 {_fmt(low_hit[1])}",
+            0,
+        )
+
+    high_hit = _nearest_swing_price(swing_highs, price)
+    if not high_hit:
+        add("스윙 고점 근접", "스윙 고점 없음", 0)
+    elif high_hit[1] <= near:
+        add(
+            "스윙 고점 근접",
+            f"스윙 고점 {_fmt(high_hit[0])} 근처 (이격 {_fmt(high_hit[1])})",
+            wp("swing_high_near"),
+        )
+    else:
+        add(
+            "스윙 고점 근접",
+            f"스윙 고점 {_fmt(high_hit[0])} 과 이격 {_fmt(high_hit[1])}",
+            0,
+        )
 
     up_line = an.up_line
     down_line = an.down_line

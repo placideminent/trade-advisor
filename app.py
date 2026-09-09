@@ -206,7 +206,7 @@ def _weight_bounds(key: str) -> tuple[int, int]:
 
 def _wkey(key: str) -> str:
     """배점 위젯 키. 설명을 바꾼 뒤 Streamlit이 예전 help를 붙이지 않게 버전을 붙인다."""
-    return f"w79_{key}"
+    return f"w80_{key}"
 
 
 def _safe_set_widget(key: str, value: int) -> None:
@@ -249,12 +249,15 @@ def _init_rule_widgets() -> None:
             pass
     for key, default in DEFAULT_WEIGHTS.items():
         sk = _wkey(key)
-        old = f"w_{key}"
-        if sk not in st.session_state and old in st.session_state:
-            try:
-                st.session_state[sk] = int(st.session_state[old])
-            except (TypeError, ValueError):
-                pass
+        if sk not in st.session_state:
+            for old in (f"w79_{key}", f"w_{key}"):
+                if old in st.session_state:
+                    try:
+                        st.session_state[sk] = int(st.session_state[old])
+                    except (TypeError, ValueError):
+                        pass
+                    else:
+                        break
         lo, hi = _weight_bounds(key)
         if sk not in st.session_state:
             st.session_state[sk] = int(default)
@@ -265,9 +268,10 @@ def _init_rule_widgets() -> None:
             val = int(default)
         if val < lo or val > hi:
             _safe_set_widget(sk, int(default))
-    for dropped in ("up_line_near", "ma60_near"):
+    for dropped in DROPPED_WEIGHT_KEYS:
         st.session_state[_wkey(dropped)] = 0
         st.session_state[f"w_{dropped}"] = 0
+        st.session_state[f"w79_{dropped}"] = 0
     for key, default in DEFAULT_CUTS_STOCK.items():
         sk = f"c_stock_{key}"
         if sk not in st.session_state:
@@ -810,7 +814,7 @@ def _apply_loaded_prefs(loaded: dict) -> None:
             val = 1
         if key == "ma20" and val == -1:
             val = 1
-        if key in ("up_line_near", "ma60_near"):
+        if key in DROPPED_WEIGHT_KEYS:
             val = 0
         st.session_state[_wkey(key)] = val
     stock_cuts = dict(loaded.get("cuts") or DEFAULT_CUTS_STOCK)
@@ -2431,8 +2435,8 @@ with st.sidebar:
             _cut_group_inputs("c_stock_", "매수 / 매도 기준 · 주식")
             _cut_group_inputs("c_crypto_", "매수 / 매도 기준 · 코인")
             st.markdown("**항목 배점**")
-            st.caption("상승 추세선 근접·60일선 근접은 삭제했습니다. 상승 추세선 이탈은 그대로입니다.")
-            st.caption("1개월 상승선 근접은 전체가 하락·횡보일 때만 +1입니다. 전체 상승이면 가점 없습니다.")
+            st.caption("상승 추세선 근접·60일선 근접·1개월 상승선 근접은 삭제했습니다. 상승 추세선 이탈은 그대로입니다.")
+            st.caption("스윙 저점 근접은 +1, 스윙 고점 근접은 −1입니다. 근처 기준은 다른 근접 규칙과 같습니다.")
             w_cols = st.columns(2)
             ui_weights = [row for row in WEIGHT_FIELDS if row[0] not in DROPPED_WEIGHT_KEYS]
             for i, (key, label, hint) in enumerate(ui_weights):
@@ -2446,7 +2450,7 @@ with st.sidebar:
                         key=_wkey(key),
                         help=hint,
                     )
-                    if key == "trend_1m":
+                    if key in ("swing_low_near", "swing_high_near"):
                         st.caption(hint)
             st.button(
                 "기본값으로 되돌리기",

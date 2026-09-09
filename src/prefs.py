@@ -25,6 +25,7 @@ from .signals import (
     DEFAULT_CUTS_CRYPTO,
     DEFAULT_CUTS_STOCK,
     DEFAULT_WEIGHTS,
+    DROPPED_WEIGHT_KEYS,
     SIGNAL_RULE_VERSION,
     _copy_cuts,
     migrate_sell_cuts,
@@ -272,9 +273,9 @@ def _normalize(raw: dict | None) -> dict:
         data["cuts"]["buy_weak"] = int(DEFAULT_CUTS_STOCK["buy_weak"])
         data["cuts"]["buy_mid"] = int(DEFAULT_CUTS_STOCK["buy_mid"])
         data["cuts"]["buy_strong"] = int(DEFAULT_CUTS_STOCK["buy_strong"])
-    data["weights"]["up_line_near"] = 0
-    data["weights"]["ma60_near"] = 0
-    data["rule_ver"] = max(rule_ver, 78)
+    for dropped in DROPPED_WEIGHT_KEYS:
+        data["weights"][dropped] = 0
+    data["rule_ver"] = max(rule_ver, 80)
     data["sim"] = migrate_sim_defaults(sim)
     try:
         data["sim_options"] = 1 if int(raw.get("sim_options") or 0) else 0
