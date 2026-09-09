@@ -357,15 +357,29 @@ def run_backtest(
         w1m = None
         if df_1m_src is not None and not df_1m_src.empty:
             w1m = _window(df_1m_src, as_of, 30)
-            if w1m is None or w1m.empty:
-                w1m = None
+        if w1m is None or getattr(w1m, "empty", True) or len(w1m) < 24:
+            try:
+                got_1m, meta_1m_day = fetch_ohlcv(market, ticker, as_of, 30, "1h")
+                if (
+                    str((meta_1m_day or {}).get("timeframe") or "") == "1h"
+                    and got_1m is not None
+                    and not got_1m.empty
+                ):
+                    w1m = got_1m
+            except Exception:
+                pass
+        if w1m is not None and getattr(w1m, "empty", True):
+            w1m = None
+        walls = None
+        if option_walls and str(market or "").upper() == "US" and as_of >= end - timedelta(days=1):
+            walls = option_walls
         try:
             sig = recommend(
                 an,
                 six_month_chg=chg6,
                 lookback_days=lookback_days,
                 rule=rule,
-                option_walls=option_walls,
+                option_walls=walls,
                 market=market,
                 ticker=ticker,
                 df_1m=w1m,

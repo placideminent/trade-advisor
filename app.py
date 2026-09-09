@@ -13,7 +13,17 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 from src.analysis import analyze
-from src.backtest import BacktestResult, DEFAULT_SIM, SIM_QTY_KEYS, migrate_sim_defaults, normalize_sim, run_backtest, spy_hold_return
+from src.backtest import (
+    BUY_ACTIONS,
+    BacktestResult,
+    DEFAULT_SIM,
+    SELL_ACTIONS,
+    SIM_QTY_KEYS,
+    migrate_sim_defaults,
+    normalize_sim,
+    run_backtest,
+    spy_hold_return,
+)
 from src.chart import (
     build_chart,
     build_plan_return_fig,
@@ -230,6 +240,8 @@ def _init_rule_widgets() -> None:
             val = int(default)
         if val < lo or val > hi:
             _safe_set_widget(sk, int(default))
+    for dropped in ("up_line_near", "ma60_near"):
+        st.session_state[f"w_{dropped}"] = 0
     for key, default in DEFAULT_CUTS_STOCK.items():
         sk = f"c_stock_{key}"
         if sk not in st.session_state:
@@ -772,6 +784,8 @@ def _apply_loaded_prefs(loaded: dict) -> None:
             val = 1
         if key == "ma20" and val == -1:
             val = 1
+        if key in ("up_line_near", "ma60_near"):
+            val = 0
         st.session_state[f"w_{key}"] = val
     stock_cuts = dict(loaded.get("cuts") or DEFAULT_CUTS_STOCK)
     migrate_stock_buy_cuts(stock_cuts)
@@ -1815,8 +1829,25 @@ def _show_sim_result(result, *, with_spy: bool = True) -> None:
         st.caption("초록 ▲ 매수 신호 · 빨강 ▼ 매도 신호. 약한/보통/강할수록 마커가 큽니다.")
     else:
         st.info("기간 차트를 그릴 일봉이 없습니다. 시뮬레이션을 다시 실행하세요.")
-    buys = [t for t in trades if str(t.get("체결")) == "매수"]
-    sells = [t for t in trades if str(t.get("체결")) in ("매도", "잔량0")]
+    fills = {str(t.get("날짜")): t for t in trades}
+
+    def _signal_rows(actions: tuple) -> list:
+        out = []
+        for s in marks:
+            if str(s.get("신호") or "") not in actions:
+                continue
+            row = dict(s)
+            fill = fills.get(str(s.get("날짜"))) or {}
+            if fill.get("체결"):
+                row["체결"] = fill.get("체결")
+                row["수량"] = fill.get("수량")
+                row["잔량"] = fill.get("잔량")
+                row["평단"] = fill.get("평단")
+            out.append(row)
+        return out
+
+    buys = _signal_rows(BUY_ACTIONS)
+    sells = _signal_rows(SELL_ACTIONS)
 
     def _trade_table(rows: list) -> pd.DataFrame:
         df_t = pd.DataFrame(rows)

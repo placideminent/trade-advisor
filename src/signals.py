@@ -8,7 +8,7 @@ import pandas as pd
 
 from .universe import is_crypto
 
-SIGNAL_RULE_VERSION = 77
+SIGNAL_RULE_VERSION = 78
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 10
 # 합산 %는 조회 기간과 상관없이 같은 눈금(이론상 최저~최고)을 쓴다.
@@ -22,7 +22,7 @@ DEFAULT_WEIGHTS = {
     "down_line_near": -1,
     "trendline_dir_down": -1,
     "trendline_up_1m_down": 1,
-    "up_line_near": 1,
+    "up_line_near": 0,
     "up_line_break": -1,
     "support_near": 1,
     "support_break": -2,
@@ -32,7 +32,7 @@ DEFAULT_WEIGHTS = {
     "vah": -1,
     "rsi": 1,
     "ma20": 1,
-    "ma60_near": 1,
+    "ma60_near": 0,
     "ma200_near": 1,
     "chg1_50": -1,
     "chg1_down1": 1,
@@ -86,7 +86,6 @@ WEIGHT_FIELDS = [
     ("down_line_near", "하락 추세선 근접", "현재가가 하락 추세선 근처이면 −1"),
     ("trendline_dir_down", "추세선 둘 다 하락", "상승선·하락선이 동시에 하락이면 −1"),
     ("trendline_up_1m_down", "추세선 상승·1개월 하락", "6개월·1년 조회에서 상승선·하락선이 둘 다 상승이고, 1개월 창(1시간봉)이 하락이면 +1"),
-    ("up_line_near", "상승 추세선 근접", "현재가가 상승 추세선 근처이면 +1"),
     ("up_line_break", "상승 추세선 이탈", "완전 이탈 −1. 이탈 후 4봉이 지나면 무효"),
     ("support_near", "지지 근접", "근접하고 강도 4 이상일 때만 +1"),
     ("support_break", "지지 이탈", "지지 아래로 이탈"),
@@ -96,7 +95,6 @@ WEIGHT_FIELDS = [
     ("vah", "VAH", "밸류 상단 위이면 −1"),
     ("rsi", "RSI", "30 이하 +, 70 이상 −"),
     ("ma20", "MA20 아래", "현재가 < MA20. 상승 +1, 하락 −1"),
-    ("ma60_near", "60일(봉)선 근처", "현재가가 60봉 이평 근처이면 +1"),
     ("ma200_near", "장기 이평 근처", "6개월은 180일선, 1년은 200일선 근처이면 +1"),
     ("chg1_50", "1개월 상승 30%", "30일 전 대비 30% 이상 오르면 −1"),
     ("chg1_down1", "1개월 하락 1%", "30일 전 대비 1% 이상 30% 미만 떨어지면 +1"),
@@ -513,19 +511,9 @@ def recommend(
     else:
         add("추세선 방향", f"상승선 {up_dir} · 하락선 {down_dir}", 0)
 
-    if not up_line:
-        add("상승 추세선 근접", "상승선 없음", 0)
-    else:
+    if up_line:
         y_up = _line_y_at(up_line, float(up_line[2]))
-        if y_up is None:
-            add("상승 추세선 근접", "상승선 위치를 계산하지 못함", 0)
-        elif abs(price - y_up) <= near:
-            add(
-                "상승 추세선 근접",
-                f"상승선 {_fmt(y_up)} 근처 (이격 {_fmt(abs(price - y_up))})",
-                wp("up_line_near"),
-            )
-        elif price < y_up - near:
+        if y_up is not None and price < y_up - near:
             n_below = _bars_below_line(an.df, up_line, near, last_price=price)
             if n_below <= 0:
                 n_below = 1
@@ -541,12 +529,6 @@ def recommend(
                     f"상승선 {_fmt(y_up)} 아래로 완전 이탈 (이격 {_fmt(y_up - price)}, {n_below}봉)",
                     wp("up_line_break"),
                 )
-        else:
-            add(
-                "상승 추세선 근접",
-                f"상승선 {_fmt(y_up)} 과 이격 {_fmt(abs(price - y_up))}",
-                0,
-            )
 
     if nsup:
         dist_s = price - nsup.price
@@ -640,13 +622,6 @@ def recommend(
         add("MA20", f"{an.price_label} < MA20 ({_fmt(an.ma20)}) · 하락 추세", -ma_pts)
     else:
         add("MA20", f"{an.price_label} < MA20 ({_fmt(an.ma20)}) · 횡보", 0)
-
-    if getattr(an, "ma60", None) is None:
-        add("60일선", "60봉 이평 없음 (봉 60개 미만)", 0)
-    elif abs(price - an.ma60) <= near:
-        add("60일선", f"60일(봉)선 {_fmt(an.ma60)} 근처 (이격 {_fmt(abs(price - an.ma60))})", wp("ma60_near"))
-    else:
-        add("60일선", f"60일(봉)선 {_fmt(an.ma60)} 과 이격 {_fmt(abs(price - an.ma60))}", 0)
 
     ma_n = int(getattr(an, "ma_long_n", None) or 200)
     ma_name = f"{ma_n}일선"
