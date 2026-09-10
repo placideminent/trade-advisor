@@ -2475,7 +2475,7 @@ with st.sidebar:
             _cut_group_inputs("c_stock_", "매수 / 매도 기준 · 주식")
             _cut_group_inputs("c_crypto_", "매수 / 매도 기준 · 코인")
             st.markdown("**항목 배점**")
-            st.caption("규칙 v85. 1개월 하락 10/20/30%. 6개월 300/600은 횡보면 무효. 주식 컷 60/67/73, 코인 67/73/80.")
+            st.caption("규칙 v86. 근처는 ATR×0.55와 가격 1% 중 더 큰 값.")
             try:
                 fields_box = st.container(key="weight_fields_v88")
             except TypeError:

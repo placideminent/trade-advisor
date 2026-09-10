@@ -236,7 +236,7 @@ def main() -> None:
     cuts["A11"] = "점수를 %로 바꾸는 법: 0점이면 0%, 15점(기본)이면 50%, 30점이면 100%."
     cuts["A11"].font = Font(italic=True, color="666666")
     cuts.merge_cells("A11:E11")
-    cuts["A12"] = "가까운 가격: 하루 변동폭의 약 55%, 또는 주가의 1.0% 중 더 작은 값."
+    cuts["A12"] = "가까운 가격: 하루 변동폭의 약 55%, 또는 주가의 1.0% 중 더 큰 값."
     cuts["A12"].font = Font(italic=True, color="666666")
     cuts.merge_cells("A12:E12")
     cuts.column_dimensions["A"].width = 28

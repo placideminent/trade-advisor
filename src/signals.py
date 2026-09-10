@@ -8,7 +8,7 @@ import pandas as pd
 
 from .universe import is_crypto
 
-SIGNAL_RULE_VERSION = 85
+SIGNAL_RULE_VERSION = 86
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 15
 # 합산 %는 0점=0%, 15점=50%, 30점=100%.
@@ -569,7 +569,7 @@ def recommend(
 
     price = an.price
     atr = an.atr if an.atr and an.atr > 0 else price * 0.02
-    near = min(atr * 0.55, price * 0.010)
+    near = max(atr * 0.55, price * 0.010)
 
     nsup = an.supports[0] if an.supports else None
     nres = an.resistances[0] if an.resistances else None
