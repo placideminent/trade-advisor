@@ -140,6 +140,45 @@ def _line_through(p0: tuple[int, float], p1: tuple[int, float], x_end: int) -> t
     return (float(x0), float(y0), float(x_end), float(y_end))
 
 
+def _rising_up_line(lows: list, x_end: int) -> tuple[float, float, float, float] | None:
+    """최근 저점을 지나고 중간 저점이 깨지 않는 상승 지지선을 우선한다.
+
+    마지막 두 저점만 쓰면 최근 눌림 때문에 선이 내려가 보이는데,
+    그 저점이 더 긴 상승 지지선 위에 있으면 그 상승선을 쓴다.
+    """
+    if len(lows) < 2:
+        return None
+    last_i = int(lows[-1][2])
+    last_y = float(lows[-1][1])
+    fallback = _line_through((int(lows[-2][2]), float(lows[-2][1])), (last_i, last_y), x_end)
+    rising = None
+    for _t, y, i in lows[:-1]:
+        i = int(i)
+        y = float(y)
+        if i >= last_i:
+            continue
+        line = _line_through((i, y), (last_i, last_y), x_end)
+        if line is None:
+            continue
+        x0, y0, x1, y1 = line
+        if x1 == x0 or y1 <= y0:
+            continue
+        pierced = False
+        for _tm, ym, im in lows:
+            im = int(im)
+            if im <= i or im >= last_i:
+                continue
+            y_at = y0 + (y1 - y0) / (x1 - x0) * (im - x0)
+            if float(ym) < y_at - max(1e-6, abs(y_at) * 1e-4):
+                pierced = True
+                break
+        if pierced:
+            continue
+        if rising is None:
+            rising = line
+    return rising or fallback
+
+
 def volume_profile(df: pd.DataFrame, bins: int = 48) -> tuple[np.ndarray, np.ndarray, float, float, float]:
     """일봉 [저가, 고가] 구간에 거래량을 균등 분배한 가격대 히스토그램."""
     pmin = float(df["low"].min())
@@ -290,9 +329,7 @@ def analyze(
     n = len(work)
     x_end = n - 1
 
-    up_line = None
-    if len(lows) >= 2:
-        up_line = _line_through((lows[-2][2], lows[-2][1]), (lows[-1][2], lows[-1][1]), x_end)
+    up_line = _rising_up_line(lows, x_end) if len(lows) >= 2 else None
 
     down_line = None
     if len(highs) >= 2:

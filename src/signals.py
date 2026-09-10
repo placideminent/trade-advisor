@@ -8,7 +8,7 @@ import pandas as pd
 
 from .universe import is_crypto
 
-SIGNAL_RULE_VERSION = 89
+SIGNAL_RULE_VERSION = 90
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 15
 # 합산 %는 0점=0%, 15점=50%, 31점=100%.

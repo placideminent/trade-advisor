@@ -84,7 +84,7 @@ def main() -> None:
 
     how = wb.active
     how.title = "이렇게 봐요"
-    how["A1"] = "점수 규칙 (쉬운 버전) · 지금 앱 v89"
+    how["A1"] = "점수 규칙 (쉬운 버전) · 지금 앱 v90"
     how["A1"].font = Font(size=18, bold=True, color="1F4E79")
     how.merge_cells("A1:B1")
     how_lines = [
