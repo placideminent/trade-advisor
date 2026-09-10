@@ -8,7 +8,7 @@ import pandas as pd
 
 from .universe import is_crypto
 
-SIGNAL_RULE_VERSION = 88
+SIGNAL_RULE_VERSION = 89
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 15
 # 합산 %는 0점=0%, 15점=50%, 31점=100%.
@@ -101,7 +101,7 @@ WEIGHT_FIELDS = [
     ("trendline_dir_down", "둘 다 하락·하락선 근접", "둘 다 하락이고 하락선 근처이면 −1. 돌파 무효"),
     ("trendline_dir_down_upnear", "둘 다 하락·상승선 근접", "둘 다 하락이고 상승선 근처이면 +1. 이탈 무효"),
     ("trendline_1m_up", "둘 다 하락·1개월 상승선 상방", "둘 다 하락이고 1개월(1시간봉) 상승선이 상방이면 +1"),
-    ("trendline_1m_up_both_up", "둘 다 상승·1개월 상승선 상방", "둘 다 상승이고 1개월(1시간봉) 상승선이 상방이면 +1"),
+    ("trendline_1m_up_both_up", "둘 다 상승·1개월 상승선 하방", "둘 다 상승이고 1개월(1시간봉) 상승선이 하방이면 +1"),
     ("support_near", "지지 근접", "근접하고 강도 4 이상일 때만 +1"),
     ("support_break", "지지 이탈", "이탈 후 다음 지지가 현재가보다 뚜렷이 아래이면 −2"),
     ("resist_near", "저항 근접", "근접하고 강도 4 이상일 때만 −1"),
@@ -146,6 +146,7 @@ _HIDDEN_WEIGHT_LABELS = (
     "스윙 고점 근접",
     "양쪽 추세선 상승·단기하락",
     "둘 다 하락·하락선 돌파",
+    "둘 다 상승·1개월 상승선 상방",
     "상승 추세선 이탈",
     "MA20 아래",
     "1개월 상승 30%",
@@ -687,8 +688,8 @@ def recommend(
     both_up = up_dir == "up" and down_dir == "up"
     if both_down and dir_1m == "up":
         add("1개월 추세선", "둘 다 하락 · 1개월 상승선 상방", wp("trendline_1m_up"))
-    elif both_up and dir_1m == "up":
-        add("1개월 추세선", "둘 다 상승 · 1개월 상승선 상방", wp("trendline_1m_up_both_up"))
+    elif both_up and dir_1m == "down":
+        add("1개월 추세선", "둘 다 상승 · 1개월 상승선 하방", wp("trendline_1m_up_both_up"))
     elif both_down:
         add("1개월 추세선", f"둘 다 하락 · 1개월 상승선 {dir_1m or '없음'}이라 무효", 0)
     elif both_up:
