@@ -29,6 +29,7 @@ from .signals import (
     RETURN_TIER_DEFAULTS,
     SIGNAL_RULE_VERSION,
     _copy_cuts,
+    migrate_cuts_v85,
     migrate_return_tiers,
     migrate_sell_cuts,
 )
@@ -277,12 +278,13 @@ def _normalize(raw: dict | None) -> dict:
         data["cuts"]["buy_strong"] = int(DEFAULT_CUTS_STOCK["buy_strong"])
     for dropped in DROPPED_WEIGHT_KEYS:
         data["weights"][dropped] = 0
-    if rule_ver < 84:
+    if rule_ver < 85:
         migrate_return_tiers(data["weights"])
-        rule_ver = 84
+        data["cuts"], data["cuts_crypto"] = migrate_cuts_v85(data["cuts"], data["cuts_crypto"])
+        rule_ver = 85
     for key, val in RETURN_TIER_DEFAULTS.items():
         data["weights"].setdefault(key, int(val))
-    data["rule_ver"] = max(rule_ver, 84)
+    data["rule_ver"] = max(rule_ver, 85)
     data["sim"] = migrate_sim_defaults(sim)
     try:
         data["sim_options"] = 1 if int(raw.get("sim_options") or 0) else 0

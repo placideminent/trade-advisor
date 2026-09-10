@@ -8,7 +8,7 @@ import pandas as pd
 
 from .universe import is_crypto
 
-SIGNAL_RULE_VERSION = 84
+SIGNAL_RULE_VERSION = 85
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 15
 # 합산 %는 0점=0%, 15점=50%, 30점=100%.
@@ -43,11 +43,13 @@ DEFAULT_WEIGHTS = {
     "chg1_50": -1,
     "chg1_down1": 0,
     "chg1_down10": 1,
-    "chg1_down30": 2,
-    "chg1_down40": 3,
+    "chg1_down20": 2,
+    "chg1_down30": 3,
+    "chg1_down40": 0,
     "chg1_down50": 0,
     "chg6_50": 0,
-    "chg6_200": -1,
+    "chg6_200": 0,
+    "chg6_300": -1,
     "chg6_500": 0,
     "chg6_600": -2,
     "chg6_800": -3,
@@ -56,20 +58,20 @@ DEFAULT_WEIGHTS = {
 }
 
 DEFAULT_CUTS_STOCK = {
-    "buy_weak": 70,
-    "buy_mid": 75,
-    "buy_strong": 79,
-    "sell_weak": 35,
-    "sell_mid": 30,
-    "sell_strong": 25,
+    "buy_weak": 60,
+    "buy_mid": 67,
+    "buy_strong": 73,
+    "sell_weak": 33,
+    "sell_mid": 27,
+    "sell_strong": 20,
 }
 DEFAULT_CUTS_CRYPTO = {
-    "buy_weak": 70,
-    "buy_mid": 75,
-    "buy_strong": 79,
-    "sell_weak": 45,
-    "sell_mid": 40,
-    "sell_strong": 30,
+    "buy_weak": 67,
+    "buy_mid": 73,
+    "buy_strong": 80,
+    "sell_weak": 37,
+    "sell_mid": 33,
+    "sell_strong": 27,
 }
 DEFAULT_CUTS = dict(DEFAULT_CUTS_STOCK)
 LEGACY_DEFAULT_CUTS = {
@@ -109,11 +111,11 @@ WEIGHT_FIELDS = [
     ("ma200_near", "장기 이평 근처", "6개월 180일선, 1년 300일선 근처 +1. 완전 이탈 무효"),
     ("ma_cross_20_60", "20·60일선 교차", "20일선이 하방으로 60일선 아래를 막 깨면 −1. 4봉 지나면 무효"),
     ("chg1_50", "1개월 상승 70%", "30일 전 대비 70% 이상 오르면 −1"),
-    ("chg1_down10", "1개월 하락 10%", "30일 전 대비 10% 이상 30% 미만 떨어지면 +1"),
-    ("chg1_down30", "1개월 하락 30%", "30일 전 대비 30% 이상 40% 미만 떨어지면 +2"),
-    ("chg1_down40", "1개월 하락 40%", "30일 전 대비 40% 이상 떨어지면 +3"),
-    ("chg6_200", "6개월 상승 200%", "6개월 전 대비 200% 이상 600% 미만 −1"),
-    ("chg6_600", "6개월 상승 600%", "6개월 전 대비 600% 이상 800% 미만 −2"),
+    ("chg1_down10", "1개월 하락 10%", "30일 전 대비 10% 이상 20% 미만 떨어지면 +1"),
+    ("chg1_down20", "1개월 하락 20%", "30일 전 대비 20% 이상 30% 미만 떨어지면 +2"),
+    ("chg1_down30", "1개월 하락 30%", "30일 전 대비 30% 이상 떨어지면 +3"),
+    ("chg6_300", "6개월 상승 300%", "6개월 전 대비 300% 이상 600% 미만 −1. 횡보면 무효"),
+    ("chg6_600", "6개월 상승 600%", "6개월 전 대비 600% 이상 800% 미만 −2. 횡보면 무효"),
     ("chg6_800", "6개월 상승 800%", "6개월 전 대비 800% 이상 −3"),
     ("rr_penalty", "손익비 부족", "손익비 1.2 미만이고 점수가 높을 때"),
     ("option_wall", "옵션 월", "기존 매수/매도 이후 추가. 만기 14일 안 콜·풋월. 매도 때 근처 콜두껍/풋얇 −1, 반대 +1. 매수 때 근처 풋얇+콜두껍 −1"),
@@ -128,8 +130,10 @@ DROPPED_WEIGHT_KEYS = frozenset({
     "trendline_dir_down_break",
     "up_line_break",
     "chg1_down1",
+    "chg1_down40",
     "chg1_down50",
     "chg6_50",
+    "chg6_200",
     "chg6_500",
 })
 _HIDDEN_WEIGHT_LABELS = (
@@ -143,8 +147,10 @@ _HIDDEN_WEIGHT_LABELS = (
     "1개월 상승 30%",
     "1개월 상승 50%",
     "1개월 하락 1%",
+    "1개월 하락 40%",
     "1개월 하락 50%",
     "6개월 상승 50%",
+    "6개월 상승 200%",
     "6개월 상승 500%",
 )
 
@@ -153,11 +159,13 @@ RETURN_TIER_DEFAULTS = {
     "chg1_50": -1,
     "chg1_down1": 0,
     "chg1_down10": 1,
-    "chg1_down30": 2,
-    "chg1_down40": 3,
+    "chg1_down20": 2,
+    "chg1_down30": 3,
+    "chg1_down40": 0,
     "chg1_down50": 0,
     "chg6_50": 0,
-    "chg6_200": -1,
+    "chg6_200": 0,
+    "chg6_300": -1,
     "chg6_500": 0,
     "chg6_600": -2,
     "chg6_800": -3,
@@ -220,7 +228,7 @@ def migrate_sell_cuts(cuts: dict) -> dict:
 
 
 def migrate_stock_buy_cuts(cuts: dict) -> dict:
-    """예전 주식 매수 컷 65/70/75를 70/75/79로 올린다. 직접 바꾼 값은 유지."""
+    """예전 주식 매수 컷을 새 기본으로 올린다. 직접 바꾼 값은 유지."""
     try:
         trio = (
             int(cuts.get("buy_weak") or 0),
@@ -229,11 +237,48 @@ def migrate_stock_buy_cuts(cuts: dict) -> dict:
         )
     except (TypeError, ValueError):
         return cuts
-    if trio == (65, 70, 75):
+    if trio in ((65, 70, 75), (70, 75, 79)):
         cuts["buy_weak"] = int(DEFAULT_CUTS_STOCK["buy_weak"])
         cuts["buy_mid"] = int(DEFAULT_CUTS_STOCK["buy_mid"])
         cuts["buy_strong"] = int(DEFAULT_CUTS_STOCK["buy_strong"])
     return cuts
+
+
+def _cuts_match(src: dict, ref: dict) -> bool:
+    try:
+        return all(int(src.get(k, 0)) == int(v) for k, v in ref.items())
+    except (TypeError, ValueError):
+        return False
+
+
+_PREV_CUTS_STOCK_V84 = {
+    "buy_weak": 70,
+    "buy_mid": 75,
+    "buy_strong": 79,
+    "sell_weak": 35,
+    "sell_mid": 30,
+    "sell_strong": 25,
+}
+_PREV_CUTS_CRYPTO_V84 = {
+    "buy_weak": 70,
+    "buy_mid": 75,
+    "buy_strong": 79,
+    "sell_weak": 45,
+    "sell_mid": 40,
+    "sell_strong": 30,
+}
+
+
+def migrate_cuts_v85(stock: dict, crypto: dict) -> tuple[dict, dict]:
+    """직전 기본 컷이면 엑셀 v85 컷으로 올린다."""
+    if _cuts_match(stock, _PREV_CUTS_STOCK_V84) or _cuts_match(stock, {
+        "buy_weak": 65, "buy_mid": 70, "buy_strong": 75,
+        "sell_weak": 35, "sell_mid": 30, "sell_strong": 25,
+    }):
+        stock = dict(DEFAULT_CUTS_STOCK)
+    if _cuts_match(crypto, _PREV_CUTS_CRYPTO_V84):
+        crypto = dict(DEFAULT_CUTS_CRYPTO)
+    return stock, crypto
 
 
 def _copy_cuts(src: dict | None, defaults: dict) -> dict:
@@ -728,12 +773,12 @@ def recommend(
         chg_pct = chg * 100.0
         if chg_pct >= 70 - 1e-9:
             add("1개월 상승률", f"{chg_pct:.1f}% (70% 이상 상승)", wp("chg1_50"))
-        elif chg_pct <= -40 + 1e-9:
-            add("1개월 하락률", f"{chg_pct:.1f}% (40% 이상 하락)", wp("chg1_down40"))
         elif chg_pct <= -30 + 1e-9:
-            add("1개월 하락률", f"{chg_pct:.1f}% (30% 이상 40% 미만 하락)", wp("chg1_down30"))
+            add("1개월 하락률", f"{chg_pct:.1f}% (30% 이상 하락)", wp("chg1_down30"))
+        elif chg_pct <= -20 + 1e-9:
+            add("1개월 하락률", f"{chg_pct:.1f}% (20% 이상 30% 미만 하락)", wp("chg1_down20"))
         elif chg_pct <= -10 + 1e-9:
-            add("1개월 하락률", f"{chg_pct:.1f}% (10% 이상 30% 미만 하락)", wp("chg1_down10"))
+            add("1개월 하락률", f"{chg_pct:.1f}% (10% 이상 20% 미만 하락)", wp("chg1_down10"))
         else:
             add("1개월 상승률", f"{chg_pct:.1f}%", 0)
 
@@ -745,9 +790,15 @@ def recommend(
     elif chg6 >= 8.0:
         add("6개월 상승률", f"{chg6 * 100:.1f}% (800% 이상)", wp("chg6_800"))
     elif chg6 >= 6.0:
-        add("6개월 상승률", f"{chg6 * 100:.1f}% (600% 이상 800% 미만)", wp("chg6_600"))
-    elif chg6 >= 2.0:
-        add("6개월 상승률", f"{chg6 * 100:.1f}% (200% 이상 600% 미만)", wp("chg6_200"))
+        if an.trend == "sideways":
+            add("6개월 상승률", f"{chg6 * 100:.1f}% (600% 이상) · 횡보라 무효", 0)
+        else:
+            add("6개월 상승률", f"{chg6 * 100:.1f}% (600% 이상 800% 미만)", wp("chg6_600"))
+    elif chg6 >= 3.0:
+        if an.trend == "sideways":
+            add("6개월 상승률", f"{chg6 * 100:.1f}% (300% 이상) · 횡보라 무효", 0)
+        else:
+            add("6개월 상승률", f"{chg6 * 100:.1f}% (300% 이상 600% 미만)", wp("chg6_300"))
     else:
         add("6개월 상승률", f"{chg6 * 100:.1f}%", 0)
 

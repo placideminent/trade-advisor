@@ -105,6 +105,7 @@ from src.signals import (
     DROPPED_WEIGHT_KEYS,
     RETURN_TIER_DEFAULTS,
     visible_weight_fields,
+    migrate_cuts_v85,
     migrate_sell_cuts,
     migrate_stock_buy_cuts,
     period_return,
@@ -207,7 +208,7 @@ def _weight_bounds(key: str) -> tuple[int, int]:
 
 def _wkey(key: str) -> str:
     """배점 위젯 키. 설명을 바꾼 뒤 Streamlit이 예전 help를 붙이지 않게 버전을 붙인다."""
-    return f"w87_{key}"
+    return f"w88_{key}"
 
 
 def _safe_set_widget(key: str, value: int) -> None:
@@ -253,7 +254,7 @@ def _init_rule_widgets() -> None:
             continue
         sk = _wkey(key)
         if sk not in st.session_state:
-            for old in (f"w86_{key}", f"w85_{key}", f"w84_{key}", f"w82_{key}", f"w81_{key}", f"w80_{key}", f"w79_{key}", f"w_{key}"):
+            for old in (f"w87_{key}", f"w86_{key}", f"w85_{key}", f"w84_{key}", f"w82_{key}", f"w81_{key}", f"w80_{key}", f"w79_{key}", f"w_{key}"):
                 if old in st.session_state:
                     try:
                         st.session_state[sk] = int(st.session_state[old])
@@ -271,12 +272,12 @@ def _init_rule_widgets() -> None:
             val = int(default)
         if val < lo or val > hi:
             _safe_set_widget(sk, int(default))
-    if not st.session_state.get("_sheet_v84"):
+    if not st.session_state.get("_sheet_v85"):
         for key, val in RETURN_TIER_DEFAULTS.items():
             _safe_set_widget(_wkey(key), int(val))
-        st.session_state._sheet_v84 = True
+        st.session_state._sheet_v85 = True
     for dropped in DROPPED_WEIGHT_KEYS:
-        for prefix in ("w_", "w79_", "w80_", "w81_", "w82_", "w84_", "w85_", "w86_", "w87_"):
+        for prefix in ("w_", "w79_", "w80_", "w81_", "w82_", "w84_", "w85_", "w86_", "w87_", "w88_"):
             st.session_state.pop(f"{prefix}{dropped}", None)
     for key, default in DEFAULT_CUTS_STOCK.items():
         sk = f"c_stock_{key}"
@@ -366,6 +367,24 @@ def _init_rule_widgets() -> None:
         except Exception:
             pass
         st.session_state._stock_buy_cuts_v78 = True
+    if not st.session_state.get("_cuts_v85"):
+        try:
+            stock = {
+                key: int(st.session_state.get(f"c_stock_{key}", DEFAULT_CUTS_STOCK[key]))
+                for key in DEFAULT_CUTS_STOCK
+            }
+            crypto = {
+                key: int(st.session_state.get(f"c_crypto_{key}", DEFAULT_CUTS_CRYPTO[key]))
+                for key in DEFAULT_CUTS_CRYPTO
+            }
+            stock, crypto = migrate_cuts_v85(stock, crypto)
+            for key, val in stock.items():
+                _safe_set_widget(f"c_stock_{key}", int(val))
+            for key, val in crypto.items():
+                _safe_set_widget(f"c_crypto_{key}", int(val))
+        except Exception:
+            pass
+        st.session_state._cuts_v85 = True
     for key, default in DEFAULT_SIM.items():
         st.session_state.setdefault(f"s_{key}", int(default))
     st.session_state.setdefault("sim_eval_mode", "기존 규칙만")
@@ -827,17 +846,19 @@ def _apply_loaded_prefs(loaded: dict) -> None:
         loaded_ver = int(loaded.get("rule_ver") or 0)
     except (TypeError, ValueError):
         loaded_ver = 0
-    if loaded_ver < 84:
+    if loaded_ver < 85:
         for key, val in RETURN_TIER_DEFAULTS.items():
             st.session_state[_wkey(key)] = int(val)
-    st.session_state._sheet_v84 = True
+    st.session_state._sheet_v85 = True
     stock_cuts = dict(loaded.get("cuts") or DEFAULT_CUTS_STOCK)
     migrate_stock_buy_cuts(stock_cuts)
     crypto_cuts = loaded.get("cuts_crypto") or DEFAULT_CUTS_CRYPTO
-    for key, default in DEFAULT_CUTS_STOCK.items():
-        st.session_state[f"c_stock_{key}"] = int(stock_cuts.get(key, default))
     crypto_now = {key: int(crypto_cuts.get(key, default)) for key, default in DEFAULT_CUTS_CRYPTO.items()}
     migrate_sell_cuts(crypto_now)
+    if loaded_ver < 85:
+        stock_cuts, crypto_now = migrate_cuts_v85(stock_cuts, crypto_now)
+    for key, default in DEFAULT_CUTS_STOCK.items():
+        st.session_state[f"c_stock_{key}"] = int(stock_cuts.get(key, default))
     for key, val in crypto_now.items():
         st.session_state[f"c_crypto_{key}"] = int(val)
     if not st.session_state.get("_rules_v54"):
@@ -852,6 +873,7 @@ def _apply_loaded_prefs(loaded: dict) -> None:
     st.session_state._cuts_migrated_v58 = True
     st.session_state._cuts_split_v60 = True
     st.session_state._stock_buy_cuts_v78 = True
+    st.session_state._cuts_v85 = True
     sim = migrate_sim_defaults(loaded.get("sim") or {})
     for key, default in DEFAULT_SIM.items():
         st.session_state[f"s_{key}"] = _sim_qty_cast(sim.get(key, default), key, crypto=False)
@@ -2445,7 +2467,7 @@ with st.sidebar:
 
     try:
         try:
-            rule_box = st.expander("평가 배점·기준", expanded=False, key="rule_box_v84")
+            rule_box = st.expander("평가 배점·기준", expanded=False, key="rule_box_v85")
         except TypeError:
             rule_box = st.expander("평가 배점·기준", expanded=False)
         with rule_box:
@@ -2453,9 +2475,9 @@ with st.sidebar:
             _cut_group_inputs("c_stock_", "매수 / 매도 기준 · 주식")
             _cut_group_inputs("c_crypto_", "매수 / 매도 기준 · 코인")
             st.markdown("**항목 배점**")
-            st.caption("규칙 v84. 기본 15점. 근처는 ATR×0.55와 가격 1% 중 작은 값. 이탈·돌파하면 그 항목은 무효.")
+            st.caption("규칙 v85. 1개월 하락 10/20/30%. 6개월 300/600은 횡보면 무효. 주식 컷 60/67/73, 코인 67/73/80.")
             try:
-                fields_box = st.container(key="weight_fields_v87")
+                fields_box = st.container(key="weight_fields_v88")
             except TypeError:
                 fields_box = st.container()
             with fields_box:
@@ -2486,9 +2508,9 @@ with st.sidebar:
                             "ma_cross_20_60",
                             "chg1_50",
                             "chg1_down10",
+                            "chg1_down20",
                             "chg1_down30",
-                            "chg1_down40",
-                            "chg6_200",
+                            "chg6_300",
                             "chg6_600",
                             "chg6_800",
                         ):
