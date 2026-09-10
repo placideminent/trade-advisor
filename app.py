@@ -2803,7 +2803,7 @@ prop_col, px_col = st.columns([2.1, 1], vertical_alignment="center")
 with prop_col:
     if opt_on:
         _proposal_banner(f"기존 규칙 · {head}{value_side}", base_action, base_pct, price_text=price_text)
-        _proposal_banner("옵션 월 반영", signal.action, signal.score_pct, signal.summary)
+        _proposal_banner("옵션 반영", signal.action, signal.score_pct, signal.summary)
     else:
         _proposal_banner(head + value_side, signal.action, signal.score_pct, signal.summary, price_text=price_text)
 with px_col:
@@ -2833,11 +2833,10 @@ _kv_rows.extend(
         ("신뢰", f"{signal.confidence}%"),
         ("지지", _fmt(signal.nearest_support.price) if signal.nearest_support else "-"),
         ("저항", _fmt(signal.nearest_resistance.price) if signal.nearest_resistance else "-"),
-        ("POC", _fmt(analysis.poc)),
-        ("VAL", _fmt(analysis.val)),
-        ("VAH", _fmt(analysis.vah)),
+        ("최대 매물 (POC)", _fmt(analysis.poc)),
+        ("밸류 하단 (VAL)", _fmt(analysis.val)),
+        ("밸류 상단 (VAH)", _fmt(analysis.vah)),
         ("RSI", f"{analysis.rsi:.1f}"),
-        ("손익비", f"{signal.reward_risk:.2f}" if signal.reward_risk is not None else "-"),
         ("손절 참고", _fmt(signal.stop) if signal.stop else "-"),
         ("1차 목표", _fmt(signal.target) if signal.target else "-"),
     ]
@@ -2862,9 +2861,9 @@ if st.session_state.pop("_fav_full", False):
 st.subheader("점수 내역")
 if signal.score_rows:
     _show_table(pd.DataFrame(signal.score_rows))
-    if any(str(r.get("항목") or "") == "옵션 월" for r in signal.score_rows):
+    if any(str(r.get("항목") or "") == "옵션" for r in signal.score_rows):
         st.caption(
-            "옵션 월은 기존 매수/매도 판정 뒤에 더해 제안을 다시 봅니다. "
+            "옵션은 기존 매수/매도 판정 뒤에 더해 제안을 다시 봅니다. "
             "미국 주식 당일 조회, 만기 14일 안 체인, 근처는 현재가 ±5%입니다. "
             "시뮬레이션·과거 시점에는 넣지 않습니다."
         )

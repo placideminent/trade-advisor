@@ -124,7 +124,7 @@ def option_wall_adjust(action: str, walls: dict | None, weight: int = 1) -> tupl
     """기존 매수/매도 판정 뒤 추가 점수. weight 는 보통 1."""
     w = abs(int(weight or 0))
     if not w:
-        return 0, "옵션 월 배점 0"
+        return 0, "옵션 배점 0"
     if not isinstance(walls, dict):
         return 0, "옵션 포지션 없음"
     if walls.get("error"):
@@ -137,7 +137,7 @@ def option_wall_adjust(action: str, walls: dict | None, weight: int = 1) -> tupl
             extra += f" ({dte}일)"
         return 0, f"만기가 {OPTION_DTE_MAX}일 안에 없음 · {extra}"
     if action == "홀딩" or action not in BUY_ACTIONS + SELL_ACTIONS:
-        return 0, "홀딩이라 옵션 월을 가감하지 않음"
+        return 0, "홀딩이라 옵션을 가감하지 않음"
 
     call_oi = _oi(walls.get("call_oi"))
     put_oi = _oi(walls.get("put_oi"))
