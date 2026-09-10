@@ -8,17 +8,17 @@ import pandas as pd
 
 from .universe import is_crypto
 
-SIGNAL_RULE_VERSION = 95
+SIGNAL_RULE_VERSION = 96
 # 이 숫자를 올리면 배점 조절창 위젯 키·제목도 같이 바뀌어 예전 설명이 남지 않는다.
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 15
-# 합산 %는 0점=0%, 15점=50%, 31점=100%.
-SCORE_LO = 0
-SCORE_HI = 31
+# 합산 %는 1점=0%, 15점=50%, 30점=100%.
+SCORE_LO = 1
+SCORE_HI = 30
 
 DEFAULT_WEIGHTS = {
     "base": 15,
-    "trend": 1,
+    "trend": 0,
     "trend_1m": 0,
     "swing_low_near": 0,
     "swing_high_near": 0,
@@ -98,7 +98,6 @@ PREV_DEFAULT_CUTS = {
 
 WEIGHT_FIELDS = [
     ("base", "기본", "시작할 때 항상 줌"),
-    ("trend", "추세", "조회 기간이 1~2개월이고, 상승 추세 / 조회 기간이 1~2개월이고, 하락 추세 / 조회 기간이 3개월 이상이고, 하락 추세 (눌림) / 조회 기간이 3개월 이상이고, 상승 추세 (고점 추격) / 횡보일 때"),
     ("down_line_near", "하락 추세선 근접", "하락 추세선에 근접 했을 때, 돌파하면 무효"),
     ("up_line_near", "상승 추세선 근접", "상승 추세선 근접 했을 때, 이탈하면 무효"),
     ("trendline_dir_down", "추세선 방향", "하락 추세선 상승 추세선 모두 하락이면서 현재가가 하락 추세선 근접했을때, 하락 추세선 돌파시 무효"),
@@ -144,6 +143,7 @@ DROPPED_WEIGHT_KEYS = frozenset({
     "chg6_200",
     "chg6_500",
     "rr_penalty",
+    "trend",
 })
 _HIDDEN_WEIGHT_LABELS = (
     "손익비",
@@ -244,6 +244,13 @@ def rule_panel_title() -> str:
 
 def rule_weight_ui_caption() -> str:
     return f"규칙 v{SIGNAL_RULE_VERSION}."
+
+
+def score_scale_caption() -> str:
+    return (
+        f"합산 %는 {SCORE_LO}점=0%, {SCORE_BASE}점(기본)=50%, {SCORE_HI}점=100%입니다. "
+        "항목 점수와 매수/매도 컷을 바꿀 수 있습니다."
+    )
 
 _OLD_SELL_TRIOS = (
     (40, 35, 30),
@@ -690,14 +697,6 @@ def recommend(
 
     base = wp("base")
     add("기본", "시작할 때 항상 줌", base)
-
-    trend_pts = abs(wp("trend"))
-    if an.trend == "up":
-        add("추세", f"상승 · 고점 추격 감점. {an.price_label} {_fmt(price)}", -trend_pts)
-    elif an.trend == "down":
-        add("추세", f"하락 · 눌림 가점. {an.price_label} {_fmt(price)}", trend_pts)
-    else:
-        add("추세", f"횡보. {an.price_label} {_fmt(price)}", 0)
 
     up_line = an.up_line
     down_line = an.down_line

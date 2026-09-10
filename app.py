@@ -109,6 +109,7 @@ from src.signals import (
     weight_widget_prefixes,
     rule_panel_title,
     rule_weight_ui_caption,
+    score_scale_caption,
     migrate_cuts_v85,
     migrate_sell_cuts,
     migrate_stock_buy_cuts,
@@ -2483,7 +2484,7 @@ with st.sidebar:
         except TypeError:
             rule_box = st.expander(rule_panel_title(), expanded=False)
         with rule_box:
-            st.caption("합산 %는 0점=0%, 15점=50%, 31점=100%입니다. 항목 점수와 매수/매도 컷을 바꿀 수 있습니다.")
+            st.caption(score_scale_caption())
             _cut_group_inputs("c_stock_", "매수 / 매도 기준 · 주식")
             _cut_group_inputs("c_crypto_", "매수 / 매도 기준 · 코인")
             st.markdown("**항목 배점**")
