@@ -179,6 +179,20 @@ def _rising_up_line(lows: list, x_end: int) -> tuple[float, float, float, float]
     return rising or fallback
 
 
+def _last_two_up_line(lows: list, x_end: int) -> tuple[float, float, float, float] | None:
+    """1개월 조회용. 마지막 스윙 저점 두 개만 잇는다."""
+    if len(lows) < 2:
+        return None
+    return _line_through((int(lows[-2][2]), float(lows[-2][1])), (int(lows[-1][2]), float(lows[-1][1])), x_end)
+
+
+def _chart_up_line(lows: list, x_end: int, lookback_days: int | None) -> tuple[float, float, float, float] | None:
+    """1개월은 마지막 두 저점, 3개월 이상은 깨지지 않은 상승 지지선."""
+    if lookback_days is not None and int(lookback_days) <= 30:
+        return _last_two_up_line(lows, x_end)
+    return _rising_up_line(lows, x_end)
+
+
 def volume_profile(df: pd.DataFrame, bins: int = 48) -> tuple[np.ndarray, np.ndarray, float, float, float]:
     """일봉 [저가, 고가] 구간에 거래량을 균등 분배한 가격대 히스토그램."""
     pmin = float(df["low"].min())
@@ -329,7 +343,7 @@ def analyze(
     n = len(work)
     x_end = n - 1
 
-    up_line = _rising_up_line(lows, x_end) if len(lows) >= 2 else None
+    up_line = _chart_up_line(lows, x_end, lookback_days) if len(lows) >= 2 else None
 
     down_line = None
     if len(highs) >= 2:

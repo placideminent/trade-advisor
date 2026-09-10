@@ -8,7 +8,7 @@ import pandas as pd
 
 from .universe import is_crypto
 
-SIGNAL_RULE_VERSION = 93
+SIGNAL_RULE_VERSION = 94
 # 이 숫자를 올리면 배점 조절창 위젯 키·제목도 같이 바뀌어 예전 설명이 남지 않는다.
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 15
@@ -366,7 +366,7 @@ def merge_rule(rule: dict | None) -> dict:
         weights[key] = 0
     return {"weights": weights, "cuts": cuts, "cuts_crypto": cuts_crypto}
 
-from .analysis import Analysis, Level, classify_trend, find_swings, _line_through, _rising_up_line
+from .analysis import Analysis, Level, classify_trend, find_swings, _line_through, _last_two_up_line
 
 
 @dataclass
@@ -516,13 +516,13 @@ def _ma20_cross_below_ma60(df, bars: int = 4) -> bool:
 
 
 def _up_line_from_df(df) -> tuple[float, float, float, float] | None:
-    """1개월 조회 차트와 같은 상승선. 마지막 두 저점만 쓰면 짧은 눌림에 하방으로 뒤집힌다."""
+    """1개월 조회와 같은 상승선. 마지막 스윙 저점 두 개만 잇는다."""
     if df is None or getattr(df, "empty", True) or len(df) < 9:
         return None
     _highs, lows = find_swings(df)
     if len(lows) < 2:
         return None
-    return _rising_up_line(lows, len(df) - 1)
+    return _last_two_up_line(lows, len(df) - 1)
 
 
 def _window_df(df, as_of, days: int):
