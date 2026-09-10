@@ -8,7 +8,7 @@ import pandas as pd
 
 from .universe import is_crypto
 
-SIGNAL_RULE_VERSION = 94
+SIGNAL_RULE_VERSION = 95
 # 이 숫자를 올리면 배점 조절창 위젯 키·제목도 같이 바뀌어 예전 설명이 남지 않는다.
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 15
@@ -43,6 +43,8 @@ DEFAULT_WEIGHTS = {
     "ma200_near": 1,
     "ma_cross_20_60": -1,
     "bar_spike_20": -1,
+    "ath_clear": 1,
+    "ath_fail": -1,
     "chg1_50": -1,
     "chg1_down1": 0,
     "chg1_down10": 1,
@@ -122,6 +124,8 @@ WEIGHT_FIELDS = [
     ("chg6_600", "6개월 상승률", "6개월 동안 600% 이상 오름, 횡보 추세나 하락 추세시 무효"),
     ("chg6_300", "6개월 상승률", "6개월 동안 300% 이상 600% 미만 오름, 횡보 추세나 하락 추세시 무효"),
     ("bar_spike_20", "단기 급상승", "1개 봉만에 20% 이상 상승했을 시"),
+    ("ath_clear", "신고가", "위에 저항이 아예 없는 신고가의 경우 +1점, 신고가 이후 4개봉 지나면 무효"),
+    ("ath_fail", "신고가 돌파 실패", "신고가 이후 8개봉동안 신고가 갱신 못하면 -1점, 신고가 이후 12개봉 지나면 무효"),
     ("option_wall", "옵션", "기존 결과가 홀딩이면 옵션은 보지 않음 / 기존이 매도인데, 만기가 14일 안이고, 위쪽에 콜 벽이 두껍고 아래 풋 벽이 얇음 / 반대로 아래 풋 벽이 두껍고 위 콜 벽이 얇음 / 기존이 매수인데, 아래 풋 벽이 얇고 위 콜 벽이 두꺼움"),
 ]
 
@@ -431,6 +435,51 @@ def _one_bar_return(an: Analysis, price: float) -> float | None:
     if not (prev > 0):
         return None
     return float(price) / prev - 1.0
+
+
+def _ath_since(df, last_price: float | None = None) -> tuple[int, float] | None:
+    """조회 기간 최고가(고가)가 난 뒤 지난 봉 수와 그 가격. 현재 봉이 신고가면 0."""
+    if df is None or getattr(df, "empty", True) or "high" not in getattr(df, "columns", []):
+        return None
+    h = pd.to_numeric(df["high"], errors="coerce")
+    if h.isna().all():
+        return None
+    ath = float(h.max())
+    n = len(h)
+    if last_price is not None:
+        try:
+            px = float(last_price)
+        except (TypeError, ValueError):
+            px = None
+        else:
+            if px > ath:
+                return 0, px
+    eps = max(1e-9, abs(ath) * 1e-8)
+    pos = None
+    for i in range(n - 1, -1, -1):
+        v = h.iloc[i]
+        if pd.notna(v) and float(v) >= ath - eps:
+            pos = i
+            break
+    if pos is None:
+        return None
+    return n - 1 - int(pos), ath
+
+
+def _resistance_above_ath(levels, ath: float) -> Level | None:
+    """신고가보다 뚜렷이 위에 있는 저항. 신고가 자체는 위가 아님."""
+    cutoff = float(ath) + max(abs(float(ath)) * 1e-4, 1e-6)
+    best = None
+    for lv in levels or []:
+        try:
+            p = float(lv.price)
+        except (TypeError, ValueError, AttributeError):
+            continue
+        if p <= cutoff:
+            continue
+        if best is None or p < float(best.price):
+            best = lv
+    return best
 
 
 def _fmt(price: float) -> str:
@@ -886,6 +935,26 @@ def recommend(
         add("단기 급상승", f"1봉 {bar_ret * 100:.1f}% (20% 이상)", wp("bar_spike_20"))
     else:
         add("단기 급상승", f"1봉 {bar_ret * 100:.1f}%", 0)
+
+    ath_ev = _ath_since(an.df, price)
+    if ath_ev is None:
+        add("신고가", "조회 기간 고가를 계산하지 못함", 0)
+        add("신고가 돌파 실패", "조회 기간 고가를 계산하지 못함", 0)
+    else:
+        since, ath = ath_ev
+        res_up = _resistance_above_ath(an.resistances, ath)
+        if since >= 4:
+            add("신고가", f"신고가 {_fmt(ath)} 이후 {since}봉 지나 무효", 0)
+        elif res_up is not None:
+            add("신고가", f"신고가 {_fmt(ath)} · 위 저항 {_fmt(res_up.price)} 이라 해당 없음", 0)
+        else:
+            add("신고가", f"위에 저항 없음 · 신고가 {_fmt(ath)} 이후 {since}봉", wp("ath_clear"))
+        if since >= 12:
+            add("신고가 돌파 실패", f"신고가 {_fmt(ath)} 이후 {since}봉 지나 무효", 0)
+        elif since >= 8:
+            add("신고가 돌파 실패", f"신고가 {_fmt(ath)} 이후 {since}봉 동안 갱신 못함", wp("ath_fail"))
+        else:
+            add("신고가 돌파 실패", f"신고가 {_fmt(ath)} 이후 {since}봉 · 8봉 미만", 0)
 
     stop = None
     target = None
