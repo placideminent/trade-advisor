@@ -207,7 +207,7 @@ def _weight_bounds(key: str) -> tuple[int, int]:
 
 def _wkey(key: str) -> str:
     """배점 위젯 키. 설명을 바꾼 뒤 Streamlit이 예전 help를 붙이지 않게 버전을 붙인다."""
-    return f"w86_{key}"
+    return f"w87_{key}"
 
 
 def _safe_set_widget(key: str, value: int) -> None:
@@ -253,7 +253,7 @@ def _init_rule_widgets() -> None:
             continue
         sk = _wkey(key)
         if sk not in st.session_state:
-            for old in (f"w85_{key}", f"w84_{key}", f"w82_{key}", f"w81_{key}", f"w80_{key}", f"w79_{key}", f"w_{key}"):
+            for old in (f"w86_{key}", f"w85_{key}", f"w84_{key}", f"w82_{key}", f"w81_{key}", f"w80_{key}", f"w79_{key}", f"w_{key}"):
                 if old in st.session_state:
                     try:
                         st.session_state[sk] = int(st.session_state[old])
@@ -271,12 +271,12 @@ def _init_rule_widgets() -> None:
             val = int(default)
         if val < lo or val > hi:
             _safe_set_widget(sk, int(default))
-    if not st.session_state.get("_sheet_v83"):
+    if not st.session_state.get("_sheet_v84"):
         for key, val in RETURN_TIER_DEFAULTS.items():
             _safe_set_widget(_wkey(key), int(val))
-        st.session_state._sheet_v83 = True
+        st.session_state._sheet_v84 = True
     for dropped in DROPPED_WEIGHT_KEYS:
-        for prefix in ("w_", "w79_", "w80_", "w81_", "w82_", "w84_", "w85_", "w86_"):
+        for prefix in ("w_", "w79_", "w80_", "w81_", "w82_", "w84_", "w85_", "w86_", "w87_"):
             st.session_state.pop(f"{prefix}{dropped}", None)
     for key, default in DEFAULT_CUTS_STOCK.items():
         sk = f"c_stock_{key}"
@@ -827,10 +827,10 @@ def _apply_loaded_prefs(loaded: dict) -> None:
         loaded_ver = int(loaded.get("rule_ver") or 0)
     except (TypeError, ValueError):
         loaded_ver = 0
-    if loaded_ver < 83:
+    if loaded_ver < 84:
         for key, val in RETURN_TIER_DEFAULTS.items():
             st.session_state[_wkey(key)] = int(val)
-    st.session_state._sheet_v83 = True
+    st.session_state._sheet_v84 = True
     stock_cuts = dict(loaded.get("cuts") or DEFAULT_CUTS_STOCK)
     migrate_stock_buy_cuts(stock_cuts)
     crypto_cuts = loaded.get("cuts_crypto") or DEFAULT_CUTS_CRYPTO
@@ -2445,17 +2445,17 @@ with st.sidebar:
 
     try:
         try:
-            rule_box = st.expander("평가 배점·기준", expanded=False, key="rule_box_v83")
+            rule_box = st.expander("평가 배점·기준", expanded=False, key="rule_box_v84")
         except TypeError:
             rule_box = st.expander("평가 배점·기준", expanded=False)
         with rule_box:
-            st.caption("합산 % 눈금(-5~19점)은 그대로 두고, 항목 점수와 매수/매도 컷만 바꿉니다. 바꾼 값은 리부트 후에도 남깁니다.")
+            st.caption("합산 %는 0점=0%, 15점=50%, 30점=100%입니다. 항목 점수와 매수/매도 컷을 바꿀 수 있습니다.")
             _cut_group_inputs("c_stock_", "매수 / 매도 기준 · 주식")
             _cut_group_inputs("c_crypto_", "매수 / 매도 기준 · 코인")
             st.markdown("**항목 배점**")
-            st.caption("규칙 v83. 둘 다 하락이면 하락선 근처 −1, 위로 돌파 +1. 1개월 하락 10/30/40%.")
+            st.caption("규칙 v84. 기본 15점. 근처는 ATR×0.55와 가격 1% 중 작은 값. 이탈·돌파하면 그 항목은 무효.")
             try:
-                fields_box = st.container(key="weight_fields_v86")
+                fields_box = st.container(key="weight_fields_v87")
             except TypeError:
                 fields_box = st.container()
             with fields_box:
@@ -2475,16 +2475,21 @@ with st.sidebar:
                             help=hint,
                         )
                         if key in (
-                            "trendline_dir_down",
-                            "trendline_dir_down_break",
+                            "down_line_near",
                             "up_line_near",
-                            "up_line_break",
+                            "trendline_dir_down",
+                            "trendline_dir_down_upnear",
+                            "trendline_1m_up",
+                            "support_break",
+                            "ma20",
+                            "ma60_near",
+                            "ma_cross_20_60",
                             "chg1_50",
                             "chg1_down10",
                             "chg1_down30",
                             "chg1_down40",
                             "chg6_200",
-                            "chg6_500",
+                            "chg6_600",
                             "chg6_800",
                         ):
                             st.caption(hint)
