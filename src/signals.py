@@ -8,7 +8,8 @@ import pandas as pd
 
 from .universe import is_crypto
 
-SIGNAL_RULE_VERSION = 90
+SIGNAL_RULE_VERSION = 91
+# 이 숫자를 올리면 배점 조절창 위젯 키·제목도 같이 바뀌어 예전 설명이 남지 않는다.
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 15
 # 합산 %는 0점=0%, 15점=50%, 31점=100%.
@@ -209,6 +210,42 @@ def visible_weight_fields() -> list[tuple[str, str, str]]:
             continue
         rows.append((key, label, hint))
     return rows
+
+
+def weight_widget_key(field: str) -> str:
+    """배점 number_input 키. 규칙 버전이 바뀌면 Streamlit이 예전 help를 재사용하지 않는다."""
+    return f"wv{int(SIGNAL_RULE_VERSION)}_{field}"
+
+
+def weight_widget_prefixes() -> tuple[str, ...]:
+    """현재·예전 배점 위젯 접두사. 값 이전과 삭제 항목 정리에 쓴다."""
+    ver = int(SIGNAL_RULE_VERSION)
+    out: list[str] = []
+    seen: set[str] = set()
+    for v in range(ver, 78, -1):
+        for prefix in (f"wv{v}_", f"w{v}_"):
+            if prefix not in seen:
+                seen.add(prefix)
+                out.append(prefix)
+    if "w_" not in seen:
+        out.append("w_")
+    return tuple(out)
+
+
+def rule_panel_title() -> str:
+    return f"평가 배점·기준 · 규칙 v{SIGNAL_RULE_VERSION}"
+
+
+def rule_weight_ui_caption() -> str:
+    """배점 창 상단 문구. WEIGHT_FIELDS 설명을 모아 규칙이 바뀌면 같이 바뀐다."""
+    parts = [f"규칙 v{SIGNAL_RULE_VERSION}."]
+    parts.append("6개월 상승선은 최근 저점을 지나고 중간 저점이 안 깨는 상승 지지선을 씁니다.")
+    for key, _label, hint in visible_weight_fields():
+        if key.startswith("trendline_1m") or key == "bar_spike_20":
+            text = str(hint).strip().rstrip(".")
+            if text:
+                parts.append(text + ".")
+    return " ".join(parts)
 
 _OLD_SELL_TRIOS = (
     (40, 35, 30),

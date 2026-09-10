@@ -105,6 +105,10 @@ from src.signals import (
     DROPPED_WEIGHT_KEYS,
     RETURN_TIER_DEFAULTS,
     visible_weight_fields,
+    weight_widget_key,
+    weight_widget_prefixes,
+    rule_panel_title,
+    rule_weight_ui_caption,
     migrate_cuts_v85,
     migrate_sell_cuts,
     migrate_stock_buy_cuts,
@@ -207,8 +211,8 @@ def _weight_bounds(key: str) -> tuple[int, int]:
 
 
 def _wkey(key: str) -> str:
-    """배점 위젯 키. 설명을 바꾼 뒤 Streamlit이 예전 help를 붙이지 않게 버전을 붙인다."""
-    return f"w91_{key}"
+    """배점 위젯 키. SIGNAL_RULE_VERSION이 바뀌면 키도 바뀌어 예전 설명이 남지 않는다."""
+    return weight_widget_key(key)
 
 
 def _safe_set_widget(key: str, value: int) -> None:
@@ -254,7 +258,11 @@ def _init_rule_widgets() -> None:
             continue
         sk = _wkey(key)
         if sk not in st.session_state:
-            for old in (f"w90_{key}", f"w89_{key}", f"w88_{key}", f"w87_{key}", f"w86_{key}", f"w85_{key}", f"w84_{key}", f"w82_{key}", f"w81_{key}", f"w80_{key}", f"w79_{key}", f"w_{key}"):
+            current_prefix = weight_widget_prefixes()[0]
+            for prefix in weight_widget_prefixes():
+                if prefix == current_prefix:
+                    continue
+                old = f"{prefix}{key}"
                 if old in st.session_state:
                     try:
                         st.session_state[sk] = int(st.session_state[old])
@@ -277,7 +285,7 @@ def _init_rule_widgets() -> None:
             _safe_set_widget(_wkey(key), int(val))
         st.session_state._sheet_v85 = True
     for dropped in DROPPED_WEIGHT_KEYS:
-        for prefix in ("w_", "w79_", "w80_", "w81_", "w82_", "w84_", "w85_", "w86_", "w87_", "w88_", "w89_", "w90_", "w91_"):
+        for prefix in weight_widget_prefixes():
             st.session_state.pop(f"{prefix}{dropped}", None)
     for key, default in DEFAULT_CUTS_STOCK.items():
         sk = f"c_stock_{key}"
@@ -2467,17 +2475,21 @@ with st.sidebar:
 
     try:
         try:
-            rule_box = st.expander("평가 배점·기준", expanded=False, key="rule_box_v89")
+            rule_box = st.expander(
+                rule_panel_title(),
+                expanded=False,
+                key=f"rule_box_v{SIGNAL_RULE_VERSION}",
+            )
         except TypeError:
-            rule_box = st.expander("평가 배점·기준", expanded=False)
+            rule_box = st.expander(rule_panel_title(), expanded=False)
         with rule_box:
             st.caption("합산 %는 0점=0%, 15점=50%, 31점=100%입니다. 항목 점수와 매수/매도 컷을 바꿀 수 있습니다.")
             _cut_group_inputs("c_stock_", "매수 / 매도 기준 · 주식")
             _cut_group_inputs("c_crypto_", "매수 / 매도 기준 · 코인")
             st.markdown("**항목 배점**")
-            st.caption("규칙 v90. 둘 다 상승이면 1개월(1시간봉) 상승선이 하방일 때 +1.")
+            st.caption(rule_weight_ui_caption())
             try:
-                fields_box = st.container(key="weight_fields_v91")
+                fields_box = st.container(key=f"weight_fields_v{SIGNAL_RULE_VERSION}")
             except TypeError:
                 fields_box = st.container()
             with fields_box:
@@ -2496,26 +2508,7 @@ with st.sidebar:
                             key=_wkey(key),
                             help=hint,
                         )
-                        if key in (
-                            "down_line_near",
-                            "up_line_near",
-                            "trendline_dir_down",
-                            "trendline_dir_down_upnear",
-                            "trendline_1m_up",
-                            "trendline_1m_up_both_up",
-                            "bar_spike_20",
-                            "support_break",
-                            "ma20",
-                            "ma60_near",
-                            "ma_cross_20_60",
-                            "chg1_50",
-                            "chg1_down10",
-                            "chg1_down20",
-                            "chg1_down30",
-                            "chg6_300",
-                            "chg6_600",
-                            "chg6_800",
-                        ):
+                        if hint:
                             st.caption(hint)
             st.button(
                 "기본값으로 되돌리기",
