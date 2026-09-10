@@ -208,7 +208,7 @@ def _weight_bounds(key: str) -> tuple[int, int]:
 
 def _wkey(key: str) -> str:
     """배점 위젯 키. 설명을 바꾼 뒤 Streamlit이 예전 help를 붙이지 않게 버전을 붙인다."""
-    return f"w88_{key}"
+    return f"w89_{key}"
 
 
 def _safe_set_widget(key: str, value: int) -> None:
@@ -254,7 +254,7 @@ def _init_rule_widgets() -> None:
             continue
         sk = _wkey(key)
         if sk not in st.session_state:
-            for old in (f"w87_{key}", f"w86_{key}", f"w85_{key}", f"w84_{key}", f"w82_{key}", f"w81_{key}", f"w80_{key}", f"w79_{key}", f"w_{key}"):
+            for old in (f"w88_{key}", f"w87_{key}", f"w86_{key}", f"w85_{key}", f"w84_{key}", f"w82_{key}", f"w81_{key}", f"w80_{key}", f"w79_{key}", f"w_{key}"):
                 if old in st.session_state:
                     try:
                         st.session_state[sk] = int(st.session_state[old])
@@ -277,7 +277,7 @@ def _init_rule_widgets() -> None:
             _safe_set_widget(_wkey(key), int(val))
         st.session_state._sheet_v85 = True
     for dropped in DROPPED_WEIGHT_KEYS:
-        for prefix in ("w_", "w79_", "w80_", "w81_", "w82_", "w84_", "w85_", "w86_", "w87_", "w88_"):
+        for prefix in ("w_", "w79_", "w80_", "w81_", "w82_", "w84_", "w85_", "w86_", "w87_", "w88_", "w89_"):
             st.session_state.pop(f"{prefix}{dropped}", None)
     for key, default in DEFAULT_CUTS_STOCK.items():
         sk = f"c_stock_{key}"
@@ -2467,7 +2467,7 @@ with st.sidebar:
 
     try:
         try:
-            rule_box = st.expander("평가 배점·기준", expanded=False, key="rule_box_v85")
+            rule_box = st.expander("평가 배점·기준", expanded=False, key="rule_box_v87")
         except TypeError:
             rule_box = st.expander("평가 배점·기준", expanded=False)
         with rule_box:
@@ -2475,9 +2475,9 @@ with st.sidebar:
             _cut_group_inputs("c_stock_", "매수 / 매도 기준 · 주식")
             _cut_group_inputs("c_crypto_", "매수 / 매도 기준 · 코인")
             st.markdown("**항목 배점**")
-            st.caption("규칙 v86. 근처는 ATR×0.55와 가격 1% 중 더 큰 값.")
+            st.caption("규칙 v87. 6개월 300/600% 감점은 상승 추세일 때만. 횡보·하락이면 무효.")
             try:
-                fields_box = st.container(key="weight_fields_v88")
+                fields_box = st.container(key="weight_fields_v89")
             except TypeError:
                 fields_box = st.container()
             with fields_box:
