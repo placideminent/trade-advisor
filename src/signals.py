@@ -8,12 +8,12 @@ import pandas as pd
 
 from .universe import is_crypto
 
-SIGNAL_RULE_VERSION = 87
+SIGNAL_RULE_VERSION = 88
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 15
-# 합산 %는 0점=0%, 15점=50%, 30점=100%.
+# 합산 %는 0점=0%, 15점=50%, 31점=100%.
 SCORE_LO = 0
-SCORE_HI = 30
+SCORE_HI = 31
 
 DEFAULT_WEIGHTS = {
     "base": 15,
@@ -26,6 +26,7 @@ DEFAULT_WEIGHTS = {
     "trendline_dir_down_break": 0,
     "trendline_dir_down_upnear": 1,
     "trendline_1m_up": 1,
+    "trendline_1m_up_both_up": 1,
     "trendline_up_1m_down": 0,
     "up_line_near": 1,
     "up_line_break": 0,
@@ -40,6 +41,7 @@ DEFAULT_WEIGHTS = {
     "ma60_near": 1,
     "ma200_near": 1,
     "ma_cross_20_60": -1,
+    "bar_spike_20": -1,
     "chg1_50": -1,
     "chg1_down1": 0,
     "chg1_down10": 1,
@@ -99,6 +101,7 @@ WEIGHT_FIELDS = [
     ("trendline_dir_down", "둘 다 하락·하락선 근접", "둘 다 하락이고 하락선 근처이면 −1. 돌파 무효"),
     ("trendline_dir_down_upnear", "둘 다 하락·상승선 근접", "둘 다 하락이고 상승선 근처이면 +1. 이탈 무효"),
     ("trendline_1m_up", "둘 다 하락·1개월 상승선 상방", "둘 다 하락이고 1개월(1시간봉) 상승선이 상방이면 +1"),
+    ("trendline_1m_up_both_up", "둘 다 상승·1개월 상승선 상방", "둘 다 상승이고 1개월(1시간봉) 상승선이 상방이면 +1"),
     ("support_near", "지지 근접", "근접하고 강도 4 이상일 때만 +1"),
     ("support_break", "지지 이탈", "이탈 후 다음 지지가 현재가보다 뚜렷이 아래이면 −2"),
     ("resist_near", "저항 근접", "근접하고 강도 4 이상일 때만 −1"),
@@ -117,6 +120,7 @@ WEIGHT_FIELDS = [
     ("chg6_300", "6개월 상승 300%", "6개월 전 대비 300% 이상 600% 미만 −1. 횡보·하락이면 무효"),
     ("chg6_600", "6개월 상승 600%", "6개월 전 대비 600% 이상 800% 미만 −2. 횡보·하락이면 무효"),
     ("chg6_800", "6개월 상승 800%", "6개월 전 대비 800% 이상 −3"),
+    ("bar_spike_20", "단기 급상승", "직전 봉 대비 1봉에 20% 이상 오르면 −1"),
     ("rr_penalty", "손익비 부족", "손익비 1.2 미만이고 점수가 높을 때"),
     ("option_wall", "옵션 월", "기존 매수/매도 이후 추가. 만기 14일 안 콜·풋월. 매도 때 근처 콜두껍/풋얇 −1, 반대 +1. 매수 때 근처 풋얇+콜두껍 −1"),
 ]
@@ -176,6 +180,8 @@ RETURN_TIER_DEFAULTS = {
     "trendline_dir_down_break": 0,
     "trendline_dir_down_upnear": 1,
     "trendline_1m_up": 1,
+    "trendline_1m_up_both_up": 1,
+    "bar_spike_20": -1,
     "up_line_near": 1,
     "up_line_break": 0,
     "ma20": 1,
@@ -357,10 +363,15 @@ def score_bounds(_has_6m: bool | None = None) -> tuple[int, int]:
 
 
 def score_to_pct(score: int, _has_6m: bool | None = None) -> int:
-    lo, hi = SCORE_LO, SCORE_HI
-    if hi <= lo:
-        return 50
-    pct = (score - lo) / (hi - lo) * 100
+    s = max(float(SCORE_LO), min(float(SCORE_HI), float(score)))
+    if SCORE_BASE <= SCORE_LO or SCORE_HI <= SCORE_BASE:
+        if SCORE_HI <= SCORE_LO:
+            return 50
+        pct = (s - SCORE_LO) / (SCORE_HI - SCORE_LO) * 100
+    elif s <= SCORE_BASE:
+        pct = (s - SCORE_LO) / (SCORE_BASE - SCORE_LO) * 50.0
+    else:
+        pct = 50.0 + (s - SCORE_BASE) / (SCORE_HI - SCORE_BASE) * 50.0
     return int(round(max(0.0, min(100.0, pct))))
 
 
@@ -378,6 +389,16 @@ def _n_day_change(an: Analysis, price: float, days: int) -> float | None:
 
 def _one_month_change(an: Analysis, price: float) -> float | None:
     return _n_day_change(an, price, 30)
+
+
+def _one_bar_return(an: Analysis, price: float) -> float | None:
+    df = an.df
+    if df is None or getattr(df, "empty", True) or len(df) < 2 or "close" not in df.columns:
+        return None
+    prev = float(pd.to_numeric(df["close"], errors="coerce").iloc[-2])
+    if not (prev > 0):
+        return None
+    return float(price) / prev - 1.0
 
 
 def _fmt(price: float) -> str:
@@ -663,12 +684,17 @@ def recommend(
 
     w1 = df_1m if df_1m is not None and not getattr(df_1m, "empty", True) else _window_df(an.df, an.as_of, 30)
     dir_1m = _line_dir(_up_line_from_df(w1))
+    both_up = up_dir == "up" and down_dir == "up"
     if both_down and dir_1m == "up":
         add("1개월 추세선", "둘 다 하락 · 1개월 상승선 상방", wp("trendline_1m_up"))
+    elif both_up and dir_1m == "up":
+        add("1개월 추세선", "둘 다 상승 · 1개월 상승선 상방", wp("trendline_1m_up_both_up"))
     elif both_down:
         add("1개월 추세선", f"둘 다 하락 · 1개월 상승선 {dir_1m or '없음'}이라 무효", 0)
+    elif both_up:
+        add("1개월 추세선", f"둘 다 상승 · 1개월 상승선 {dir_1m or '없음'}이라 무효", 0)
     else:
-        add("1개월 추세선", "둘 다 하락이 아니라 해당 없음", 0)
+        add("1개월 추세선", "둘 다 상승/하락이 아니라 해당 없음", 0)
 
     if nsup:
         dist_s = price - nsup.price
@@ -781,6 +807,14 @@ def recommend(
             add("1개월 하락률", f"{chg_pct:.1f}% (10% 이상 20% 미만 하락)", wp("chg1_down10"))
         else:
             add("1개월 상승률", f"{chg_pct:.1f}%", 0)
+
+    bar_ret = _one_bar_return(an, price)
+    if bar_ret is None:
+        add("단기 급상승", "직전 봉 없음", 0)
+    elif bar_ret >= 0.20 - 1e-9:
+        add("단기 급상승", f"1봉 {bar_ret * 100:.1f}% (20% 이상)", wp("bar_spike_20"))
+    else:
+        add("단기 급상승", f"1봉 {bar_ret * 100:.1f}%", 0)
 
     chg6 = six_month_chg
     if chg6 is None:
