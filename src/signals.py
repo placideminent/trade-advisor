@@ -8,12 +8,12 @@ import pandas as pd
 
 from .universe import is_crypto
 
-SIGNAL_RULE_VERSION = 96
+SIGNAL_RULE_VERSION = 97
 # 이 숫자를 올리면 배점 조절창 위젯 키·제목도 같이 바뀌어 예전 설명이 남지 않는다.
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 15
-# 합산 %는 1점=0%, 15점=50%, 30점=100%.
-SCORE_LO = 1
+# 합산 %는 0점=0%, 15점=50%, 30점=100%.
+SCORE_LO = 0
 SCORE_HI = 30
 
 DEFAULT_WEIGHTS = {
@@ -44,7 +44,9 @@ DEFAULT_WEIGHTS = {
     "ma_cross_20_60": -1,
     "bar_spike_20": -1,
     "ath_clear": 1,
-    "ath_fail": -1,
+    "ath_resist": -1,
+    "ath_reenter": -1,
+    "ath_fail": 0,
     "chg1_50": -1,
     "chg1_down1": 0,
     "chg1_down10": 1,
@@ -102,8 +104,8 @@ WEIGHT_FIELDS = [
     ("up_line_near", "상승 추세선 근접", "상승 추세선 근접 했을 때, 이탈하면 무효"),
     ("trendline_dir_down", "추세선 방향", "하락 추세선 상승 추세선 모두 하락이면서 현재가가 하락 추세선 근접했을때, 하락 추세선 돌파시 무효"),
     ("trendline_dir_down_upnear", "추세선 방향", "하락 추세선 상승 추세선 모두 하락이면서 현재가가 상승 추세선 근접했을 때, 상승 추세선 이탈시 무효"),
-    ("trendline_1m_up", "하방향 1개월 추세선 고려", "(3개월,6개월,1년 조회에만 적용) 하락 추세선 상승 추세선 모두 하락이면서 해당 시점에 1개월(1시간봉기준)조회시 상승추세선이 상방향일 때, 상방향 아니면 무효"),
-    ("trendline_1m_up_both_up", "상방향 1개월 추세선 고려", "(3개월,6개월,1년 조회에만 적용) 하락 추세선 상승 추세선 모두 상승이면서 해당 시점에 1개월(1시간봉기준)조회시 상승추세선이 하방향일 때, 하방향 아니면 무효"),
+    ("trendline_1m_up", "하방향 1개월 추세선 고려", "(3개월,6개월,1년 조회에만 적용) 하락 추세선 상승 추세선 모두 하락이면서 해당 시점에 1개월(1시간봉기준)조회시 상승추세선이 상방향일 때"),
+    ("trendline_1m_up_both_up", "상방향 1개월 추세선 고려", "(3개월,6개월,1년 조회에만 적용) 하락 추세선 상승 추세선 모두 상승이면서 해당 시점에 1개월(1시간봉기준)조회시 상승추세선이 하방향일 때 상승 추세선에 근접했으면 가점, 하방향 아니면 무효"),
     ("support_near", "지지 근접", "지지선 바로 옆이고 강도 4 이상일 때"),
     ("support_break", "지지 이탈", "지지 이탈 후 다음 지지선이 현재가 보다 뚜렷이 아래에 있을 때"),
     ("resist_near", "저항 근접", "저항선 바로 옆이고, 강도 4 이상일 때"),
@@ -123,8 +125,9 @@ WEIGHT_FIELDS = [
     ("chg6_600", "6개월 상승률", "6개월 동안 600% 이상 오름, 횡보 추세나 하락 추세시 무효"),
     ("chg6_300", "6개월 상승률", "6개월 동안 300% 이상 600% 미만 오름, 횡보 추세나 하락 추세시 무효"),
     ("bar_spike_20", "단기 급상승", "1개 봉만에 20% 이상 상승했을 시"),
-    ("ath_clear", "신고가", "위에 저항이 아예 없는 신고가의 경우 +1점, 신고가 이후 4개봉 지나면 무효"),
-    ("ath_fail", "신고가 돌파 실패", "신고가 이후 8개봉동안 신고가 갱신 못하면 -1점, 신고가 이후 12개봉 지나면 무효"),
+    ("ath_clear", "신고가 달성", "6개월 상승률이 800% 미만이면서 위에 저항이 없는 신고가의 경우"),
+    ("ath_resist", "신고가 저항", "6개월 상승률이 800% 이상이면서 위에 저항이 없는 신고가의 경우"),
+    ("ath_reenter", "신고가 이탈", "신고가 돌파 후 다시 하락 추세선 안으로 현재가가 내려왔을 때"),
     ("option_wall", "옵션", "기존 결과가 홀딩이면 옵션은 보지 않음 / 기존이 매도인데, 만기가 14일 안이고, 위쪽에 콜 벽이 두껍고 아래 풋 벽이 얇음 / 반대로 아래 풋 벽이 두껍고 위 콜 벽이 얇음 / 기존이 매수인데, 아래 풋 벽이 얇고 위 콜 벽이 두꺼움"),
 ]
 
@@ -144,10 +147,12 @@ DROPPED_WEIGHT_KEYS = frozenset({
     "chg6_500",
     "rr_penalty",
     "trend",
+    "ath_fail",
 })
 _HIDDEN_WEIGHT_LABELS = (
     "손익비",
     "손익비 부족",
+    "신고가 돌파 실패",
     "1개월 상승선 근접",
     "스윙 저점 근접",
     "스윙 고점 근접",
@@ -489,6 +494,25 @@ def _resistance_above_ath(levels, ath: float) -> Level | None:
     return best
 
 
+def _price_was_above_line(df, line, last_price: float | None = None) -> bool:
+    """조회 기간 안에 고가·현재가가 추세선 위로 올라간 적이 있는지."""
+    if df is None or getattr(df, "empty", True) or line is None:
+        return False
+    highs = pd.to_numeric(df["high"], errors="coerce") if "high" in df.columns else None
+    n = len(df)
+    for i in range(n):
+        y = _line_y_at(line, float(i))
+        if y is None:
+            continue
+        if highs is not None:
+            h = highs.iloc[i]
+            if pd.notna(h) and float(h) > y:
+                return True
+        if last_price is not None and i == n - 1 and float(last_price) > y:
+            return True
+    return False
+
+
 def _fmt(price: float) -> str:
     if price >= 1000:
         return f"{price:,.0f}"
@@ -780,8 +804,10 @@ def recommend(
             add("하방향 1개월 추세선 고려", f"둘 다 하락 · 1개월 상승추세선 {dir_1m_ko}이라 무효", 0)
         else:
             add("하방향 1개월 추세선 고려", "둘 다 하락이 아니라 해당 없음", 0)
-        if both_up and dir_1m == "down":
-            add("상방향 1개월 추세선 고려", "둘 다 상승 · 1개월 상승추세선 하방향", wp("trendline_1m_up_both_up"))
+        if both_up and dir_1m == "down" and near_up:
+            add("상방향 1개월 추세선 고려", "둘 다 상승 · 1개월 상승추세선 하방향 · 상승 추세선 근접", wp("trendline_1m_up_both_up"))
+        elif both_up and dir_1m == "down":
+            add("상방향 1개월 추세선 고려", "둘 다 상승 · 1개월 상승추세선 하방향 · 상승 추세선 근접 아니라 무효", 0)
         elif both_up:
             add("상방향 1개월 추세선 고려", f"둘 다 상승 · 1개월 상승추세선 {dir_1m_ko}이라 무효", 0)
         else:
@@ -936,24 +962,37 @@ def recommend(
         add("단기 급상승", f"1봉 {bar_ret * 100:.1f}%", 0)
 
     ath_ev = _ath_since(an.df, price)
+    chg6_pct = None if chg6 is None else float(chg6) * 100.0
     if ath_ev is None:
-        add("신고가", "조회 기간 고가를 계산하지 못함", 0)
-        add("신고가 돌파 실패", "조회 기간 고가를 계산하지 못함", 0)
+        add("신고가 달성", "조회 기간 고가를 계산하지 못함", 0)
+        add("신고가 저항", "조회 기간 고가를 계산하지 못함", 0)
     else:
         since, ath = ath_ev
         res_up = _resistance_above_ath(an.resistances, ath)
-        if since >= 4:
-            add("신고가", f"신고가 {_fmt(ath)} 이후 {since}봉 지나 무효", 0)
+        at_ath = since == 0 or (price >= ath - near)
+        if not at_ath:
+            add("신고가 달성", f"신고가 {_fmt(ath)} 과 이격 {_fmt(abs(price - ath))}", 0)
+            add("신고가 저항", f"신고가 {_fmt(ath)} 과 이격 {_fmt(abs(price - ath))}", 0)
         elif res_up is not None:
-            add("신고가", f"신고가 {_fmt(ath)} · 위 저항 {_fmt(res_up.price)} 이라 해당 없음", 0)
+            add("신고가 달성", f"신고가 {_fmt(ath)} · 위 저항 {_fmt(res_up.price)} 이라 해당 없음", 0)
+            add("신고가 저항", f"신고가 {_fmt(ath)} · 위 저항 {_fmt(res_up.price)} 이라 해당 없음", 0)
+        elif chg6_pct is not None and chg6_pct >= 800 - 1e-9:
+            add("신고가 달성", f"6개월 {chg6_pct:.1f}% · 800% 이상이라 해당 없음", 0)
+            add("신고가 저항", f"위에 저항 없음 · 신고가 {_fmt(ath)} · 6개월 {chg6_pct:.1f}%", wp("ath_resist"))
         else:
-            add("신고가", f"위에 저항 없음 · 신고가 {_fmt(ath)} 이후 {since}봉", wp("ath_clear"))
-        if since >= 12:
-            add("신고가 돌파 실패", f"신고가 {_fmt(ath)} 이후 {since}봉 지나 무효", 0)
-        elif since >= 8:
-            add("신고가 돌파 실패", f"신고가 {_fmt(ath)} 이후 {since}봉 동안 갱신 못함", wp("ath_fail"))
-        else:
-            add("신고가 돌파 실패", f"신고가 {_fmt(ath)} 이후 {since}봉 · 8봉 미만", 0)
+            chg_txt = "6개월 없음" if chg6_pct is None else f"6개월 {chg6_pct:.1f}%"
+            add("신고가 달성", f"위에 저항 없음 · 신고가 {_fmt(ath)} · {chg_txt}", wp("ath_clear"))
+            add("신고가 저항", f"{chg_txt} · 800% 미만이라 해당 없음", 0)
+
+    y_dn_now = y_dn
+    if down_line is None or y_dn_now is None:
+        add("신고가 이탈", "하락선 없음", 0)
+    elif price >= y_dn_now:
+        add("신고가 이탈", f"하락선 {_fmt(y_dn_now)} 안이 아님", 0)
+    elif _price_was_above_line(an.df, down_line, price):
+        add("신고가 이탈", f"신고가 돌파 후 하락선 {_fmt(y_dn_now)} 안으로 복귀", wp("ath_reenter"))
+    else:
+        add("신고가 이탈", "하락선 위로 돌파한 적 없음", 0)
 
     stop = None
     target = None
