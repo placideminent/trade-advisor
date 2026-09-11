@@ -1263,6 +1263,15 @@ st.markdown(
         .proposal-action { font-size: 1.12rem; }
         .proposal-price { font-size: 1.45rem; }
       }
+      html, body, .stApp,
+      [data-testid="stAppViewContainer"],
+      [data-testid="stMain"],
+      [data-testid="stAppScrollToBottomContainer"],
+      section.main {
+        overscroll-behavior: none !important;
+        overscroll-behavior-y: none !important;
+        overscroll-behavior-x: none !important;
+      }
       .stPlotlyChart,
       .stPlotlyChart .js-plotly-plot,
       .stPlotlyChart .plotly,
@@ -1279,7 +1288,7 @@ st.markdown(
       .stPlotlyChart .cursor-crosshair,
       .stPlotlyChart .cursor-ew-resize,
       .stPlotlyChart .cursor-ns-resize {
-        touch-action: pan-y !important;
+        touch-action: manipulation !important;
       }
     </style>
     """,
@@ -1313,7 +1322,7 @@ components.html(
     doc.querySelectorAll(".js-plotly-plot").forEach(function(plot) {
       var capture = zooming(plot);
       plot.querySelectorAll(".nsewdrag,.draglayer,.overlay").forEach(function(el) {
-        el.style.setProperty("touch-action", capture ? "none" : "pan-y", "important");
+        el.style.setProperty("touch-action", capture ? "none" : "manipulation", "important");
         if (coarse) {
           el.style.setProperty("pointer-events", capture ? "all" : "none", "important");
         }
@@ -1330,12 +1339,47 @@ components.html(
   } catch (e) {}
   apply();
   setInterval(apply, 1000);
+  var startY = 0;
+  function scrollers() {
+    return [
+      doc.scrollingElement,
+      doc.documentElement,
+      doc.body,
+      doc.querySelector('[data-testid="stAppViewContainer"]'),
+      doc.querySelector('[data-testid="stMain"]'),
+      doc.querySelector(".stApp"),
+      doc.querySelector("section.main"),
+    ].filter(Boolean);
+  }
+  function atTop() {
+    return scrollers().every(function(el) {
+      return (el.scrollTop || 0) <= 0;
+    });
+  }
+  doc.addEventListener("touchstart", function(e) {
+    if (e.touches && e.touches.length) startY = e.touches[0].clientY;
+  }, {passive: true, capture: true});
+  doc.addEventListener("touchmove", function(e) {
+    if (!e.touches || !e.touches.length) return;
+    var y = e.touches[0].clientY;
+    if (atTop() && y > startY + 2) {
+      e.preventDefault();
+    }
+  }, {passive: false, capture: true});
 })();
 </script>
     """,
     height=0,
 )
 
+if st.button("새로고침", key="app_refresh_top", use_container_width=True):
+    reset_yahoo_gate()
+    try:
+        st.cache_data.clear()
+    except Exception:
+        pass
+    st.session_state._auto_run = True
+    st.rerun()
 st.title("자산 트레이드 분석기")
 st.caption(
     "조회 시점의 현재가를 기준으로 추세선·지지/저항·매물대를 보고 "
@@ -2437,12 +2481,11 @@ with st.sidebar:
             hypo_px = st.number_input(
                 "가상 현재가",
                 key=hypo_key,
-                help="0이면 실제 현재가(또는 해당일 종가)로 봅니다. 값을 넣으면 오늘 시세 구조에서 그 가격을 가정해 분석합니다.",
+                help="0이면 실제 현재가(또는 해당일 종가)로 봅니다. 값을 넣으면 고른 분석 시점 차트에서 그 가격을 가정합니다. 그날 이후 시세는 보지 않습니다.",
                 **hypo_kw,
             )
             if float(hypo_px or 0) > 0:
-                as_of = today_m
-                st.caption("가상 현재가가 있어 **오늘 시점**으로 분석합니다.")
+                st.caption("가상 현재가를 고른 **분석 시점**에 적용합니다. 그날 이후 시세는 보지 않습니다.")
     lookback_keys = list(LOOKBACK_OPTIONS.keys())
     if page == "시뮬레이션":
         lb_key = "lookback_sim_v3"
@@ -2641,7 +2684,7 @@ if not run:
         """
         #### 이 프로그램이 하는 일
         1. 즐겨찾기에서 종목을 고르거나, 검색·티커로 직접 넣습니다.
-        2. **과거 특정 날짜**를 시점으로 넣으면 그 날 이후 시세는 보지 않습니다. 가상 현재가를 넣으면 오늘 시점에서 그 가격을 가정해 분석합니다.
+        2. **과거 특정 날짜**를 시점으로 넣으면 그 날 이후 시세는 보지 않습니다. 가상 현재가를 넣으면 그 분석 시점 차트에서 그 가격을 가정해 분석합니다.
         3. 그 시점의 추세선, 지지/저항, 주요 매물대를 그린 뒤 매수·매도·홀딩을 제안합니다.
         4. 종목을 즐겨찾기에 넣으면 한 화면에서 제안만 모아 볼 수 있습니다.
         5. 시뮬레이션 화면에서 한 종목 또는 즐겨찾기 전체를 돌립니다. 즐겨찾기는 종목별 수량을 따로 저장합니다.
@@ -2688,12 +2731,12 @@ live_src_shown = ""
 if hypo_on:
     spot_price = float(hypo_px)
     spot_source = "가상 현재가"
-    is_live = True
-    try:
-        live_px_shown, live_src_shown = fetch_spot_price(market, ticker)
-    except Exception:
-        live_px_shown, live_src_shown = None, ""
-    df = drop_incomplete_session(df, as_of)
+    if is_live:
+        try:
+            live_px_shown, live_src_shown = fetch_spot_price(market, ticker)
+        except Exception:
+            live_px_shown, live_src_shown = None, ""
+        df = drop_incomplete_session(df, as_of)
 elif is_live:
     try:
         spot_price, spot_source = fetch_spot_price(market, ticker)
