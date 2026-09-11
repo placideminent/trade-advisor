@@ -8,7 +8,7 @@ import pandas as pd
 
 from .universe import is_crypto
 
-SIGNAL_RULE_VERSION = 97
+SIGNAL_RULE_VERSION = 98
 # 이 숫자를 올리면 배점 조절창 위젯 키·제목도 같이 바뀌어 예전 설명이 남지 않는다.
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 15
@@ -118,9 +118,9 @@ WEIGHT_FIELDS = [
     ("ma200_near", "180일선", "현재가가 장기 이평 근처일 때. 6개월 조회는 180일선, 1년 조회는 300일선, 완전이탈시 무효"),
     ("ma_cross_20_60", "20일선 60일선 교차", "20일선 방향이 하방으로 떨어지면서 60일선 아래로 떨어지기 시작할때, 떨어지고 4봉이상 지나면 무효"),
     ("chg1_50", "1개월 상승률", "한 달 동안 70% 이상 오름"),
-    ("chg1_down10", "1개월 하락률", "한 달동안 10% 이상 20%미만 하락 했을 때"),
-    ("chg1_down20", "1개월 하락률", "한 달 동안 20% 이상 30% 미만 떨어짐"),
-    ("chg1_down30", "1개월 하락률", "한 달 동안 30% 이상 떨어짐"),
+    ("chg1_down10", "1개월 하락률", "한 달동안 15% 이상 25%미만 하락 했을 때"),
+    ("chg1_down20", "1개월 하락률", "한 달 동안 25% 이상 35% 미만 떨어짐"),
+    ("chg1_down30", "1개월 하락률", "한 달 동안 35% 이상 떨어짐"),
     ("chg6_800", "6개월 상승률", "6개월 동안 800% 이상 오름"),
     ("chg6_600", "6개월 상승률", "6개월 동안 600% 이상 오름, 횡보 추세나 하락 추세시 무효"),
     ("chg6_300", "6개월 상승률", "6개월 동안 300% 이상 600% 미만 오름, 횡보 추세나 하락 추세시 무효"),
@@ -703,7 +703,7 @@ def recommend(
 
     price = an.price
     atr = an.atr if an.atr and an.atr > 0 else price * 0.02
-    near = max(atr * 0.55, price * 0.010)
+    near = max(atr * 0.30, price * 0.010)
 
     nsup = an.supports[0] if an.supports else None
     nres = an.resistances[0] if an.resistances else None
@@ -920,12 +920,12 @@ def recommend(
             add("1개월 상승률", f"{chg_pct:.1f}%", 0)
         else:
             add("1개월 상승률", "해당 없음", 0)
-        if chg_pct <= -30 + 1e-9:
-            add("1개월 하락률", f"{chg_pct:.1f}% (30% 이상 하락)", wp("chg1_down30"))
-        elif chg_pct <= -20 + 1e-9:
-            add("1개월 하락률", f"{chg_pct:.1f}% (20% 이상 30% 미만 하락)", wp("chg1_down20"))
-        elif chg_pct <= -10 + 1e-9:
-            add("1개월 하락률", f"{chg_pct:.1f}% (10% 이상 20% 미만 하락)", wp("chg1_down10"))
+        if chg_pct <= -35 + 1e-9:
+            add("1개월 하락률", f"{chg_pct:.1f}% (35% 이상 하락)", wp("chg1_down30"))
+        elif chg_pct <= -25 + 1e-9:
+            add("1개월 하락률", f"{chg_pct:.1f}% (25% 이상 35% 미만 하락)", wp("chg1_down20"))
+        elif chg_pct <= -15 + 1e-9:
+            add("1개월 하락률", f"{chg_pct:.1f}% (15% 이상 25% 미만 하락)", wp("chg1_down10"))
         elif chg_pct < 0:
             add("1개월 하락률", f"{chg_pct:.1f}%", 0)
         else:
