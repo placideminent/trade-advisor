@@ -8,12 +8,12 @@ import pandas as pd
 
 from .universe import is_crypto
 
-SIGNAL_RULE_VERSION = 98
+SIGNAL_RULE_VERSION = 99
 # 이 숫자를 올리면 배점 조절창 위젯 키·제목도 같이 바뀌어 예전 설명이 남지 않는다.
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 15
-# 합산 %는 0점=0%, 15점=50%, 30점=100%.
-SCORE_LO = 0
+# 합산 %는 1점=0%, 15점=50%, 30점=100%.
+SCORE_LO = 1
 SCORE_HI = 30
 
 DEFAULT_WEIGHTS = {
@@ -47,7 +47,7 @@ DEFAULT_WEIGHTS = {
     "ath_resist": -1,
     "ath_reenter": -1,
     "ath_fail": 0,
-    "chg1_50": -1,
+    "chg1_50": 0,
     "chg1_down1": 0,
     "chg1_down10": 1,
     "chg1_down20": 2,
@@ -117,17 +117,16 @@ WEIGHT_FIELDS = [
     ("ma60_near", "60일선", "현재가가 60일선 근처일때, 60일선 완전 이탈시 무효"),
     ("ma200_near", "180일선", "현재가가 장기 이평 근처일 때. 6개월 조회는 180일선, 1년 조회는 300일선, 완전이탈시 무효"),
     ("ma_cross_20_60", "20일선 60일선 교차", "20일선 방향이 하방으로 떨어지면서 60일선 아래로 떨어지기 시작할때, 떨어지고 4봉이상 지나면 무효"),
-    ("chg1_50", "1개월 상승률", "한 달 동안 70% 이상 오름"),
     ("chg1_down10", "1개월 하락률", "한 달동안 15% 이상 25%미만 하락 했을 때"),
     ("chg1_down20", "1개월 하락률", "한 달 동안 25% 이상 35% 미만 떨어짐"),
     ("chg1_down30", "1개월 하락률", "한 달 동안 35% 이상 떨어짐"),
-    ("chg6_800", "6개월 상승률", "6개월 동안 800% 이상 오름"),
+    ("chg6_800", "6개월 상승률", "6개월 동안 800% 이상 오름,횡보 추세나 하락 추세시 무효"),
     ("chg6_600", "6개월 상승률", "6개월 동안 600% 이상 오름, 횡보 추세나 하락 추세시 무효"),
     ("chg6_300", "6개월 상승률", "6개월 동안 300% 이상 600% 미만 오름, 횡보 추세나 하락 추세시 무효"),
     ("bar_spike_20", "단기 급상승", "1개 봉만에 20% 이상 상승했을 시"),
-    ("ath_clear", "신고가 달성", "6개월 상승률이 800% 미만이면서 위에 저항이 없는 신고가의 경우"),
-    ("ath_resist", "신고가 저항", "6개월 상승률이 800% 이상이면서 위에 저항이 없는 신고가의 경우"),
-    ("ath_reenter", "신고가 이탈", "신고가 돌파 후 다시 하락 추세선 안으로 현재가가 내려왔을 때"),
+    ("ath_clear", "신고가 달성", "6개월 상승률이 800% 미만이면서 위에 저항이 없는 신고가의 경우, 3봉 이후 무효"),
+    ("ath_resist", "신고가 저항", "6개월 상승률이 800% 이상이면서 위에 저항이 없는 신고가의 경우, 2봉 이후 무효"),
+    ("ath_reenter", "신고가 이탈", "신고가 돌파 후 3봉 이내에 다시 하락 추세선 안으로 현재가가 내려왔을 때, 3봉 이후 무효"),
     ("option_wall", "옵션", "기존 결과가 홀딩이면 옵션은 보지 않음 / 기존이 매도인데, 만기가 14일 안이고, 위쪽에 콜 벽이 두껍고 아래 풋 벽이 얇음 / 반대로 아래 풋 벽이 두껍고 위 콜 벽이 얇음 / 기존이 매수인데, 아래 풋 벽이 얇고 위 콜 벽이 두꺼움"),
 ]
 
@@ -148,10 +147,12 @@ DROPPED_WEIGHT_KEYS = frozenset({
     "rr_penalty",
     "trend",
     "ath_fail",
+    "chg1_50",
 })
 _HIDDEN_WEIGHT_LABELS = (
     "손익비",
     "손익비 부족",
+    "1개월 상승률",
     "신고가 돌파 실패",
     "1개월 상승선 근접",
     "스윙 저점 근접",
@@ -173,7 +174,7 @@ _HIDDEN_WEIGHT_LABELS = (
 
 RETURN_TIER_DEFAULTS = {
     "base": 15,
-    "chg1_50": -1,
+    "chg1_50": 0,
     "chg1_down1": 0,
     "chg1_down10": 1,
     "chg1_down20": 2,
@@ -910,16 +911,9 @@ def recommend(
 
     chg = _one_month_change(an, price)
     if chg is None:
-        add("1개월 상승률", "계산 불가", 0)
         add("1개월 하락률", "계산 불가", 0)
     else:
         chg_pct = chg * 100.0
-        if chg_pct >= 70 - 1e-9:
-            add("1개월 상승률", f"{chg_pct:.1f}% (70% 이상 상승)", wp("chg1_50"))
-        elif chg_pct > 0:
-            add("1개월 상승률", f"{chg_pct:.1f}%", 0)
-        else:
-            add("1개월 상승률", "해당 없음", 0)
         if chg_pct <= -35 + 1e-9:
             add("1개월 하락률", f"{chg_pct:.1f}% (35% 이상 하락)", wp("chg1_down30"))
         elif chg_pct <= -25 + 1e-9:
@@ -937,7 +931,11 @@ def recommend(
     if chg6 is None:
         add("6개월 상승률", "6개월 전 가격 없음", 0)
     elif chg6 >= 8.0:
-        add("6개월 상승률", f"{chg6 * 100:.1f}% (800% 이상)", wp("chg6_800"))
+        if an.trend != "up":
+            kind = "하락" if an.trend == "down" else "횡보"
+            add("6개월 상승률", f"{chg6 * 100:.1f}% (800% 이상) · {kind}라 무효", 0)
+        else:
+            add("6개월 상승률", f"{chg6 * 100:.1f}% (800% 이상)", wp("chg6_800"))
     elif chg6 >= 6.0:
         if an.trend != "up":
             kind = "하락" if an.trend == "down" else "횡보"
@@ -970,27 +968,41 @@ def recommend(
         since, ath = ath_ev
         res_up = _resistance_above_ath(an.resistances, ath)
         at_ath = since == 0 or (price >= ath - near)
-        if not at_ath:
+        hot_800 = chg6_pct is not None and chg6_pct >= 800 - 1e-9
+        chg_txt = "6개월 없음" if chg6_pct is None else f"6개월 {chg6_pct:.1f}%"
+        if since >= 3:
+            add("신고가 달성", f"신고가 {_fmt(ath)} 이후 {since}봉 지나 무효", 0)
+        elif not at_ath:
             add("신고가 달성", f"신고가 {_fmt(ath)} 과 이격 {_fmt(abs(price - ath))}", 0)
-            add("신고가 저항", f"신고가 {_fmt(ath)} 과 이격 {_fmt(abs(price - ath))}", 0)
         elif res_up is not None:
             add("신고가 달성", f"신고가 {_fmt(ath)} · 위 저항 {_fmt(res_up.price)} 이라 해당 없음", 0)
-            add("신고가 저항", f"신고가 {_fmt(ath)} · 위 저항 {_fmt(res_up.price)} 이라 해당 없음", 0)
-        elif chg6_pct is not None and chg6_pct >= 800 - 1e-9:
-            add("신고가 달성", f"6개월 {chg6_pct:.1f}% · 800% 이상이라 해당 없음", 0)
-            add("신고가 저항", f"위에 저항 없음 · 신고가 {_fmt(ath)} · 6개월 {chg6_pct:.1f}%", wp("ath_resist"))
+        elif hot_800:
+            add("신고가 달성", f"{chg_txt} · 800% 이상이라 해당 없음", 0)
         else:
-            chg_txt = "6개월 없음" if chg6_pct is None else f"6개월 {chg6_pct:.1f}%"
             add("신고가 달성", f"위에 저항 없음 · 신고가 {_fmt(ath)} · {chg_txt}", wp("ath_clear"))
+        if since >= 2:
+            add("신고가 저항", f"신고가 {_fmt(ath)} 이후 {since}봉 지나 무효", 0)
+        elif not at_ath:
+            add("신고가 저항", f"신고가 {_fmt(ath)} 과 이격 {_fmt(abs(price - ath))}", 0)
+        elif res_up is not None:
+            add("신고가 저항", f"신고가 {_fmt(ath)} · 위 저항 {_fmt(res_up.price)} 이라 해당 없음", 0)
+        elif hot_800:
+            add("신고가 저항", f"위에 저항 없음 · 신고가 {_fmt(ath)} · {chg_txt}", wp("ath_resist"))
+        else:
             add("신고가 저항", f"{chg_txt} · 800% 미만이라 해당 없음", 0)
 
     y_dn_now = y_dn
+    ath_since = None if ath_ev is None else int(ath_ev[0])
     if down_line is None or y_dn_now is None:
         add("신고가 이탈", "하락선 없음", 0)
+    elif ath_since is None:
+        add("신고가 이탈", "신고가 시점을 계산하지 못함", 0)
+    elif ath_since >= 3:
+        add("신고가 이탈", f"신고가 이후 {ath_since}봉 지나 무효", 0)
     elif price >= y_dn_now:
         add("신고가 이탈", f"하락선 {_fmt(y_dn_now)} 안이 아님", 0)
     elif _price_was_above_line(an.df, down_line, price):
-        add("신고가 이탈", f"신고가 돌파 후 하락선 {_fmt(y_dn_now)} 안으로 복귀", wp("ath_reenter"))
+        add("신고가 이탈", f"신고가 돌파 후 {ath_since}봉 안에 하락선 {_fmt(y_dn_now)} 복귀", wp("ath_reenter"))
     else:
         add("신고가 이탈", "하락선 위로 돌파한 적 없음", 0)
 
