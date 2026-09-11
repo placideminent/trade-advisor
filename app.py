@@ -1284,11 +1284,42 @@ st.markdown(
       .stPlotlyChart .nwdrag,
       .stPlotlyChart .nedrag,
       .stPlotlyChart .swdrag,
-      .stPlotlyChart .sedrag,
-      .stPlotlyChart .cursor-crosshair,
-      .stPlotlyChart .cursor-ew-resize,
-      .stPlotlyChart .cursor-ns-resize {
-        touch-action: manipulation !important;
+      .stPlotlyChart .sedrag {
+        touch-action: none !important;
+        pointer-events: auto !important;
+      }
+      @media (pointer: coarse), (max-width: 900px) {
+        html, body {
+          height: 100dvh !important;
+          max-height: 100dvh !important;
+          overflow: hidden !important;
+          overscroll-behavior: none !important;
+        }
+        .stApp,
+        [data-testid="stAppViewContainer"] {
+          height: 100dvh !important;
+          max-height: 100dvh !important;
+          overflow: hidden !important;
+          overscroll-behavior: none !important;
+        }
+        [data-testid="stMain"],
+        section.main {
+          height: 100% !important;
+          max-height: 100% !important;
+          overflow-y: auto !important;
+          overflow-x: hidden !important;
+          overscroll-behavior-y: none !important;
+          -webkit-overflow-scrolling: touch;
+        }
+        [data-testid="stSidebar"] {
+          overscroll-behavior: none !important;
+        }
+        [data-testid="stSidebarContent"],
+        [data-testid="stSidebarUserContent"],
+        [data-testid="stSidebar"] [data-testid="stVerticalBlock"] {
+          overscroll-behavior-y: contain !important;
+          -webkit-overflow-scrolling: touch;
+        }
       }
     </style>
     """,
@@ -1299,10 +1330,25 @@ components.html(
     """
 <script>
 (function() {
-  var doc;
-  try { doc = window.parent && window.parent.document ? window.parent.document : document; }
-  catch (e) { return; }
+  var win, doc;
+  try {
+    win = window.parent && window.parent.document ? window.parent : window;
+    doc = win.document;
+  } catch (e) {
+    win = window;
+    doc = document;
+  }
+  function closest(el, sel) {
+    try { return el && el.closest ? el.closest(sel) : null; } catch (e) { return null; }
+  }
+  function inSidebar(el) {
+    return !!closest(el, '[data-testid="stSidebar"]');
+  }
+  function plotOf(el) {
+    return closest(el, ".js-plotly-plot, .stPlotlyChart");
+  }
   function zooming(plot) {
+    if (!plot) return false;
     var active = plot.querySelector(".modebar-btn.active");
     if (!active) return false;
     var title = (
@@ -1313,59 +1359,66 @@ components.html(
     ).toLowerCase();
     return /zoom|pan|확대|이동/.test(title);
   }
-  function apply() {
-    var coarse = false;
-    try {
-      coarse = !!(window.parent || window).matchMedia &&
-        (window.parent || window).matchMedia("(pointer: coarse)").matches;
-    } catch (e) {}
+  function applyPlot() {
     doc.querySelectorAll(".js-plotly-plot").forEach(function(plot) {
-      var capture = zooming(plot);
-      plot.querySelectorAll(".nsewdrag,.draglayer,.overlay").forEach(function(el) {
-        el.style.setProperty("touch-action", capture ? "none" : "manipulation", "important");
-        if (coarse) {
-          el.style.setProperty("pointer-events", capture ? "all" : "none", "important");
-        }
+      plot.style.setProperty("touch-action", "none", "important");
+      plot.querySelectorAll(".nsewdrag,.draglayer,.overlay,.svg-container,.plotly").forEach(function(el) {
+        el.style.setProperty("touch-action", "none", "important");
+        el.style.setProperty("pointer-events", "auto", "important");
       });
     });
   }
-  try {
-    new MutationObserver(apply).observe(doc.body, {
-      subtree: true,
-      childList: true,
-      attributes: true,
-      attributeFilter: ["class"],
-    });
-  } catch (e) {}
-  apply();
-  setInterval(apply, 1000);
+  function mainEl() {
+    return doc.querySelector("[data-testid='stMain']")
+      || doc.querySelector("section.main")
+      || doc.querySelector("[data-testid='stAppViewContainer']")
+      || doc.scrollingElement;
+  }
+  function snapChrome() {
+    try { win.scrollTo(0, 0); } catch (e) {}
+    try {
+      if (doc.documentElement) doc.documentElement.scrollTop = 0;
+      if (doc.body) doc.body.scrollTop = 0;
+    } catch (e) {}
+    var main = mainEl();
+    if (main && main.scrollTop < 0) main.scrollTop = 0;
+  }
   var startY = 0;
-  function scrollers() {
-    return [
-      doc.scrollingElement,
-      doc.documentElement,
-      doc.body,
-      doc.querySelector('[data-testid="stAppViewContainer"]'),
-      doc.querySelector('[data-testid="stMain"]'),
-      doc.querySelector(".stApp"),
-      doc.querySelector("section.main"),
-    ].filter(Boolean);
-  }
-  function atTop() {
-    return scrollers().every(function(el) {
-      return (el.scrollTop || 0) <= 0;
-    });
-  }
-  doc.addEventListener("touchstart", function(e) {
+  function onStart(e) {
     if (e.touches && e.touches.length) startY = e.touches[0].clientY;
-  }, {passive: true, capture: true});
-  doc.addEventListener("touchmove", function(e) {
+  }
+  function onMove(e) {
     if (!e.touches || !e.touches.length) return;
-    var y = e.touches[0].clientY;
-    if (atTop() && y > startY + 2) {
+    var t = e.target;
+    if (inSidebar(t)) return;
+    var plot = plotOf(t);
+    if (plot && !zooming(plot)) {
       e.preventDefault();
+      return;
     }
-  }, {passive: false, capture: true});
+    var y = e.touches[0].clientY;
+    var main = mainEl();
+    var top = !main || (main.scrollTop || 0) <= 0;
+    if (top && y > startY + 4) e.preventDefault();
+  }
+  function onEnd() { snapChrome(); }
+  applyPlot();
+  if (doc.documentElement.dataset.taTouchGuard !== "1") {
+    doc.documentElement.dataset.taTouchGuard = "1";
+    doc.addEventListener("touchstart", onStart, {passive: true, capture: true});
+    doc.addEventListener("touchmove", onMove, {passive: false, capture: true});
+    doc.addEventListener("touchend", onEnd, {passive: true, capture: true});
+    doc.addEventListener("touchcancel", onEnd, {passive: true, capture: true});
+    try {
+      new MutationObserver(applyPlot).observe(doc.body, {
+        subtree: true,
+        childList: true,
+        attributes: true,
+        attributeFilter: ["class"],
+      });
+    } catch (e) {}
+    setInterval(applyPlot, 1500);
+  }
 })();
 </script>
     """,
