@@ -8,17 +8,19 @@ import pandas as pd
 
 from .universe import is_crypto
 
-SIGNAL_RULE_VERSION = 99
+SIGNAL_RULE_VERSION = 100
 # 이 숫자를 올리면 배점 조절창 위젯 키·제목도 같이 바뀌어 예전 설명이 남지 않는다.
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
-SCORE_BASE = 15
-# 합산 %는 1점=0%, 15점=50%, 30점=100%.
-SCORE_LO = 1
-SCORE_HI = 30
+SCORE_BASE = 12
+# 합산 %는 0점 이하=0%, 12점=50%, 24점 이상=100%.
+SCORE_LO = 0
+SCORE_HI = 24
 
 DEFAULT_WEIGHTS = {
-    "base": 15,
+    "base": 12,
     "trend": 0,
+    "trend_lookback_1m_up": -1,
+    "trend_lookback_1m_down": 1,
     "trend_1m": 0,
     "swing_low_near": 0,
     "swing_high_near": 0,
@@ -100,6 +102,8 @@ PREV_DEFAULT_CUTS = {
 
 WEIGHT_FIELDS = [
     ("base", "기본", "시작할 때 항상 줌"),
+    ("trend_lookback_1m_up", "조회기간 추세", "(3개월,6개월,1년 조회에만 적용)조회기간 추세가 상승이면서 1개월 조회시(1시간봉) 상승 추세일때 / (3개월,6개월,1년 조회에만 적용)조회기간 추세가 하락이면서 1개월 조회시(1시간봉) 상승 추세일 때"),
+    ("trend_lookback_1m_down", "조회기간 추세", "(3개월,6개월,1년 조회에만 적용)조회기간 추세가 상승이면서 1개월 조회시(1시간봉) 하락 추세일때 / 조회기간 추세가 하락이면서 1개월 하락 추세일때 / 조회기간 추세가 횡보이면서 1개월 하락 추세일때"),
     ("down_line_near", "하락 추세선 근접", "하락 추세선에 근접 했을 때, 돌파하면 무효"),
     ("up_line_near", "상승 추세선 근접", "상승 추세선 근접 했을 때, 이탈하면 무효"),
     ("trendline_dir_down", "추세선 방향", "하락 추세선 상승 추세선 모두 하락이면서 현재가가 하락 추세선 근접했을때, 하락 추세선 돌파시 무효"),
@@ -126,7 +130,7 @@ WEIGHT_FIELDS = [
     ("bar_spike_20", "단기 급상승", "1개 봉만에 20% 이상 상승했을 시"),
     ("ath_clear", "신고가 달성", "6개월 상승률이 800% 미만이면서 위에 저항이 없는 신고가의 경우, 3봉 이후 무효"),
     ("ath_resist", "신고가 저항", "6개월 상승률이 800% 이상이면서 위에 저항이 없는 신고가의 경우, 2봉 이후 무효"),
-    ("ath_reenter", "신고가 이탈", "신고가 돌파 후 3봉 이내에 다시 하락 추세선 안으로 현재가가 내려왔을 때, 3봉 이후 무효"),
+    ("ath_reenter", "신고가 이탈", "신고가 돌파 후 5봉 이내에 다시 하락 추세선 안으로 현재가가 내려왔을 때, 3봉 이후 무효"),
     ("option_wall", "옵션", "기존 결과가 홀딩이면 옵션은 보지 않음 / 기존이 매도인데, 만기가 14일 안이고, 위쪽에 콜 벽이 두껍고 아래 풋 벽이 얇음 / 반대로 아래 풋 벽이 두껍고 위 콜 벽이 얇음 / 기존이 매수인데, 아래 풋 벽이 얇고 위 콜 벽이 두꺼움"),
 ]
 
@@ -173,7 +177,7 @@ _HIDDEN_WEIGHT_LABELS = (
 )
 
 RETURN_TIER_DEFAULTS = {
-    "base": 15,
+    "base": 12,
     "chg1_50": 0,
     "chg1_down1": 0,
     "chg1_down10": 1,
@@ -514,6 +518,31 @@ def _price_was_above_line(df, line, last_price: float | None = None) -> bool:
     return False
 
 
+def _bars_since_last_above_line(df, line, last_price: float | None = None) -> int | None:
+    """선 위로 올라간 마지막 봉이 끝에서 몇 봉 전인지. 없으면 None."""
+    if df is None or getattr(df, "empty", True) or line is None:
+        return None
+    highs = pd.to_numeric(df["high"], errors="coerce") if "high" in df.columns else None
+    n = len(df)
+    last_i = None
+    for i in range(n):
+        y = _line_y_at(line, float(i))
+        if y is None:
+            continue
+        above = False
+        if highs is not None:
+            h = highs.iloc[i]
+            if pd.notna(h) and float(h) > y:
+                above = True
+        if last_price is not None and i == n - 1 and float(last_price) > y:
+            above = True
+        if above:
+            last_i = i
+    if last_i is None:
+        return None
+    return n - 1 - int(last_i)
+
+
 def _fmt(price: float) -> str:
     if price >= 1000:
         return f"{price:,.0f}"
@@ -722,6 +751,28 @@ def recommend(
 
     base = wp("base")
     add("기본", "시작할 때 항상 줌", base)
+
+    use_1m_window = lookback_days is not None and int(lookback_days) > 60
+    t_ko = {"up": "상승", "down": "하락", "sideways": "횡보"}
+    if not use_1m_window:
+        add("조회기간 추세", "3개월,6개월,1년 조회에만 적용", 0)
+    else:
+        t_main = an.trend or "sideways"
+        t_1m = None
+        if df_1m is not None and not getattr(df_1m, "empty", True):
+            try:
+                px_1m = float(pd.to_numeric(df_1m["close"], errors="coerce").iloc[-1])
+            except (TypeError, ValueError, IndexError, KeyError):
+                px_1m = float(price)
+            t_1m = classify_trend(df_1m, px_1m if px_1m > 0 else float(price))
+        main_txt = t_ko.get(t_main, t_main)
+        m1_txt = t_ko.get(t_1m, t_1m or "없음")
+        if t_1m == "down":
+            add("조회기간 추세", f"조회기간 {main_txt} · 1개월 하락", wp("trend_lookback_1m_down"))
+        elif t_1m == "up" and t_main in ("up", "down"):
+            add("조회기간 추세", f"조회기간 {main_txt} · 1개월 상승", wp("trend_lookback_1m_up"))
+        else:
+            add("조회기간 추세", f"조회기간 {main_txt} · 1개월 {m1_txt}", 0)
 
     up_line = an.up_line
     down_line = an.down_line
@@ -993,18 +1044,21 @@ def recommend(
 
     y_dn_now = y_dn
     ath_since = None if ath_ev is None else int(ath_ev[0])
+    since_above = _bars_since_last_above_line(an.df, down_line, price)
     if down_line is None or y_dn_now is None:
         add("신고가 이탈", "하락선 없음", 0)
     elif ath_since is None:
         add("신고가 이탈", "신고가 시점을 계산하지 못함", 0)
-    elif ath_since >= 3:
-        add("신고가 이탈", f"신고가 이후 {ath_since}봉 지나 무효", 0)
+    elif ath_since >= 5:
+        add("신고가 이탈", f"신고가 이후 {ath_since}봉 · 5봉 이내 아님", 0)
     elif price >= y_dn_now:
         add("신고가 이탈", f"하락선 {_fmt(y_dn_now)} 안이 아님", 0)
-    elif _price_was_above_line(an.df, down_line, price):
-        add("신고가 이탈", f"신고가 돌파 후 {ath_since}봉 안에 하락선 {_fmt(y_dn_now)} 복귀", wp("ath_reenter"))
-    else:
+    elif since_above is None:
         add("신고가 이탈", "하락선 위로 돌파한 적 없음", 0)
+    elif since_above >= 3:
+        add("신고가 이탈", f"하락선 복귀 후 {since_above}봉 지나 무효", 0)
+    else:
+        add("신고가 이탈", f"신고가 돌파 후 {ath_since}봉 안에 하락선 {_fmt(y_dn_now)} 복귀", wp("ath_reenter"))
 
     stop = None
     target = None
