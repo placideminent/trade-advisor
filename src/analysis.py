@@ -141,42 +141,53 @@ def _line_through(p0: tuple[int, float], p1: tuple[int, float], x_end: int) -> t
 
 
 def _rising_up_line(lows: list, x_end: int) -> tuple[float, float, float, float] | None:
-    """최근 저점을 지나고 중간 저점이 깨지 않는 상승 지지선을 우선한다.
+    """조회기간 최저 저점과 최근 저점을 잇고, 선 아래가 없을 때까지 오른쪽을 당긴다.
 
-    마지막 두 저점만 쓰면 최근 눌림 때문에 선이 내려가 보이는데,
-    그 저점이 더 긴 상승 지지선 위에 있으면 그 상승선을 쓴다.
+    같은 최저가 여러 개면 가장 오래된 점을 왼쪽으로 쓴다.
+    최근 스윙이 곧 유일한 최저면 마지막 두 저점을 쓴다.
     """
     if len(lows) < 2:
         return None
     last_i = int(lows[-1][2])
     last_y = float(lows[-1][1])
     fallback = _line_through((int(lows[-2][2]), float(lows[-2][1])), (last_i, last_y), x_end)
-    rising = None
-    for _t, y, i in lows[:-1]:
-        i = int(i)
+
+    min_i = int(lows[0][2])
+    min_y = float(lows[0][1])
+    for _t, y, i in lows[1:]:
         y = float(y)
-        if i >= last_i:
-            continue
-        line = _line_through((i, y), (last_i, last_y), x_end)
+        i = int(i)
+        if y < min_y:
+            min_y = y
+            min_i = i
+    if min_i >= last_i:
+        return fallback
+
+    right_i = last_i
+    right_y = last_y
+    for _ in range(len(lows) + 1):
+        line = _line_through((min_i, min_y), (right_i, right_y), x_end)
         if line is None:
-            continue
+            return fallback
         x0, y0, x1, y1 = line
-        if x1 == x0 or y1 <= y0:
-            continue
-        pierced = False
+        if x1 == x0:
+            return fallback
+        piercer_i = None
+        piercer_y = None
         for _tm, ym, im in lows:
             im = int(im)
-            if im <= i or im >= last_i:
+            if im <= min_i or im >= right_i:
                 continue
             y_at = y0 + (y1 - y0) / (x1 - x0) * (im - x0)
             if float(ym) < y_at - max(1e-6, abs(y_at) * 1e-4):
-                pierced = True
-                break
-        if pierced:
-            continue
-        if rising is None:
-            rising = line
-    return rising or fallback
+                if piercer_i is None or im > piercer_i:
+                    piercer_i = im
+                    piercer_y = float(ym)
+        if piercer_i is None:
+            return line
+        right_i = piercer_i
+        right_y = piercer_y
+    return fallback
 
 
 def _last_two_up_line(lows: list, x_end: int) -> tuple[float, float, float, float] | None:
@@ -187,7 +198,7 @@ def _last_two_up_line(lows: list, x_end: int) -> tuple[float, float, float, floa
 
 
 def _chart_up_line(lows: list, x_end: int, lookback_days: int | None) -> tuple[float, float, float, float] | None:
-    """1개월은 마지막 두 저점, 3개월 이상은 깨지지 않은 상승 지지선."""
+    """1개월은 마지막 두 저점, 3개월 이상은 최저 저점에서 안 깨질 때까지 당긴 선."""
     if lookback_days is not None and int(lookback_days) <= 30:
         return _last_two_up_line(lows, x_end)
     return _rising_up_line(lows, x_end)
