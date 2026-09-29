@@ -8,7 +8,7 @@ import pandas as pd
 
 from .universe import is_crypto
 
-SIGNAL_RULE_VERSION = 102
+SIGNAL_RULE_VERSION = 103
 # 이 숫자를 올리면 배점 조절창 위젯 키·제목도 같이 바뀌어 예전 설명이 남지 않는다.
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 10
@@ -17,7 +17,7 @@ SCORE_LO = 0
 SCORE_HI = 19
 
 DEFAULT_WEIGHTS = {
-    "base": 12,
+    "base": 10,
     "trend": 0,
     "trend_lookback_1m_up": -1,
     "trend_lookback_1m_down": 1,
@@ -181,7 +181,7 @@ _HIDDEN_WEIGHT_LABELS = (
 )
 
 RETURN_TIER_DEFAULTS = {
-    "base": 12,
+    "base": 10,
     "chg1_50": 0,
     "chg1_down1": 0,
     "chg1_down10": 1,
@@ -217,6 +217,16 @@ def migrate_return_tiers(weights: dict) -> dict:
     """1개월·6개월 수익률 구간 배점을 새 기본값으로 맞춘다."""
     for key, val in RETURN_TIER_DEFAULTS.items():
         weights[key] = int(val)
+    return weights
+
+
+def migrate_base_v103(weights: dict) -> dict:
+    """v102에서 잘못 넣은 기본 12점을 10점(50%)으로 고친다."""
+    try:
+        if int(weights.get("base", 10)) == 12:
+            weights["base"] = 10
+    except (TypeError, ValueError):
+        weights["base"] = 10
     return weights
 WEIGHT_FIELDS = [row for row in WEIGHT_FIELDS if row[0] not in DROPPED_WEIGHT_KEYS]
 

@@ -112,6 +112,7 @@ from src.signals import (
     score_scale_caption,
     migrate_cuts_v85,
     migrate_cuts_v102,
+    migrate_base_v103,
     migrate_sell_cuts,
     migrate_stock_buy_cuts,
     period_return,
@@ -282,6 +283,14 @@ def _init_rule_widgets() -> None:
             val = int(default)
         if val < lo or val > hi:
             _safe_set_widget(sk, int(default))
+    if not st.session_state.get("_base_v103"):
+        try:
+            w = {key: int(st.session_state.get(_wkey(key), default)) for key, default in DEFAULT_WEIGHTS.items()}
+            migrate_base_v103(w)
+            _safe_set_widget(_wkey("base"), int(w.get("base", 10)))
+        except Exception:
+            pass
+        st.session_state._base_v103 = True
     if not st.session_state.get("_sheet_v85"):
         for key, val in RETURN_TIER_DEFAULTS.items():
             _safe_set_widget(_wkey(key), int(val))
@@ -874,6 +883,11 @@ def _apply_loaded_prefs(loaded: dict) -> None:
         loaded_ver = int(loaded.get("rule_ver") or 0)
     except (TypeError, ValueError):
         loaded_ver = 0
+    if loaded_ver < 103:
+        w = {key: int(st.session_state.get(_wkey(key), default)) for key, default in DEFAULT_WEIGHTS.items()}
+        migrate_base_v103(w)
+        st.session_state[_wkey("base")] = int(w.get("base", 10))
+        st.session_state._base_v103 = True
     if loaded_ver < 85:
         for key, val in RETURN_TIER_DEFAULTS.items():
             st.session_state[_wkey(key)] = int(val)
