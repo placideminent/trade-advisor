@@ -111,6 +111,7 @@ from src.signals import (
     rule_weight_ui_caption,
     score_scale_caption,
     migrate_cuts_v85,
+    migrate_cuts_v102,
     migrate_sell_cuts,
     migrate_stock_buy_cuts,
     period_return,
@@ -394,6 +395,24 @@ def _init_rule_widgets() -> None:
         except Exception:
             pass
         st.session_state._cuts_v85 = True
+    if not st.session_state.get("_cuts_v102"):
+        try:
+            stock = {
+                key: int(st.session_state.get(f"c_stock_{key}", DEFAULT_CUTS_STOCK[key]))
+                for key in DEFAULT_CUTS_STOCK
+            }
+            crypto = {
+                key: int(st.session_state.get(f"c_crypto_{key}", DEFAULT_CUTS_CRYPTO[key]))
+                for key in DEFAULT_CUTS_CRYPTO
+            }
+            stock, crypto = migrate_cuts_v102(stock, crypto)
+            for key, val in stock.items():
+                _safe_set_widget(f"c_stock_{key}", int(val))
+            for key, val in crypto.items():
+                _safe_set_widget(f"c_crypto_{key}", int(val))
+        except Exception:
+            pass
+        st.session_state._cuts_v102 = True
     for key, default in DEFAULT_SIM.items():
         st.session_state.setdefault(f"s_{key}", int(default))
     st.session_state.setdefault("sim_eval_mode", "기존 규칙만")
@@ -866,6 +885,8 @@ def _apply_loaded_prefs(loaded: dict) -> None:
     migrate_sell_cuts(crypto_now)
     if loaded_ver < 85:
         stock_cuts, crypto_now = migrate_cuts_v85(stock_cuts, crypto_now)
+    if loaded_ver < 102:
+        stock_cuts, crypto_now = migrate_cuts_v102(stock_cuts, crypto_now)
     for key, default in DEFAULT_CUTS_STOCK.items():
         st.session_state[f"c_stock_{key}"] = int(stock_cuts.get(key, default))
     for key, val in crypto_now.items():

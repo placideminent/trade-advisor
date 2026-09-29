@@ -8,13 +8,13 @@ import pandas as pd
 
 from .universe import is_crypto
 
-SIGNAL_RULE_VERSION = 101
+SIGNAL_RULE_VERSION = 102
 # 이 숫자를 올리면 배점 조절창 위젯 키·제목도 같이 바뀌어 예전 설명이 남지 않는다.
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
-SCORE_BASE = 12
-# 합산 %는 0점 이하=0%, 12점=50%, 24점 이상=100%.
+SCORE_BASE = 10
+# 합산 %는 0점 이하=0%, 10점=50%, 19점 이상=100%.
 SCORE_LO = 0
-SCORE_HI = 24
+SCORE_HI = 19
 
 DEFAULT_WEIGHTS = {
     "base": 12,
@@ -25,16 +25,16 @@ DEFAULT_WEIGHTS = {
     "swing_low_near": 0,
     "swing_high_near": 0,
     "down_line_near": -1,
-    "trendline_dir_down": -1,
+    "trendline_dir_down": 0,
     "trendline_dir_down_break": 0,
-    "trendline_dir_down_upnear": 1,
-    "trendline_1m_up": 1,
-    "trendline_1m_up_both_up": 1,
+    "trendline_dir_down_upnear": 0,
+    "trendline_1m_up": 0,
+    "trendline_1m_up_both_up": 0,
     "trendline_up_1m_down": 0,
     "up_line_near": 1,
     "up_line_break": 0,
     "support_near": 1,
-    "support_break": -2,
+    "support_break": 0,
     "resist_near": -1,
     "poc": 1,
     "val": 1,
@@ -67,20 +67,20 @@ DEFAULT_WEIGHTS = {
 }
 
 DEFAULT_CUTS_STOCK = {
-    "buy_weak": 60,
-    "buy_mid": 67,
+    "buy_weak": 55,
+    "buy_mid": 65,
     "buy_strong": 73,
-    "sell_weak": 33,
-    "sell_mid": 27,
+    "sell_weak": 35,
+    "sell_mid": 25,
     "sell_strong": 20,
 }
 DEFAULT_CUTS_CRYPTO = {
-    "buy_weak": 67,
-    "buy_mid": 73,
-    "buy_strong": 80,
-    "sell_weak": 37,
-    "sell_mid": 33,
-    "sell_strong": 27,
+    "buy_weak": 55,
+    "buy_mid": 65,
+    "buy_strong": 73,
+    "sell_weak": 35,
+    "sell_mid": 25,
+    "sell_strong": 20,
 }
 DEFAULT_CUTS = dict(DEFAULT_CUTS_STOCK)
 LEGACY_DEFAULT_CUTS = {
@@ -102,20 +102,15 @@ PREV_DEFAULT_CUTS = {
 
 WEIGHT_FIELDS = [
     ("base", "기본", "시작할 때 항상 줌"),
-    ("trend_lookback_1m_up", "조회기간 추세", "(3개월,6개월,1년 조회에만 적용)조회기간 추세가 상승이면서 1개월 조회시(1시간봉) 상승 추세일때 / (3개월,6개월,1년 조회에만 적용)조회기간 추세가 하락이면서 1개월 조회시(1시간봉) 상승 추세일 때"),
-    ("trend_lookback_1m_down", "조회기간 추세", "(3개월,6개월,1년 조회에만 적용)조회기간 추세가 상승이면서 1개월 조회시(1시간봉) 하락 추세일때 / 조회기간 추세가 하락이면서 1개월 하락 추세일때 / 조회기간 추세가 횡보이면서 1개월 하락 추세일때"),
+    ("trend_lookback_1m_up", "조회기간 추세", "(3개월,6개월,1년 조회에만 적용)조회기간 추세가 상승이면서 1개월 조회시(1시간봉) 상승 추세일때 / (3개월,6개월,1년 조회에만 적용)조회기간 추세가 횡보이면서 1개월 조회시(1시간봉) 상승 추세일 때"),
+    ("trend_lookback_1m_down", "조회기간 추세", "(3개월,6개월,1년 조회에만 적용)조회기간 추세가 하락이면서 1개월 조회시(1시간봉) 하락 추세일때 / (3개월,6개월,1년 조회에만 적용)조회기간 추세가 횡보이면서 1개월 조회시(1시간봉) 하락 추세일때"),
     ("down_line_near", "하락 추세선 근접", "하락 추세선에 근접 했을 때, 돌파하면 무효"),
     ("up_line_near", "상승 추세선 근접", "상승 추세선 근접 했을 때, 이탈하면 무효"),
-    ("trendline_dir_down", "추세선 방향", "하락 추세선 상승 추세선 모두 하락이면서 현재가가 하락 추세선 근접했을때, 하락 추세선 돌파시 무효"),
-    ("trendline_dir_down_upnear", "추세선 방향", "하락 추세선 상승 추세선 모두 하락이면서 현재가가 상승 추세선 근접했을 때, 상승 추세선 이탈시 무효"),
-    ("trendline_1m_up", "하방향 1개월 추세선 고려", "(3개월,6개월,1년 조회에만 적용) 하락 추세선 상승 추세선 모두 하락이면서 해당 시점에 1개월(1시간봉기준)조회시 상승추세선이 상방향일 때"),
-    ("trendline_1m_up_both_up", "상방향 1개월 추세선 고려", "(3개월,6개월,1년 조회에만 적용) 하락 추세선 상승 추세선 모두 상승이면서 해당 시점에 1개월(1시간봉기준)조회시 상승추세선이 하방향일 때 상승 추세선에 근접했으면 가점, 하방향 아니면 무효"),
-    ("support_near", "지지 근접", "지지선 바로 옆이고 강도 4 이상일 때"),
-    ("support_break", "지지 이탈", "지지 이탈 후 다음 지지선이 현재가 보다 뚜렷이 아래에 있을 때"),
+    ("support_near", "지지 근접", "지지선 근접이고 강도 4 이상일 때"),
     ("resist_near", "저항 근접", "저항선 바로 옆이고, 강도 4 이상일 때"),
     ("poc", "최대 매물 (POC)", "현재가가 거래가 가장 많았던 가격 근접 했을 때, 이탈 시 무효"),
-    ("val", "밸류 하단 (VAL)", "현재가가 싼 구간 아래이고, 상승 추세일 때"),
-    ("vah", "밸류 상단 (VAH)", "현재가가 비싼 구간 위, 돌파시 무효"),
+    ("val", "밸류 하단 (VAL)", "현재가가 싼 구간 아래일때"),
+    ("vah", "밸류 상단 (VAH)", "현재가가 비싼 구간 위일때"),
     ("rsi", "RSI", "35 이하 (너무 많이 떨어짐) / 70 이상 (너무 많이 오름)"),
     ("ma20", "20일선", "현재가가 20일선 근처일때, 20일선 완전 이탈시 무효"),
     ("ma60_near", "60일선", "현재가가 60일선 근처일때, 60일선 완전 이탈시 무효"),
@@ -152,6 +147,11 @@ DROPPED_WEIGHT_KEYS = frozenset({
     "trend",
     "ath_fail",
     "chg1_50",
+    "trendline_dir_down",
+    "trendline_dir_down_upnear",
+    "trendline_1m_up",
+    "trendline_1m_up_both_up",
+    "support_break",
 })
 _HIDDEN_WEIGHT_LABELS = (
     "손익비",
@@ -165,6 +165,10 @@ _HIDDEN_WEIGHT_LABELS = (
     "둘 다 하락·하락선 돌파",
     "둘 다 상승·1개월 상승선 상방",
     "상승 추세선 이탈",
+    "추세선 방향",
+    "하방향 1개월 추세선 고려",
+    "상방향 1개월 추세선 고려",
+    "지지 이탈",
     "MA20 아래",
     "1개월 상승 30%",
     "1개월 상승 50%",
@@ -194,11 +198,12 @@ RETURN_TIER_DEFAULTS = {
     "swing_low_near": 0,
     "swing_high_near": 0,
     "trendline_up_1m_down": 0,
-    "trendline_dir_down": -1,
+    "trendline_dir_down": 0,
     "trendline_dir_down_break": 0,
-    "trendline_dir_down_upnear": 1,
-    "trendline_1m_up": 1,
-    "trendline_1m_up_both_up": 1,
+    "trendline_dir_down_upnear": 0,
+    "trendline_1m_up": 0,
+    "trendline_1m_up_both_up": 0,
+    "support_break": 0,
     "bar_spike_20": -1,
     "up_line_near": 1,
     "up_line_break": 0,
@@ -336,6 +341,34 @@ def migrate_cuts_v85(stock: dict, crypto: dict) -> tuple[dict, dict]:
     }):
         stock = dict(DEFAULT_CUTS_STOCK)
     if _cuts_match(crypto, _PREV_CUTS_CRYPTO_V84):
+        crypto = dict(DEFAULT_CUTS_CRYPTO)
+    return stock, crypto
+
+
+_PREV_CUTS_STOCK_V100 = {
+    "buy_weak": 60,
+    "buy_mid": 67,
+    "buy_strong": 73,
+    "sell_weak": 33,
+    "sell_mid": 27,
+    "sell_strong": 20,
+}
+_PREV_CUTS_CRYPTO_V100 = {
+    "buy_weak": 67,
+    "buy_mid": 73,
+    "buy_strong": 80,
+    "sell_weak": 37,
+    "sell_mid": 33,
+    "sell_strong": 27,
+}
+
+
+def migrate_cuts_v102(stock: dict, crypto: dict) -> tuple[dict, dict]:
+    """v100 기본 컷이면 엑셀 v101 컷(주식·코인 동일)으로 올린다."""
+    stock, crypto = migrate_cuts_v85(stock, crypto)
+    if _cuts_match(stock, _PREV_CUTS_STOCK_V100):
+        stock = dict(DEFAULT_CUTS_STOCK)
+    if _cuts_match(crypto, _PREV_CUTS_CRYPTO_V100):
         crypto = dict(DEFAULT_CUTS_CRYPTO)
     return stock, crypto
 
@@ -733,7 +766,7 @@ def recommend(
 
     price = an.price
     atr = an.atr if an.atr and an.atr > 0 else price * 0.02
-    near = max(atr * 0.30, price * 0.010)
+    near = max(atr * 0.20, price * 0.006)
 
     nsup = an.supports[0] if an.supports else None
     nres = an.resistances[0] if an.resistances else None
@@ -767,10 +800,10 @@ def recommend(
             t_1m = classify_trend(df_1m, px_1m if px_1m > 0 else float(price))
         main_txt = t_ko.get(t_main, t_main)
         m1_txt = t_ko.get(t_1m, t_1m or "없음")
-        if t_1m == "down":
-            add("조회기간 추세", f"조회기간 {main_txt} · 1개월 하락", wp("trend_lookback_1m_down"))
-        elif t_1m == "up" and t_main in ("up", "down"):
+        if t_1m == "up" and t_main in ("up", "sideways"):
             add("조회기간 추세", f"조회기간 {main_txt} · 1개월 상승", wp("trend_lookback_1m_up"))
+        elif t_1m == "down" and t_main in ("down", "sideways"):
+            add("조회기간 추세", f"조회기간 {main_txt} · 1개월 하락", wp("trend_lookback_1m_down"))
         else:
             add("조회기간 추세", f"조회기간 {main_txt} · 1개월 {m1_txt}", 0)
 
@@ -782,10 +815,6 @@ def recommend(
     broke_dn = y_dn is not None and price > y_dn
     near_up = y_up is not None and abs(price - y_up) <= near and price >= y_up
     broke_up = y_up is not None and price < y_up
-    up_dir = _line_dir(up_line)
-    down_dir = _line_dir(down_line)
-    both_down = up_dir == "down" and down_dir == "down"
-
     if not down_line:
         add("하락 추세선 근접", "하락선 없음", 0)
     elif y_dn is None:
@@ -824,47 +853,6 @@ def recommend(
             0,
         )
 
-    if both_down and near_dn:
-        add("추세선 방향", "둘 다 하락 · 하락선 근처", wp("trendline_dir_down"))
-    elif both_down and broke_dn:
-        add("추세선 방향", "둘 다 하락 · 하락선 돌파라 근접 무효", 0)
-    elif both_down and near_up:
-        add("추세선 방향", "둘 다 하락 · 상승선 근처", wp("trendline_dir_down_upnear"))
-    elif both_down and broke_up:
-        add("추세선 방향", "둘 다 하락 · 상승선 이탈이라 근접 무효", 0)
-    elif both_down:
-        add("추세선 방향", "둘 다 하락 · 선 근처 아님", 0)
-    elif not up_line or not down_line:
-        add("추세선 방향", "상승선 또는 하락선 없음", 0)
-    else:
-        up_ko = {"up": "상방", "down": "하방", "flat": "횡보"}.get(up_dir, up_dir or "없음")
-        down_ko = {"up": "상방", "down": "하방", "flat": "횡보"}.get(down_dir, down_dir or "없음")
-        add("추세선 방향", f"상승선 {up_ko} · 하락선 {down_ko}", 0)
-
-    use_1m = lookback_days is not None and int(lookback_days) > 60
-    both_up = up_dir == "up" and down_dir == "up"
-    if not use_1m:
-        add("하방향 1개월 추세선 고려", "3개월,6개월,1년 조회에만 적용", 0)
-        add("상방향 1개월 추세선 고려", "3개월,6개월,1년 조회에만 적용", 0)
-    else:
-        w1 = df_1m if df_1m is not None and not getattr(df_1m, "empty", True) else None
-        dir_1m = _line_dir(_up_line_from_df(w1)) if w1 is not None else None
-        dir_1m_ko = {"up": "상방향", "down": "하방향", "flat": "횡보"}.get(dir_1m, dir_1m or "없음")
-        if both_down and dir_1m == "up":
-            add("하방향 1개월 추세선 고려", "둘 다 하락 · 1개월 상승추세선 상방향", wp("trendline_1m_up"))
-        elif both_down:
-            add("하방향 1개월 추세선 고려", f"둘 다 하락 · 1개월 상승추세선 {dir_1m_ko}이라 무효", 0)
-        else:
-            add("하방향 1개월 추세선 고려", "둘 다 하락이 아니라 해당 없음", 0)
-        if both_up and dir_1m == "down" and near_up:
-            add("상방향 1개월 추세선 고려", "둘 다 상승 · 1개월 상승추세선 하방향 · 상승 추세선 근접", wp("trendline_1m_up_both_up"))
-        elif both_up and dir_1m == "down":
-            add("상방향 1개월 추세선 고려", "둘 다 상승 · 1개월 상승추세선 하방향 · 상승 추세선 근접 아니라 무효", 0)
-        elif both_up:
-            add("상방향 1개월 추세선 고려", f"둘 다 상승 · 1개월 상승추세선 {dir_1m_ko}이라 무효", 0)
-        else:
-            add("상방향 1개월 추세선 고려", "둘 다 상승이 아니라 해당 없음", 0)
-
     if nsup:
         dist_s = price - nsup.price
         pct_s = dist_s / price * 100
@@ -884,13 +872,6 @@ def recommend(
                 )
         else:
             add("지지 근접", f"{_fmt(nsup.price)} 까지 {pct_s:.2f}% (강도 {sup_str:.1f})", 0)
-        if price < nsup.price - atr * 0.15:
-            nxt = an.supports[1] if an.supports and len(an.supports) > 1 else None
-            if nxt is None or nxt.price < price - near:
-                gap = "다음 지지 없음" if nxt is None else f"다음 지지 {_fmt(nxt.price)}"
-                add("지지 이탈", f"현재가 < {_fmt(nsup.price)} · {gap}", wp("support_break"))
-            else:
-                add("지지 이탈", f"다음 지지 {_fmt(nxt.price)} 가 가까워 감점 없음", 0)
     else:
         add("지지 근접", "없음", 0)
 
@@ -922,16 +903,12 @@ def recommend(
         add("최대 매물 (POC)", f"최대 매물 {_fmt(an.poc)} 근처 (이격 {_fmt(abs(price - an.poc))})", poc_pts)
     else:
         add("최대 매물 (POC)", f"최대 매물 {_fmt(an.poc)} 과 이격 {_fmt(abs(price - an.poc))} · 이탈 무효", 0)
-    if price < an.val and an.trend == "up":
-        add("밸류 하단 (VAL)", f"하단 {_fmt(an.val)} 아래 · 상승 추세", val_pts)
-    elif price < an.val:
-        add("밸류 하단 (VAL)", f"하단 {_fmt(an.val)} 아래 · {('하락' if an.trend == 'down' else '횡보')}이라 가점 없음", 0)
+    if price < an.val:
+        add("밸류 하단 (VAL)", f"하단 {_fmt(an.val)} 아래", val_pts)
     else:
         add("밸류 하단 (VAL)", f"하단 {_fmt(an.val)} (해당 없음)", 0)
-    if price > an.vah and price - an.vah <= near:
-        add("밸류 상단 (VAH)", f"상단 {_fmt(an.vah)} 바로 위", wp("vah"))
-    elif price > an.vah:
-        add("밸류 상단 (VAH)", f"상단 {_fmt(an.vah)} 위 · 돌파라 무효", 0)
+    if price > an.vah:
+        add("밸류 상단 (VAH)", f"상단 {_fmt(an.vah)} 위", wp("vah"))
     else:
         add("밸류 상단 (VAH)", f"상단 {_fmt(an.vah)} (해당 없음)", 0)
 
