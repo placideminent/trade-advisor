@@ -198,9 +198,7 @@ def _last_two_up_line(lows: list, x_end: int) -> tuple[float, float, float, floa
 
 
 def _chart_up_line(lows: list, x_end: int, lookback_days: int | None) -> tuple[float, float, float, float] | None:
-    """1개월은 마지막 두 저점, 3개월 이상은 최저 저점에서 안 깨질 때까지 당긴 선."""
-    if lookback_days is not None and int(lookback_days) <= 30:
-        return _last_two_up_line(lows, x_end)
+    """모든 조회기간: 최저 저점에서 최근 저점으로, 아래가 안 깨질 때까지 당긴 선."""
     return _rising_up_line(lows, x_end)
 
 
