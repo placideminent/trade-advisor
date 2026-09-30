@@ -8,7 +8,7 @@ import pandas as pd
 
 from .universe import is_crypto
 
-SIGNAL_RULE_VERSION = 105
+SIGNAL_RULE_VERSION = 106
 # 이 숫자를 올리면 배점 조절창 위젯 키·제목도 같이 바뀌어 예전 설명이 남지 않는다.
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 10
@@ -21,6 +21,8 @@ DEFAULT_WEIGHTS = {
     "trend": 0,
     "trend_lookback_1m_up": -1,
     "trend_lookback_1m_down": 1,
+    "trend_lookback_short_up": -1,
+    "trend_lookback_short_down": 1,
     "trend_1m": 0,
     "swing_low_near": 0,
     "swing_high_near": 0,
@@ -32,6 +34,7 @@ DEFAULT_WEIGHTS = {
     "trendline_1m_up_both_up": 0,
     "trendline_up_1m_down": 0,
     "up_line_near": 1,
+    "short_up_line_near": 1,
     "up_line_break": 0,
     "support_near": 1,
     "support_break": 0,
@@ -45,9 +48,9 @@ DEFAULT_WEIGHTS = {
     "ma200_near": 1,
     "ma_cross_20_60": -1,
     "bar_spike_20": -1,
-    "ath_clear": 1,
-    "ath_resist": -1,
-    "ath_reenter": -1,
+    "ath_clear": 0,
+    "ath_resist": 0,
+    "ath_reenter": 0,
     "ath_fail": 0,
     "chg1_50": 0,
     "chg1_down1": 0,
@@ -102,15 +105,18 @@ PREV_DEFAULT_CUTS = {
 
 WEIGHT_FIELDS = [
     ("base", "기본", "시작할 때 항상 줌"),
-    ("trend_lookback_1m_up", "조회기간 추세", "(3개월,6개월,1년 조회에만 적용)조회기간 추세가 상승이면서 1개월 조회시(1시간봉) 상승 추세일때 / (3개월,6개월,1년 조회에만 적용)조회기간 추세가 횡보이면서 1개월 조회시(1시간봉) 상승 추세일 때"),
-    ("trend_lookback_1m_down", "조회기간 추세", "(3개월,6개월,1년 조회에만 적용)조회기간 추세가 하락이면서 1개월 조회시(1시간봉) 하락 추세일때 / (3개월,6개월,1년 조회에만 적용)조회기간 추세가 횡보이면서 1개월 조회시(1시간봉) 하락 추세일때"),
+    ("trend_lookback_short_up", "조회기간 추세", "(1개월,2개월 조회에만 적용) 조회기간 상승"),
+    ("trend_lookback_short_down", "조회기간 추세", "(1개월,2개월 조회에만 적용) 조회기간 하락"),
+    ("trend_lookback_1m_up", "조회기간 추세", "(3개월,6개월,1년 조회에만 적용) 조회기간 상승 · 1개월(1시간봉) 상승 / (3개월,6개월,1년 조회에만 적용) 조회기간 횡보 · 1개월(1시간봉) 상승"),
+    ("trend_lookback_1m_down", "조회기간 추세", "(3개월,6개월,1년 조회에만 적용) 조회기간 하락 · 1개월(1시간봉) 하락 / (3개월,6개월,1년 조회에만 적용) 조회기간 횡보 · 1개월(1시간봉) 하락"),
     ("down_line_near", "하락 추세선 근접", "하락 추세선에 근접 했을 때, 돌파하면 무효"),
-    ("up_line_near", "상승 추세선 근접", "상승 추세선 근접 했을 때, 이탈하면 무효"),
+    ("up_line_near", "장기 상승 추세선 근접", "장기 상승 추세선 근접 했을 때, 이탈하면 무효"),
+    ("short_up_line_near", "단기 상승 추세선 근접", "단기 상승 추세선 근접 했을 때, 이탈하면 무효"),
     ("support_near", "지지 근접", "지지선 근접이고 강도 4 이상일 때"),
     ("resist_near", "저항 근접", "저항선 바로 옆이고, 강도 4 이상일 때"),
     ("poc", "최대 매물 (POC)", "현재가가 거래가 가장 많았던 가격 근접 했을 때, 이탈 시 무효"),
-    ("val", "밸류 하단 (VAL)", "현재가가 싼 구간 아래일때"),
-    ("vah", "밸류 상단 (VAH)", "현재가가 비싼 구간 위일때"),
+    ("val", "밸류 하단 (VAL)", "현재가가 싼 구간 아래일때 (추세 무관)"),
+    ("vah", "밸류 상단 (VAH)", "현재가가 비싼 구간 위일때 (거리 무관)"),
     ("rsi", "RSI", "35 이하 (너무 많이 떨어짐) / 70 이상 (너무 많이 오름)"),
     ("ma20", "20일선", "현재가가 20일선 근처일때, 20일선 완전 이탈시 무효"),
     ("ma60_near", "60일선", "현재가가 60일선 근처일때, 60일선 완전 이탈시 무효"),
@@ -119,13 +125,10 @@ WEIGHT_FIELDS = [
     ("chg1_down10", "1개월 하락률", "한 달동안 15% 이상 25%미만 하락 했을 때"),
     ("chg1_down20", "1개월 하락률", "한 달 동안 25% 이상 35% 미만 떨어짐"),
     ("chg1_down30", "1개월 하락률", "한 달 동안 35% 이상 떨어짐"),
-    ("chg6_800", "6개월 상승률", "6개월 동안 800% 이상 오름,횡보 추세나 하락 추세시 무효"),
+    ("chg6_800", "6개월 상승률", "6개월 동안 800% 이상 오름, 횡보 추세나 하락 추세시 무효"),
     ("chg6_600", "6개월 상승률", "6개월 동안 600% 이상 오름, 횡보 추세나 하락 추세시 무효"),
     ("chg6_300", "6개월 상승률", "6개월 동안 300% 이상 600% 미만 오름, 횡보 추세나 하락 추세시 무효"),
     ("bar_spike_20", "단기 급상승", "1개 봉만에 20% 이상 상승했을 시"),
-    ("ath_clear", "신고가 달성", "6개월 상승률이 800% 미만이면서 위에 저항이 없는 신고가의 경우, 3봉 이후 무효"),
-    ("ath_resist", "신고가 저항", "6개월 상승률이 800% 이상이면서 위에 저항이 없는 신고가의 경우, 2봉 이후 무효"),
-    ("ath_reenter", "신고가 이탈", "신고가 돌파 후 5봉 이내에 다시 하락 추세선 안으로 현재가가 내려왔을 때, 3봉 이후 무효"),
     ("option_wall", "옵션", "기존 결과가 홀딩이면 옵션은 보지 않음 / 기존이 매도인데, 만기가 14일 안이고, 위쪽에 콜 벽이 두껍고 아래 풋 벽이 얇음 / 반대로 아래 풋 벽이 두껍고 위 콜 벽이 얇음 / 기존이 매수인데, 아래 풋 벽이 얇고 위 콜 벽이 두꺼움"),
 ]
 
@@ -152,12 +155,18 @@ DROPPED_WEIGHT_KEYS = frozenset({
     "trendline_1m_up",
     "trendline_1m_up_both_up",
     "support_break",
+    "ath_clear",
+    "ath_resist",
+    "ath_reenter",
 })
 _HIDDEN_WEIGHT_LABELS = (
     "손익비",
     "손익비 부족",
     "1개월 상승률",
     "신고가 돌파 실패",
+    "신고가 달성",
+    "신고가 저항",
+    "신고가 이탈",
     "1개월 상승선 근접",
     "스윙 저점 근접",
     "스윙 고점 근접",
@@ -206,6 +215,7 @@ RETURN_TIER_DEFAULTS = {
     "support_break": 0,
     "bar_spike_20": -1,
     "up_line_near": 1,
+    "short_up_line_near": 1,
     "up_line_break": 0,
     "ma20": 1,
     "ma60_near": 1,
@@ -795,12 +805,18 @@ def recommend(
     base = wp("base")
     add("기본", "시작할 때 항상 줌", base)
 
-    use_1m_window = lookback_days is not None and int(lookback_days) > 60
     t_ko = {"up": "상승", "down": "하락", "sideways": "횡보"}
-    if not use_1m_window:
-        add("조회기간 추세", "3개월,6개월,1년 조회에만 적용", 0)
-    else:
-        t_main = an.trend or "sideways"
+    t_main = an.trend or "sideways"
+    main_txt = t_ko.get(t_main, t_main)
+    lookback = int(lookback_days) if lookback_days is not None else None
+    if lookback is not None and lookback <= 60:
+        if t_main == "up":
+            add("조회기간 추세", f"조회기간 {main_txt}", wp("trend_lookback_short_up"))
+        elif t_main == "down":
+            add("조회기간 추세", f"조회기간 {main_txt}", wp("trend_lookback_short_down"))
+        else:
+            add("조회기간 추세", f"조회기간 {main_txt}", 0)
+    elif lookback is not None and lookback > 60:
         t_1m = None
         if df_1m is not None and not getattr(df_1m, "empty", True):
             try:
@@ -808,7 +824,6 @@ def recommend(
             except (TypeError, ValueError, IndexError, KeyError):
                 px_1m = float(price)
             t_1m = classify_trend(df_1m, px_1m if px_1m > 0 else float(price))
-        main_txt = t_ko.get(t_main, t_main)
         m1_txt = t_ko.get(t_1m, t_1m or "없음")
         if t_1m == "up" and t_main in ("up", "sideways"):
             add("조회기간 추세", f"조회기간 {main_txt} · 1개월 상승", wp("trend_lookback_1m_up"))
@@ -816,6 +831,8 @@ def recommend(
             add("조회기간 추세", f"조회기간 {main_txt} · 1개월 하락", wp("trend_lookback_1m_down"))
         else:
             add("조회기간 추세", f"조회기간 {main_txt} · 1개월 {m1_txt}", 0)
+    else:
+        add("조회기간 추세", "조회기간 없음", 0)
 
     up_line = an.up_line
     down_line = an.down_line
@@ -845,21 +862,44 @@ def recommend(
         )
 
     if not up_line:
-        add("상승 추세선 근접", "상승선 없음", 0)
+        add("장기 상승 추세선 근접", "장기 상승선 없음", 0)
     elif y_up is None:
-        add("상승 추세선 근접", "상승선 위치를 계산하지 못함", 0)
+        add("장기 상승 추세선 근접", "장기 상승선 위치를 계산하지 못함", 0)
     elif broke_up:
-        add("상승 추세선 근접", f"상승선 {_fmt(y_up)} 이탈이라 무효", 0)
+        add("장기 상승 추세선 근접", f"장기 상승선 {_fmt(y_up)} 이탈이라 무효", 0)
     elif near_up:
         add(
-            "상승 추세선 근접",
-            f"상승선 {_fmt(y_up)} 근처 (이격 {_fmt(abs(price - y_up))})",
+            "장기 상승 추세선 근접",
+            f"장기 상승선 {_fmt(y_up)} 근처 (이격 {_fmt(abs(price - y_up))})",
             wp("up_line_near"),
         )
     else:
         add(
-            "상승 추세선 근접",
-            f"상승선 {_fmt(y_up)} 과 이격 {_fmt(abs(price - y_up))}",
+            "장기 상승 추세선 근접",
+            f"장기 상승선 {_fmt(y_up)} 과 이격 {_fmt(abs(price - y_up))}",
+            0,
+        )
+
+    short_up = getattr(an, "short_up_line", None)
+    y_short = _line_y_at(short_up, float(short_up[2])) if short_up else None
+    near_short = y_short is not None and abs(price - y_short) <= near and price >= y_short
+    broke_short = y_short is not None and price < y_short
+    if not short_up:
+        add("단기 상승 추세선 근접", "단기 상승선 없음", 0)
+    elif y_short is None:
+        add("단기 상승 추세선 근접", "단기 상승선 위치를 계산하지 못함", 0)
+    elif broke_short:
+        add("단기 상승 추세선 근접", f"단기 상승선 {_fmt(y_short)} 이탈이라 무효", 0)
+    elif near_short:
+        add(
+            "단기 상승 추세선 근접",
+            f"단기 상승선 {_fmt(y_short)} 근처 (이격 {_fmt(abs(price - y_short))})",
+            wp("short_up_line_near"),
+        )
+    else:
+        add(
+            "단기 상승 추세선 근접",
+            f"단기 상승선 {_fmt(y_short)} 과 이격 {_fmt(abs(price - y_short))}",
             0,
         )
 
@@ -996,56 +1036,6 @@ def recommend(
         add("단기 급상승", f"1봉 {bar_ret * 100:.1f}% (20% 이상)", wp("bar_spike_20"))
     else:
         add("단기 급상승", f"1봉 {bar_ret * 100:.1f}%", 0)
-
-    ath_ev = _ath_since(an.df, price)
-    chg6_pct = None if chg6 is None else float(chg6) * 100.0
-    if ath_ev is None:
-        add("신고가 달성", "조회 기간 고가를 계산하지 못함", 0)
-        add("신고가 저항", "조회 기간 고가를 계산하지 못함", 0)
-    else:
-        since, ath = ath_ev
-        res_up = _resistance_above_ath(an.resistances, ath)
-        at_ath = since == 0 or (price >= ath - near)
-        hot_800 = chg6_pct is not None and chg6_pct >= 800 - 1e-9
-        chg_txt = "6개월 없음" if chg6_pct is None else f"6개월 {chg6_pct:.1f}%"
-        if since >= 3:
-            add("신고가 달성", f"신고가 {_fmt(ath)} 이후 {since}봉 지나 무효", 0)
-        elif not at_ath:
-            add("신고가 달성", f"신고가 {_fmt(ath)} 과 이격 {_fmt(abs(price - ath))}", 0)
-        elif res_up is not None:
-            add("신고가 달성", f"신고가 {_fmt(ath)} · 위 저항 {_fmt(res_up.price)} 이라 해당 없음", 0)
-        elif hot_800:
-            add("신고가 달성", f"{chg_txt} · 800% 이상이라 해당 없음", 0)
-        else:
-            add("신고가 달성", f"위에 저항 없음 · 신고가 {_fmt(ath)} · {chg_txt}", wp("ath_clear"))
-        if since >= 2:
-            add("신고가 저항", f"신고가 {_fmt(ath)} 이후 {since}봉 지나 무효", 0)
-        elif not at_ath:
-            add("신고가 저항", f"신고가 {_fmt(ath)} 과 이격 {_fmt(abs(price - ath))}", 0)
-        elif res_up is not None:
-            add("신고가 저항", f"신고가 {_fmt(ath)} · 위 저항 {_fmt(res_up.price)} 이라 해당 없음", 0)
-        elif hot_800:
-            add("신고가 저항", f"위에 저항 없음 · 신고가 {_fmt(ath)} · {chg_txt}", wp("ath_resist"))
-        else:
-            add("신고가 저항", f"{chg_txt} · 800% 미만이라 해당 없음", 0)
-
-    y_dn_now = y_dn
-    ath_since = None if ath_ev is None else int(ath_ev[0])
-    since_above = _bars_since_last_above_line(an.df, down_line, price)
-    if down_line is None or y_dn_now is None:
-        add("신고가 이탈", "하락선 없음", 0)
-    elif ath_since is None:
-        add("신고가 이탈", "신고가 시점을 계산하지 못함", 0)
-    elif ath_since >= 5:
-        add("신고가 이탈", f"신고가 이후 {ath_since}봉 · 5봉 이내 아님", 0)
-    elif price >= y_dn_now:
-        add("신고가 이탈", f"하락선 {_fmt(y_dn_now)} 안이 아님", 0)
-    elif since_above is None:
-        add("신고가 이탈", "하락선 위로 돌파한 적 없음", 0)
-    elif since_above >= 3:
-        add("신고가 이탈", f"하락선 복귀 후 {since_above}봉 지나 무효", 0)
-    else:
-        add("신고가 이탈", f"신고가 돌파 후 {ath_since}봉 안에 하락선 {_fmt(y_dn_now)} 복귀", wp("ath_reenter"))
 
     stop = None
     target = None
