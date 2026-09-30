@@ -38,6 +38,7 @@ class Analysis:
     vp_centers: np.ndarray = field(default_factory=lambda: np.array([]))
     vp_volumes: np.ndarray = field(default_factory=lambda: np.array([]))
     up_line: tuple[float, float, float, float] | None = None
+    short_up_line: tuple[float, float, float, float] | None = None
     down_line: tuple[float, float, float, float] | None = None
     swing_highs: list[tuple[pd.Timestamp, float]] = field(default_factory=list)
     swing_lows: list[tuple[pd.Timestamp, float]] = field(default_factory=list)
@@ -197,9 +198,20 @@ def _last_two_up_line(lows: list, x_end: int) -> tuple[float, float, float, floa
     return _line_through((int(lows[-2][2]), float(lows[-2][1])), (int(lows[-1][2]), float(lows[-1][1])), x_end)
 
 
+SHORT_UP_SWING_COUNT = 5
+
+
 def _chart_up_line(lows: list, x_end: int, lookback_days: int | None) -> tuple[float, float, float, float] | None:
-    """모든 조회기간: 최저 저점에서 최근 저점으로, 아래가 안 깨질 때까지 당긴 선."""
+    """장기 상승 추세선. 조회기간 전체 스윙 저점으로 긋는다."""
     return _rising_up_line(lows, x_end)
+
+
+def _chart_short_up_line(lows: list, x_end: int) -> tuple[float, float, float, float] | None:
+    """단기 상승 추세선. 최근 스윙 저점 5개만 같은 방식으로 긋는다."""
+    recent = lows[-SHORT_UP_SWING_COUNT:] if len(lows) > SHORT_UP_SWING_COUNT else lows
+    if len(recent) < 2:
+        return None
+    return _rising_up_line(recent, x_end)
 
 
 def volume_profile(df: pd.DataFrame, bins: int = 48) -> tuple[np.ndarray, np.ndarray, float, float, float]:
@@ -353,6 +365,7 @@ def analyze(
     x_end = n - 1
 
     up_line = _chart_up_line(lows, x_end, lookback_days) if len(lows) >= 2 else None
+    short_up_line = _chart_short_up_line(lows, x_end) if len(lows) >= 2 else None
 
     down_line = None
     if len(highs) >= 2:
@@ -481,6 +494,7 @@ def analyze(
         vp_centers=centers,
         vp_volumes=vols,
         up_line=up_line,
+        short_up_line=short_up_line,
         down_line=down_line,
         swing_highs=[(t, p) for t, p, _ in highs[-8:]],
         swing_lows=[(t, p) for t, p, _ in lows[-8:]],

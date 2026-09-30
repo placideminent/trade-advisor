@@ -107,8 +107,10 @@ def build_chart(an: Analysis, sig: Signal, title: str) -> go.Figure:
     hline(an.val, "#a3a3a3", "dot", f"VAL {_price_text(an.val)}")
     hline(an.vah, "#a3a3a3", "dot", f"VAH {_price_text(an.vah)}")
 
-    if an.up_line:
-        i0, y0, i1, y1 = an.up_line
+    def add_slant(line, name: str, color: str, dash: str = "solid", width: float = 2.0) -> None:
+        if not line:
+            return
+        i0, y0, i1, y1 = line
         i0 = int(max(0, min(len(df) - 1, i0)))
         i1 = int(max(0, min(len(df) - 1, i1)))
         fig.add_trace(
@@ -116,12 +118,15 @@ def build_chart(an: Analysis, sig: Signal, title: str) -> go.Figure:
                 x=[df.index[i0], df.index[i1]],
                 y=[y0, y1],
                 mode="lines",
-                name="상승 추세선",
-                line=dict(color="#22c55e", width=2),
+                name=name,
+                line=dict(color=color, width=width, dash=dash),
             ),
             row=1,
             col=1,
         )
+
+    add_slant(an.up_line, "장기 상승 추세선", "#22c55e")
+    add_slant(getattr(an, "short_up_line", None), "단기 상승 추세선", "#4ade80", "dash")
     if an.down_line:
         i0, y0, i1, y1 = an.down_line
         i0 = int(max(0, min(len(df) - 1, i0)))
