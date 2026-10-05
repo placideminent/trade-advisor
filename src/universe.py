@@ -63,21 +63,55 @@ LOOKBACK_OPTIONS = {
     "1년": {"days": 365, "timeframe": "1d"},
 }
 
+# 코인은 24시간이라 짧은 조회에서 봉을 더 굵게 쓴다.
+CRYPTO_LOOKBACK_TIMEFRAMES = {
+    "1개월": "12h",
+    "2개월": "1d",
+}
 
-def resolve_lookback(label) -> dict:
-    """조회 기간 설정을 항상 {days, timeframe} 로 맞춘다."""
+BAR_NAMES = {
+    "1h": "1시간봉",
+    "4h": "4시간봉",
+    "12h": "12시간봉",
+    "1d": "일봉",
+}
+
+INTRA_TIMEFRAMES = frozenset({"1h", "4h", "12h"})
+
+
+def lookback_bar_caption() -> str:
+    return (
+        "주식은 1개월 1시간봉, 2·3개월 4시간봉, 6개월·1년 일봉입니다. "
+        "코인은 1개월 12시간봉, 2개월 일봉이고, 3개월 이상은 주식과 같습니다."
+    )
+
+
+def resolve_lookback(label, market=None) -> dict:
+    """조회 기간 설정을 항상 {days, timeframe} 로 맞춘다. 코인 1·2개월만 봉이 다르다."""
     spec = LOOKBACK_OPTIONS.get(label)
     if isinstance(spec, dict) and "days" in spec and "timeframe" in spec:
-        return spec
-    if isinstance(spec, int):
+        out = {"days": int(spec["days"]), "timeframe": str(spec["timeframe"])}
+    elif isinstance(spec, int):
         if spec <= 30:
             tf = "1h"
         elif spec <= 90:
             tf = "4h"
         else:
             tf = "1d"
-        return {"days": spec, "timeframe": tf}
-    return LOOKBACK_OPTIONS["6개월"]
+        out = {"days": int(spec), "timeframe": tf}
+    else:
+        fallback = LOOKBACK_OPTIONS["6개월"]
+        out = {"days": int(fallback["days"]), "timeframe": str(fallback["timeframe"])}
+    if str(market or "").upper() == "CRYPTO":
+        override = CRYPTO_LOOKBACK_TIMEFRAMES.get(label)
+        if override:
+            out["timeframe"] = override
+        elif isinstance(spec, int):
+            if spec <= 30:
+                out["timeframe"] = "12h"
+            elif spec <= 60:
+                out["timeframe"] = "1d"
+    return out
 
 MARKETS = {
     "한국 주식": "KR",

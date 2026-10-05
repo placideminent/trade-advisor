@@ -12,9 +12,11 @@ from .data import (
     fetch_intraday_range,
     fetch_ohlcv,
     resample_4h,
+    resample_12h,
     reset_yahoo_gate,
     to_market_wall,
 )
+from .universe import BAR_NAMES, INTRA_TIMEFRAMES
 from .signals import period_return, recommend
 
 DEFAULT_SIM = {
@@ -225,7 +227,7 @@ def run_backtest(
                 sleep(0.8 * (attempt + 1))
         return pd.DataFrame(), last_meta
 
-    if timeframe in ("1h", "4h"):
+    if timeframe in INTRA_TIMEFRAMES:
         h1_start = start - timedelta(days=int(lookback_days * 1.2) + 10)
         df_1h = pd.DataFrame()
         try:
@@ -237,13 +239,19 @@ def run_backtest(
             try:
                 if timeframe == "4h":
                     df_main = resample_4h(df_1h, market)
-                    meta = {"name": ticker, "ticker": ticker, "bar": "4시간봉"}
+                    meta = {"name": ticker, "ticker": ticker, "bar": BAR_NAMES["4h"]}
                     if df_main is None or df_main.empty:
                         df_main = to_market_wall(df_1h, market)
-                        meta["bar"] = "1시간봉"
+                        meta["bar"] = BAR_NAMES["1h"]
+                elif timeframe == "12h":
+                    df_main = resample_12h(df_1h, market)
+                    meta = {"name": ticker, "ticker": ticker, "bar": BAR_NAMES["12h"]}
+                    if df_main is None or df_main.empty:
+                        df_main = to_market_wall(df_1h, market)
+                        meta["bar"] = BAR_NAMES["1h"]
                 else:
                     df_main = to_market_wall(df_1h, market)
-                    meta = {"name": ticker, "ticker": ticker, "bar": "1시간봉"}
+                    meta = {"name": ticker, "ticker": ticker, "bar": BAR_NAMES["1h"]}
             except Exception as extra:
                 notes.append(str(extra)[:160])
                 df_main = pd.DataFrame()

@@ -10,7 +10,7 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 
-from .universe import CRYPTO
+from .universe import BAR_NAMES, CRYPTO, INTRA_TIMEFRAMES
 
 MARKET_TZ = {
     "KR": "Asia/Seoul",
@@ -246,8 +246,8 @@ def drop_incomplete_session(df: pd.DataFrame, as_of: date) -> pd.DataFrame:
     return df
 
 
-def resample_4h(df: pd.DataFrame, market: str) -> pd.DataFrame:
-    """1시간봉을 시장 시간대 기준 4시간봉으로 합친다."""
+def resample_hours(df: pd.DataFrame, market: str, hours: int) -> pd.DataFrame:
+    """1시간봉을 시장 시간대 기준 N시간봉으로 합친다."""
     if df.empty:
         return df
     work = df.copy()
@@ -256,7 +256,7 @@ def resample_4h(df: pd.DataFrame, market: str) -> pd.DataFrame:
     if idx.tz is None:
         idx = idx.tz_localize("UTC")
     work.index = idx.tz_convert(tz)
-    out = work.resample("4h", label="left", closed="left").agg(
+    out = work.resample(f"{int(hours)}h", label="left", closed="left").agg(
         open=("open", "first"),
         high=("high", "max"),
         low=("low", "min"),
@@ -266,6 +266,16 @@ def resample_4h(df: pd.DataFrame, market: str) -> pd.DataFrame:
     out = out.dropna(subset=["open", "high", "low", "close"])
     out.index = _index_naive_wall(out.index)
     return out
+
+
+def resample_4h(df: pd.DataFrame, market: str) -> pd.DataFrame:
+    """1시간봉을 시장 시간대 기준 4시간봉으로 합친다."""
+    return resample_hours(df, market, 4)
+
+
+def resample_12h(df: pd.DataFrame, market: str) -> pd.DataFrame:
+    """1시간봉을 시장 시간대 기준 12시간봉으로 합친다."""
+    return resample_hours(df, market, 12)
 
 
 def to_market_wall(df: pd.DataFrame, market: str) -> pd.DataFrame:
@@ -1053,13 +1063,17 @@ def fetch_ohlcv(
     lookback_days: int = 365,
     timeframe: str = "1d",
 ) -> tuple[pd.DataFrame, dict]:
-    """지정일(as_of)까지의 봉만 반환. 1개월 주식은 1시간봉, 2~3개월은 4시간봉, 그 이상은 일봉."""
+    """지정일(as_of)까지의 봉만 반환.
+
+    주식: 1개월 1시간봉, 2~3개월 4시간봉, 그 이상은 일봉.
+    코인: 1개월 12시간봉, 2개월 일봉, 3개월 이상은 주식과 같음.
+    """
     as_of = _to_date(as_of)
     reset_yahoo_gate()
-    if timeframe not in ("1h", "4h", "1d"):
+    if timeframe not in ("1h", "4h", "12h", "1d"):
         timeframe = "1d"
-    interval = "1h" if timeframe in ("1h", "4h") else "1d"
-    pad = 7 if timeframe in ("1h", "4h") else 10
+    interval = "1h" if timeframe in INTRA_TIMEFRAMES else "1d"
+    pad = 7 if timeframe in INTRA_TIMEFRAMES else 10
     extra_ma = 220 if timeframe == "1d" and int(lookback_days) >= 300 else 0
     hist_days = int(lookback_days) + extra_ma
     start = as_of - timedelta(days=int(hist_days * 1.2) + pad)
@@ -1082,7 +1096,7 @@ def fetch_ohlcv(
         except Exception:
             pass
         df = pd.DataFrame()
-        want_intra = timeframe in ("1h", "4h")
+        want_intra = timeframe in INTRA_TIMEFRAMES
         used_intra = False
         if want_intra:
             for i, symbol in enumerate(_kr_yahoo_symbols(code)):
@@ -1121,7 +1135,7 @@ def fetch_ohlcv(
         meta["ticker"] = symbol
         meta["name"] = symbol
         df = pd.DataFrame()
-        want_intra = timeframe in ("1h", "4h")
+        want_intra = timeframe in INTRA_TIMEFRAMES
         used_intra = False
         if want_intra:
             for symbol in symbols:
@@ -1172,7 +1186,7 @@ def fetch_ohlcv(
         meta["ticker"] = key
         meta["name"] = info["name"] if info else key
         df = pd.DataFrame()
-        want_intra = timeframe in ("1h", "4h")
+        want_intra = timeframe in INTRA_TIMEFRAMES
         used_intra = False
         if want_intra:
             df = _fetch_coinbase_ohlcv(key, start, as_of, 3600)
@@ -1216,24 +1230,26 @@ def fetch_ohlcv(
         return df, meta
 
     meta["timeframe"] = timeframe
-    if timeframe == "4h":
+    if timeframe in ("4h", "12h"):
+        hours = 4 if timeframe == "4h" else 12
+        bar = BAR_NAMES.get(timeframe, f"{hours}시간봉")
         intra = df
-        df = resample_4h(df, market)
+        df = resample_hours(df, market, hours)
         if df.empty:
             df = to_market_wall(intra, market)
             timeframe = "1h"
             meta["timeframe"] = "1h"
-            meta["bar"] = "1시간봉"
-            meta["note"] = "4시간봉 변환에 실패해 1시간봉으로 계산합니다."
+            meta["bar"] = BAR_NAMES["1h"]
+            meta["note"] = f"{bar} 변환에 실패해 1시간봉으로 계산합니다."
         else:
-            meta["bar"] = "4시간봉"
+            meta["bar"] = bar
     if timeframe == "1h":
         df = to_market_wall(df, market)
-        meta["bar"] = "1시간봉"
+        meta["bar"] = BAR_NAMES["1h"]
     if timeframe == "1d":
         df = df.copy()
         df.index = _index_naive_wall(df.index)
-        meta["bar"] = "일봉"
+        meta["bar"] = BAR_NAMES["1d"]
 
     if df.empty:
         return df, meta

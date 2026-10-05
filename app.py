@@ -1122,9 +1122,12 @@ def _remove_fav(market: str, ticker: str) -> None:
 
 
 from src.universe import (
+    BAR_NAMES,
     CRYPTO,
+    INTRA_TIMEFRAMES,
     LOOKBACK_OPTIONS,
     MARKETS,
+    lookback_bar_caption,
     resolve_lookback,
 )
 
@@ -1493,7 +1496,7 @@ st.title("자산 트레이드 분석기")
 st.caption(
     "조회 시점의 현재가를 기준으로 추세선·지지/저항·매물대를 보고 "
     "매수 / 매도 / 홀딩을 제안합니다. "
-    "1개월은 1시간봉, 2·3개월은 4시간봉, 6개월·1년은 일봉입니다. 투자 자문이 아닙니다."
+    f"{lookback_bar_caption()} 투자 자문이 아닙니다."
 )
 if st.session_state.get("_prefs_await_ls"):
     st.info(
@@ -1918,6 +1921,7 @@ def _render_favorites(
         jobs = []
         for item in favs:
             name = item.get("name") or item.get("ticker")
+            spec = resolve_lookback(lookback_label, item.get("market"))
             jobs.append(
                 (
                     name,
@@ -1926,8 +1930,8 @@ def _render_favorites(
                         "ticker": item["ticker"],
                         "name": name,
                         "as_of": as_of,
-                        "lookback_days": lookback_days,
-                        "timeframe": timeframe,
+                        "lookback_days": int(spec["days"]),
+                        "timeframe": str(spec["timeframe"]),
                         "rule": rule_c,
                     },
                 )
@@ -2296,6 +2300,7 @@ def _render_simulation(
             jobs = []
             for item in sim_favs:
                 name = item.get("name") or item.get("ticker")
+                spec = resolve_lookback(lookback_label, item.get("market"))
                 jobs.append(
                     (
                         name,
@@ -2303,6 +2308,8 @@ def _render_simulation(
                             "market": item["market"],
                             "ticker": item["ticker"],
                             "name": name,
+                            "lookback_days": int(spec["days"]),
+                            "timeframe": str(spec["timeframe"]),
                             "sim": normalize_sim(item.get("sim") or sim),
                         },
                     )
@@ -2314,8 +2321,8 @@ def _render_simulation(
                     payload["ticker"],
                     start,
                     end,
-                    lookback_days,
-                    timeframe,
+                    payload["lookback_days"],
+                    payload["timeframe"],
                     lookback_label,
                     rule_c,
                     payload["sim"],
@@ -2610,9 +2617,10 @@ with st.sidebar:
         index=lookback_keys.index(lb_default),
         key=lb_key,
     )
-    lookback_spec = resolve_lookback(lookback_label)
+    lookback_spec = resolve_lookback(lookback_label, market)
     lookback_days = int(lookback_spec["days"])
     timeframe = str(lookback_spec["timeframe"])
+    st.caption(lookback_bar_caption())
 
     _init_rule_widgets()
     rule = _read_rule_from_sidebar()
@@ -2790,7 +2798,7 @@ if page == "시뮬레이션":
 if not run:
     st.info("왼쪽에서 시장·종목·시점을 고른 뒤 **분석하기**를 누르세요.")
     st.markdown(
-        """
+        f"""
         #### 이 프로그램이 하는 일
         1. 즐겨찾기에서 종목을 고르거나, 검색·티커로 직접 넣습니다.
         2. **과거 특정 날짜**를 시점으로 넣으면 그 날 이후 시세는 보지 않습니다. 가상 현재가를 넣으면 그 분석 시점 차트에서 그 가격을 가정해 분석합니다.
@@ -2798,7 +2806,7 @@ if not run:
         4. 종목을 즐겨찾기에 넣으면 한 화면에서 제안만 모아 볼 수 있습니다.
         5. 시뮬레이션 화면에서 한 종목 또는 즐겨찾기 전체를 돌립니다. 즐겨찾기는 종목별 수량을 따로 저장합니다.
 
-        1개월은 1시간봉, 2·3개월은 4시간봉, 6개월·1년은 일봉으로 계산합니다.
+        {lookback_bar_caption()}
         평가 배점·즐겨찾기·시뮬레이션 수량은 접속자마다 따로 저장됩니다. 다른 기기는 저장 코드로 이어갑니다.
         """
     )
@@ -2808,7 +2816,7 @@ if not ticker:
     st.error("종목을 선택하세요.")
     st.stop()
 
-bar_name = {"1h": "1시간봉", "4h": "4시간봉"}.get(timeframe, "일봉")
+bar_name = BAR_NAMES.get(timeframe, "일봉")
 with st.spinner(f"{display_name or ticker} / {as_of} {bar_name} 수집 중..."):
     try:
         df, meta = _load_ohlcv(market, ticker, as_of, lookback_days, timeframe, retries=2)
@@ -3035,7 +3043,7 @@ _show_table(pd.DataFrame(rows))
 
 last_txt = (
     analysis.last_bar.strftime("%Y-%m-%d %H:%M")
-    if timeframe in ("1h", "4h")
+    if timeframe in INTRA_TIMEFRAMES
     else str(analysis.last_bar.date())
 )
 title = f"{meta.get('name', ticker)} ({meta.get('ticker', ticker)})  ·  {bar_name}  ·  {analysis.price_label} {_fmt(analysis.price)}"
