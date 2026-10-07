@@ -1131,8 +1131,10 @@ from src.universe import (
     resolve_lookback,
 )
 
+APP_NAME = "차트분석기"
+
 st.set_page_config(
-    page_title="자산 트레이드 분석기",
+    page_title=APP_NAME,
     page_icon="📈",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -1154,7 +1156,7 @@ def require_login() -> None:
     password = _app_password()
     if not password or st.session_state.get("auth_ok"):
         return
-    st.title("자산 트레이드 분석기")
+    st.title(APP_NAME)
     st.caption("외부 접속용 비밀번호가 설정되어 있습니다.")
     pw = st.text_input("비밀번호", type="password")
     if st.button("입장", type="primary"):
@@ -1492,7 +1494,7 @@ if st.button("새로고침", key="app_refresh_top", use_container_width=True):
         pass
     st.session_state._auto_run = True
     st.rerun()
-st.title("자산 트레이드 분석기")
+st.title(APP_NAME)
 st.caption(
     "조회 시점의 현재가를 기준으로 추세선·지지/저항·매물대를 보고 "
     "매수 / 매도 / 홀딩을 제안합니다. "
