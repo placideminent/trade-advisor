@@ -8,7 +8,7 @@ import pandas as pd
 
 from .universe import is_crypto
 
-SIGNAL_RULE_VERSION = 107
+SIGNAL_RULE_VERSION = 108
 # 이 숫자를 올리면 배점 조절창 위젯 키·제목도 같이 바뀌어 예전 설명이 남지 않는다.
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 10
@@ -111,7 +111,7 @@ WEIGHT_FIELDS = [
     ("trend_lookback_1m_down", "조회기간 추세", "(3개월,6개월,1년 조회에만 적용) 조회기간 하락 · 1개월(1시간봉) 하락 / (3개월,6개월,1년 조회에만 적용) 조회기간 횡보 · 1개월(1시간봉) 하락"),
     ("down_line_near", "하락 추세선 근접", "하락 추세선에 근접 했을 때, 돌파하면 무효"),
     ("up_line_near", "장기 상승 추세선 근접", "장기 상승 추세선 근접 했을 때, 이탈하면 무효"),
-    ("short_up_line_near", "단기 상승 추세선 근접", "단기 상승 추세선 근접 했을 때, 이탈하면 무효"),
+    ("short_up_line_near", "단기 상승 추세선 근접", "단기 상승 추세선 근접 했을 때, 이탈하면 무효. 장기 상승선 근접 가점과 겹치면 무효"),
     ("support_near", "지지 근접", "지지선 근접이고 강도 4 이상일 때"),
     ("resist_near", "저항 근접", "저항선 바로 옆이고, 강도 4 이상일 때"),
     ("poc", "최대 매물 (POC)", "현재가가 거래가 가장 많았던 가격 근접 했을 때, 이탈 시 무효"),
@@ -784,6 +784,35 @@ def _action_from_pct(score_pct: int, cuts: dict) -> str:
     return "홀딩"
 
 
+def _daily_range(df, atr: float, price: float) -> float:
+    """차트 봉을 하루로 묶어 마지막 날의 고가−저가. 없으면 ATR."""
+    fallback = float(atr) if atr and atr > 0 else max(float(price) * 0.02, 1e-8)
+    if df is None or getattr(df, "empty", True):
+        return fallback
+    if "high" not in df.columns or "low" not in df.columns:
+        return fallback
+    try:
+        work = df[["high", "low"]].copy()
+        work.index = pd.DatetimeIndex(pd.to_datetime(work.index))
+        daily = work.resample("1D").agg(high=("high", "max"), low=("low", "min")).dropna()
+        if daily.empty:
+            return fallback
+        last = daily.iloc[-1]
+        span = float(last["high"]) - float(last["low"])
+        if span > 0:
+            return span
+    except (TypeError, ValueError, KeyError):
+        return fallback
+    return fallback
+
+
+def _near_band(price: float, atr: float, df=None) -> float:
+    """근접 거리: 하루 변동폭의 40%와 주가의 0.8% 중 큰 값."""
+    px = float(price) if price and price > 0 else 0.0
+    day_range = _daily_range(df, atr, px if px > 0 else 1.0)
+    return max(day_range * 0.40, (px if px > 0 else day_range) * 0.008)
+
+
 def recommend(
     an: Analysis,
     six_month_chg: float | None = None,
@@ -806,7 +835,7 @@ def recommend(
 
     price = an.price
     atr = an.atr if an.atr and an.atr > 0 else price * 0.02
-    near = max(atr * 0.20, price * 0.006)
+    near = _near_band(price, atr, getattr(an, "df", None))
 
     nsup = an.supports[0] if an.supports else None
     nres = an.resistances[0] if an.resistances else None
@@ -910,6 +939,12 @@ def recommend(
         add("단기 상승 추세선 근접", "단기 상승선 위치를 계산하지 못함", 0)
     elif broke_short:
         add("단기 상승 추세선 근접", f"단기 상승선 {_fmt(y_short)} 이탈이라 무효", 0)
+    elif near_short and near_up:
+        add(
+            "단기 상승 추세선 근접",
+            f"단기 상승선 {_fmt(y_short)} 근처지만 장기 상승선 근접과 겹쳐 무효",
+            0,
+        )
     elif near_short:
         add(
             "단기 상승 추세선 근접",
