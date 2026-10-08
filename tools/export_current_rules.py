@@ -24,6 +24,12 @@ from src.signals import (
     score_to_pct,
     _action_from_pct,
 )
+from src.universe import (
+    BAR_NAMES,
+    CRYPTO_LOOKBACK_TIMEFRAMES,
+    LOOKBACK_OPTIONS,
+    lookback_bar_caption,
+)
 
 OUT = ROOT / "현재_규칙.xlsx"
 
@@ -80,6 +86,20 @@ def paint_body(ws, score_col: int | None = None) -> None:
                     cell.fill = RED
 
 
+def cut_band_rows(cuts: dict) -> list[list[str]]:
+    bw, bm, bs = int(cuts["buy_weak"]), int(cuts["buy_mid"]), int(cuts["buy_strong"])
+    sw, sm, ss = int(cuts["sell_weak"]), int(cuts["sell_mid"]), int(cuts["sell_strong"])
+    return [
+        [f"{bs}% 이상", "강한 매수"],
+        [f"{bm}% 이상 ~ {bs}% 미만", "매수"],
+        [f"{bw}% 이상 ~ {bm}% 미만", "약한 매수"],
+        [f"{sw}% 초과 ~ {bw}% 미만", "홀딩"],
+        [f"{sm}% 초과 ~ {sw}% 이하", "약한 매도"],
+        [f"{ss}% 초과 ~ {sm}% 이하", "매도"],
+        [f"{ss}% 이하", "강한 매도"],
+    ]
+
+
 def add_sheet(wb, title, headers, rows, widths, score_col=None):
     ws = wb.create_sheet(title)
     ws.append(headers)
@@ -108,17 +128,21 @@ def main() -> None:
         "순서",
         "1. 「기본 점수」 항목을 해당되면 더하거나 뺍니다. 기본은 항상 10점입니다.",
         f"2. 합산 점수를 %로 바꿉니다. {SCORE_LO}점 이하=0%, {SCORE_BASE}점=50%, {SCORE_HI}점 이상=100%.",
-        "3. %로 매수 / 매도 / 홀딩을 정합니다. 주식과 코인 컷은 같습니다.",
+        "3. %로 매수 / 매도 / 홀딩을 정합니다. 주식과 코인 컷은 다릅니다.",
         "4. 홀딩이면 끝입니다. 매수나 매도면 미국 주식·오늘 조회만 옵션 점수를 더합니다.",
         "",
         "가까운 가격",
         "하루 변동폭의 약 40%, 또는 주가의 0.8% 중 더 큰 값.",
         "",
+        lookback_bar_caption(),
+        "즐겨찾기는 50개까지 등록할 수 있습니다.",
+        "",
         "시트 안내",
         "기본 점수 — 차트·지표로 매기는 점수",
-        "조회기간 추세 — 3개월·6개월·1년만. 상승선 기울기가 아니라 스윙+이평으로 판정",
+        "조회기간 추세 — 1·2개월은 조회기간만, 3개월 이상은 조회기간×1개월 1시간봉",
+        "조회 기간 봉 — 주식·코인 조회기간별 봉",
         "옵션 점수 — 미국 주식, 매수/매도일 때 추가",
-        "매수 매도 기준 — 합산 % 컷",
+        "매수 매도 기준 — 합산 % 컷 (주식·코인 따로)",
         "점수별 % — 점수마다 앱이 매기는 %",
         "추세선 긋는 법 — 장기·단기 상승선, 하락선",
         "추세 판정 — 조회기간 추세 항목이 상승/하락/횡보를 나누는 방법",
@@ -136,37 +160,38 @@ def main() -> None:
         "기본 점수",
         ["항목", "이럴 때", "점수"],
         [
-            ["기본", "시작할 때 항상 줌", 10],
-            ["조회기간 추세", "(3개월,6개월,1년 조회에만 적용) 조회기간 상승 · 1개월(1시간봉) 상승", -1],
+            ["기본", "시작할 때 항상 줌", DEFAULT_WEIGHTS["base"]],
+            ["조회기간 추세", "(1개월,2개월 조회에만 적용) 조회기간 상승", DEFAULT_WEIGHTS["trend_lookback_short_up"]],
+            ["조회기간 추세", "(1개월,2개월 조회에만 적용) 조회기간 하락", DEFAULT_WEIGHTS["trend_lookback_short_down"]],
+            ["조회기간 추세", "(1개월,2개월 조회에만 적용) 조회기간 횡보", 0],
+            ["조회기간 추세", "(3개월,6개월,1년 조회에만 적용) 조회기간 상승 · 1개월(1시간봉) 상승", DEFAULT_WEIGHTS["trend_lookback_1m_up"]],
             ["조회기간 추세", "(3개월,6개월,1년 조회에만 적용) 조회기간 상승 · 1개월(1시간봉) 하락", 0],
             ["조회기간 추세", "(3개월,6개월,1년 조회에만 적용) 조회기간 하락 · 1개월(1시간봉) 상승", 0],
-            ["조회기간 추세", "(3개월,6개월,1년 조회에만 적용) 조회기간 하락 · 1개월(1시간봉) 하락", 1],
-            ["조회기간 추세", "(3개월,6개월,1년 조회에만 적용) 조회기간 횡보 · 1개월(1시간봉) 하락", 1],
-            ["조회기간 추세", "(3개월,6개월,1년 조회에만 적용) 조회기간 횡보 · 1개월(1시간봉) 상승", -1],
-            ["조회기간 추세", "1개월 조회, 또는 1개월(1시간봉)이 횡보/없음", 0],
-            ["하락 추세선 근접", "하락 추세선에 근접 했을 때, 돌파하면 무효", -1],
-            ["상승 추세선 근접", "상승 추세선 근접 했을 때, 이탈하면 무효", 1],
-            ["지지 근접", "지지선 근접이고 강도 4 이상일 때", 1],
-            ["저항 근접", "저항선 바로 옆이고, 강도 4 이상일 때", -1],
-            ["최대 매물 (POC)", "현재가가 거래가 가장 많았던 가격 근접 했을 때, 이탈 시 무효", 1],
-            ["밸류 하단 (VAL)", "현재가가 싼 구간 아래일때 (추세 무관)", 1],
-            ["밸류 상단 (VAH)", "현재가가 비싼 구간 위일때 (거리 무관)", -1],
-            ["RSI", "35 이하 (너무 많이 떨어짐)", 1],
-            ["RSI", "70 이상 (너무 많이 오름)", -1],
-            ["20일선", "현재가가 20일선 근처일때, 20일선 완전 이탈시 무효", 1],
-            ["60일선", "현재가가 60일선 근처일때, 60일선 완전 이탈시 무효", 1],
-            ["180일선", "현재가가 장기 이평 근처일 때. 6개월 조회는 180일선, 1년 조회는 300일선, 완전이탈시 무효", 1],
-            ["20일선 60일선 교차", "20일선 방향이 하방으로 떨어지면서 60일선 아래로 떨어지기 시작할때, 떨어지고 4봉이상 지나면 무효", -1],
-            ["1개월 하락률", "한 달동안 15% 이상 25%미만 하락 했을 때", 1],
-            ["1개월 하락률", "한 달 동안 25% 이상 35% 미만 떨어짐", 2],
-            ["1개월 하락률", "한 달 동안 35% 이상 떨어짐", 3],
-            ["6개월 상승률", "6개월 동안 800% 이상 오름, 횡보 추세나 하락 추세시 무효", -3],
-            ["6개월 상승률", "6개월 동안 600% 이상 오름, 횡보 추세나 하락 추세시 무효", -2],
-            ["6개월 상승률", "6개월 동안 300% 이상 600% 미만 오름, 횡보 추세나 하락 추세시 무효", -1],
-            ["단기 급상승", "1개 봉만에 20% 이상 상승했을 시", -1],
-            ["신고가 달성", "6개월 상승률이 800% 미만이면서 위에 저항이 없는 신고가의 경우, 3봉 이후 무효", 1],
-            ["신고가 저항", "6개월 상승률이 800% 이상이면서 위에 저항이 없는 신고가의 경우, 2봉 이후 무효", -1],
-            ["신고가 이탈", "신고가 돌파 후 5봉 이내에 다시 하락 추세선 안으로 현재가가 내려왔을 때, 3봉 이후 무효", -1],
+            ["조회기간 추세", "(3개월,6개월,1년 조회에만 적용) 조회기간 하락 · 1개월(1시간봉) 하락", DEFAULT_WEIGHTS["trend_lookback_1m_down"]],
+            ["조회기간 추세", "(3개월,6개월,1년 조회에만 적용) 조회기간 횡보 · 1개월(1시간봉) 하락", DEFAULT_WEIGHTS["trend_lookback_1m_down"]],
+            ["조회기간 추세", "(3개월,6개월,1년 조회에만 적용) 조회기간 횡보 · 1개월(1시간봉) 상승", DEFAULT_WEIGHTS["trend_lookback_1m_up"]],
+            ["조회기간 추세", "그 외의 경우", 0],
+            ["하락 추세선 근접", "하락 추세선에 근접 했을 때, 돌파하면 무효", DEFAULT_WEIGHTS["down_line_near"]],
+            ["장기 상승 추세선 근접", "장기 상승 추세선 근접 했을 때, 이탈하면 무효", DEFAULT_WEIGHTS["up_line_near"]],
+            ["단기 상승 추세선 근접", "단기 상승 추세선 근접 했을 때, 이탈하면 무효. 장기 상승선 근접 가점과 겹치면 무효", DEFAULT_WEIGHTS["short_up_line_near"]],
+            ["지지 근접", "지지선 근접이고 강도 4 이상일 때", DEFAULT_WEIGHTS["support_near"]],
+            ["저항 근접", "저항선 바로 옆이고, 강도 4 이상일 때", DEFAULT_WEIGHTS["resist_near"]],
+            ["최대 매물 (POC)", "현재가가 거래가 가장 많았던 가격 근접 했을 때, 이탈 시 무효", DEFAULT_WEIGHTS["poc"]],
+            ["밸류 하단 (VAL)", "현재가가 싼 구간 아래일때 (추세 무관)", DEFAULT_WEIGHTS["val"]],
+            ["밸류 상단 (VAH)", "현재가가 비싼 구간 위일때 (거리 무관)", DEFAULT_WEIGHTS["vah"]],
+            ["RSI", "35 이하 (너무 많이 떨어짐)", DEFAULT_WEIGHTS["rsi"]],
+            ["RSI", "70 이상 (너무 많이 오름)", -DEFAULT_WEIGHTS["rsi"]],
+            ["20일선", "현재가가 20일선 근처일때, 20일선 완전 이탈시 무효", DEFAULT_WEIGHTS["ma20"]],
+            ["60일선", "현재가가 60일선 근처일때, 60일선 완전 이탈시 무효", DEFAULT_WEIGHTS["ma60_near"]],
+            ["180일선", "현재가가 장기 이평 근처일 때. 6개월 조회는 180일선, 1년 조회는 300일선, 완전이탈시 무효", DEFAULT_WEIGHTS["ma200_near"]],
+            ["20일선 60일선 교차", "20일선 방향이 하방으로 떨어지면서 60일선 아래로 떨어지기 시작할때, 떨어지고 4봉이상 지나면 무효", DEFAULT_WEIGHTS["ma_cross_20_60"]],
+            ["1개월 하락률", "한 달동안 15% 이상 25%미만 하락 했을 때", DEFAULT_WEIGHTS["chg1_down10"]],
+            ["1개월 하락률", "한 달 동안 25% 이상 35% 미만 떨어짐", DEFAULT_WEIGHTS["chg1_down20"]],
+            ["1개월 하락률", "한 달 동안 35% 이상 떨어짐", DEFAULT_WEIGHTS["chg1_down30"]],
+            ["6개월 상승률", "6개월 동안 800% 이상 오름, 횡보 추세나 하락 추세시 무효", DEFAULT_WEIGHTS["chg6_800"]],
+            ["6개월 상승률", "6개월 동안 600% 이상 오름, 횡보 추세나 하락 추세시 무효", DEFAULT_WEIGHTS["chg6_600"]],
+            ["6개월 상승률", "6개월 동안 300% 이상 600% 미만 오름, 횡보 추세나 하락 추세시 무효", DEFAULT_WEIGHTS["chg6_300"]],
+            ["단기 급상승", "1개 봉만에 20% 이상 상승했을 시", DEFAULT_WEIGHTS["bar_spike_20"]],
         ],
         [18, 78, 10],
         score_col=3,
@@ -177,14 +202,16 @@ def main() -> None:
         "조회기간 추세",
         ["조회기간 추세", "1개월(1시간봉) 추세", "점수", "비고"],
         [
-            ["상승", "상승", -1, "3개월·6개월·1년만"],
-            ["상승", "하락", 0, ""],
-            ["하락", "상승", 0, ""],
-            ["하락", "하락", 1, ""],
-            ["횡보", "상승", -1, ""],
-            ["횡보", "하락", 1, ""],
-            ["상승/하락/횡보", "횡보 또는 없음", 0, ""],
-            ["(1개월·2개월 조회)", "해당 없음", 0, "이 항목은 3개월 이상만"],
+            ["상승 (1·2개월)", "쓰지 않음", DEFAULT_WEIGHTS["trend_lookback_short_up"], "1개월·2개월 조회"],
+            ["하락 (1·2개월)", "쓰지 않음", DEFAULT_WEIGHTS["trend_lookback_short_down"], "1개월·2개월 조회"],
+            ["횡보 (1·2개월)", "쓰지 않음", 0, "1개월·2개월 조회"],
+            ["상승", "상승", DEFAULT_WEIGHTS["trend_lookback_1m_up"], "3개월·6개월·1년"],
+            ["상승", "하락", 0, "3개월·6개월·1년"],
+            ["하락", "상승", 0, "3개월·6개월·1년"],
+            ["하락", "하락", DEFAULT_WEIGHTS["trend_lookback_1m_down"], "3개월·6개월·1년"],
+            ["횡보", "상승", DEFAULT_WEIGHTS["trend_lookback_1m_up"], "3개월·6개월·1년"],
+            ["횡보", "하락", DEFAULT_WEIGHTS["trend_lookback_1m_down"], "3개월·6개월·1년"],
+            ["상승/하락/횡보", "횡보 또는 없음", 0, "3개월·6개월·1년"],
         ],
         [22, 22, 10, 36],
         score_col=3,
@@ -210,6 +237,20 @@ def main() -> None:
     opt["A9"].font = Font(italic=True, color="666666")
     opt.merge_cells("A9:C9")
 
+    lookback_rows = []
+    for label, spec in LOOKBACK_OPTIONS.items():
+        stock_tf = BAR_NAMES.get(spec["timeframe"], spec["timeframe"])
+        crypto_tf_key = CRYPTO_LOOKBACK_TIMEFRAMES.get(label, spec["timeframe"])
+        crypto_tf = BAR_NAMES.get(crypto_tf_key, crypto_tf_key)
+        lookback_rows.append([label, spec["days"], stock_tf, crypto_tf])
+    add_sheet(
+        wb,
+        "조회 기간 봉",
+        ["조회 기간", "일수", "주식 봉", "코인 봉"],
+        lookback_rows,
+        [16, 10, 16, 16],
+    )
+
     cuts = wb.create_sheet("매수 매도 기준")
     cuts.merge_cells("A1:B1")
     cuts.merge_cells("D1:E1")
@@ -230,21 +271,14 @@ def main() -> None:
         cell.font = HEADER_FONT
         cell.alignment = CENTER
         cell.border = THIN
-    rows = [
-        ["73% 이상", "강한 매수"],
-        ["65% 이상 ~ 73% 미만", "매수"],
-        ["55% 이상 ~ 65% 미만", "약한 매수"],
-        ["35% 초과 ~ 55% 미만", "홀딩"],
-        ["25% 초과 ~ 35% 이하", "약한 매도"],
-        ["20% 초과 ~ 25% 이하", "매도"],
-        ["20% 이하", "강한 매도"],
-    ]
+    crypto_bands = cut_band_rows(DEFAULT_CUTS_CRYPTO)
+    stock_bands = cut_band_rows(DEFAULT_CUTS_STOCK)
     fills = (GREEN, GREEN, PatternFill("solid", fgColor="E2EFDA"), YELLOW, RED, RED, PatternFill("solid", fgColor="F4B183"))
-    for i, ((pct, act), fill) in enumerate(zip(rows, fills), 3):
-        cuts.cell(i, 1, pct)
-        cuts.cell(i, 2, act)
-        cuts.cell(i, 4, pct)
-        cuts.cell(i, 5, act)
+    for i, ((cpct, cact), (spct, sact), fill) in enumerate(zip(crypto_bands, stock_bands, fills), 3):
+        cuts.cell(i, 1, cpct)
+        cuts.cell(i, 2, cact)
+        cuts.cell(i, 4, spct)
+        cuts.cell(i, 5, sact)
         for col in (1, 2, 4, 5):
             cell = cuts.cell(i, col)
             cell.fill = fill
@@ -261,7 +295,6 @@ def main() -> None:
     cuts["A12"] = "가까운 가격: 하루 변동폭의 약 40%, 또는 주가의 0.8% 중 더 큰 값."
     cuts["A12"].font = Font(italic=True, color="666666")
     cuts.merge_cells("A12:E12")
-    assert DEFAULT_CUTS_STOCK == DEFAULT_CUTS_CRYPTO
     cuts.column_dimensions["A"].width = 28
     cuts.column_dimensions["B"].width = 14
     cuts.column_dimensions["C"].width = 4
@@ -273,7 +306,8 @@ def main() -> None:
     hi_span = SCORE_HI - SCORE_BASE
     for s in range(-3, SCORE_HI + 4):
         pct = score_to_pct(s)
-        action = _action_from_pct(pct, DEFAULT_CUTS_STOCK)
+        action_stock = _action_from_pct(pct, DEFAULT_CUTS_STOCK)
+        action_crypto = _action_from_pct(pct, DEFAULT_CUTS_CRYPTO)
         if s < SCORE_LO:
             process = f"{s}점 → {SCORE_LO}점으로 보고 0%"
         elif s > SCORE_HI:
@@ -290,7 +324,7 @@ def main() -> None:
             f"IF(A{len(pct_rows)+2}<={SCORE_BASE},(A{len(pct_rows)+2}-{SCORE_LO})/{lo_span}*50,"
             f"50+(A{len(pct_rows)+2}-{SCORE_BASE})/{hi_span}*50))),0)"
         )
-        pct_rows.append([s, pct, formula, process, action, action])
+        pct_rows.append([s, pct, formula, process, action_stock, action_crypto])
 
     ws_pct = add_sheet(
         wb,
@@ -356,7 +390,7 @@ def main() -> None:
         "2. 그 직선 아래 스윙 저점이 있으면, 그중 가장 최근 점을 새 오른쪽 끝으로 둡니다.",
         "3. 아래에 저점이 없을 때까지 2를 반복합니다.",
         "4. 최근 스윙이 유일한 최저이면 마지막 두 저점을 긋습니다. 이때만 하방이 됩니다.",
-        "점수 항목 「상승 추세선 근접」은 이 장기선을 봅니다.",
+        "점수 항목 「장기 상승 추세선 근접」은 이 장기선을 봅니다.",
         "",
         "단기 상승 추세선",
         "최근 스윙 저점 4개만 씁니다. 그중 가장 낮은 점과 가장 최근 저점을 잇습니다.",
@@ -407,8 +441,13 @@ def main() -> None:
 
     if "Sheet" in wb.sheetnames:
         del wb["Sheet"]
-    wb.save(OUT)
-    print(OUT)
+    out = OUT
+    try:
+        wb.save(out)
+    except PermissionError:
+        out = ROOT / f"현재_규칙_v{SIGNAL_RULE_VERSION}.xlsx"
+        wb.save(out)
+    print(out)
 
 
 if __name__ == "__main__":
