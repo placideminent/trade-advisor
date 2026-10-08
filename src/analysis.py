@@ -201,68 +201,17 @@ def _last_two_up_line(lows: list, x_end: int) -> tuple[float, float, float, floa
 SHORT_UP_SWING_COUNT = 4
 
 
-def _rising_up_line_lock_last(lows: list, x_end: int) -> tuple[float, float, float, float] | None:
-    """최근 스윙 저점을 반드시 지나는 상승선. 선 아래가 없을 때까지 왼쪽만 당긴다.
-
-    최근 스윙이 유일한 최저면 마지막 두 저점을 쓴다. 이때도 최근 저점은 지난다.
-    """
-    if len(lows) < 2:
-        return None
-    last_i = int(lows[-1][2])
-    last_y = float(lows[-1][1])
-    fallback = _line_through((int(lows[-2][2]), float(lows[-2][1])), (last_i, last_y), x_end)
-
-    earlier = [p for p in lows if int(p[2]) < last_i]
-    if not earlier:
-        return fallback
-    min_i = int(earlier[0][2])
-    min_y = float(earlier[0][1])
-    for _t, y, i in earlier[1:]:
-        y = float(y)
-        i = int(i)
-        if y < min_y:
-            min_y = y
-            min_i = i
-    left_i = min_i
-    left_y = min_y
-    for _ in range(len(lows) + 1):
-        if left_i >= last_i:
-            return fallback
-        line = _line_through((left_i, left_y), (last_i, last_y), x_end)
-        if line is None:
-            return fallback
-        x0, y0, x1, y1 = line
-        if x1 == x0:
-            return fallback
-        piercer_i = None
-        piercer_y = None
-        for _tm, ym, im in lows:
-            im = int(im)
-            if im <= left_i or im >= last_i:
-                continue
-            y_at = y0 + (y1 - y0) / (x1 - x0) * (im - x0)
-            if float(ym) < y_at - max(1e-6, abs(y_at) * 1e-4):
-                if piercer_i is None or im > piercer_i:
-                    piercer_i = im
-                    piercer_y = float(ym)
-        if piercer_i is None:
-            return line
-        left_i = piercer_i
-        left_y = piercer_y
-    return fallback
-
-
 def _chart_up_line(lows: list, x_end: int, lookback_days: int | None) -> tuple[float, float, float, float] | None:
     """장기 상승 추세선. 조회기간 전체 스윙 저점으로 긋는다."""
     return _rising_up_line(lows, x_end)
 
 
 def _chart_short_up_line(lows: list, x_end: int) -> tuple[float, float, float, float] | None:
-    """단기 상승 추세선. 최근 스윙 저점 4개로 긋고, 가장 최근 저점을 반드시 지난다."""
+    """단기 상승 추세선. 최근 스윙 저점 4개의 최저와 최근을 잇고, 아래가 있으면 그 저점으로 오른쪽을 당긴다."""
     recent = lows[-SHORT_UP_SWING_COUNT:] if len(lows) > SHORT_UP_SWING_COUNT else lows
     if len(recent) < 2:
         return None
-    return _rising_up_line_lock_last(recent, x_end)
+    return _rising_up_line(recent, x_end)
 
 
 def volume_profile(df: pd.DataFrame, bins: int = 48) -> tuple[np.ndarray, np.ndarray, float, float, float]:
