@@ -278,6 +278,44 @@ def resample_12h(df: pd.DataFrame, market: str) -> pd.DataFrame:
     return resample_hours(df, market, 12)
 
 
+def resample_ndays(df: pd.DataFrame, n: int = 4) -> pd.DataFrame:
+    """일봉을 n개씩 묶어 N일봉으로 합친다. 가장 최근 봉이 한 묶음의 끝이 되게 맞춘다."""
+    if df is None or df.empty or int(n) <= 1:
+        return df
+    work = df.copy()
+    work.index = _index_naive_wall(work.index)
+    work = work.sort_index()
+    n_bars = len(work)
+    size = int(n)
+    remainder = n_bars % size
+    frames: list[pd.DataFrame] = []
+    start = 0
+    if remainder:
+        frames.append(work.iloc[0:remainder])
+        start = remainder
+    for i in range(start, n_bars, size):
+        frames.append(work.iloc[i : i + size])
+    rows = []
+    idx = []
+    for chunk in frames:
+        if chunk.empty:
+            continue
+        rec = {
+            "open": float(chunk["open"].iloc[0]),
+            "high": float(chunk["high"].max()),
+            "low": float(chunk["low"].min()),
+            "close": float(chunk["close"].iloc[-1]),
+            "volume": float(chunk["volume"].sum()) if "volume" in chunk.columns else 0.0,
+        }
+        rows.append(rec)
+        idx.append(chunk.index[0])
+    if not rows:
+        return work.iloc[0:0].copy()
+    out = pd.DataFrame(rows, index=pd.DatetimeIndex(idx))
+    out.index = _index_naive_wall(out.index)
+    return out
+
+
 def to_market_wall(df: pd.DataFrame, market: str) -> pd.DataFrame:
     """시세 인덱스를 시장 시간대 벽시계로 맞춘다."""
     if df.empty:
@@ -1065,16 +1103,16 @@ def fetch_ohlcv(
 ) -> tuple[pd.DataFrame, dict]:
     """지정일(as_of)까지의 봉만 반환.
 
-    주식: 1개월 1시간봉, 2개월 4시간봉, 3개월부터 일봉.
-    코인: 1개월 12시간봉, 2개월부터 일봉.
+    주식: 1개월 1시간봉, 2개월 4시간봉, 3개월·6개월 일봉, 1년 4일봉.
+    코인: 1개월 12시간봉, 2·3개월·6개월 일봉, 1년 4일봉.
     """
     as_of = _to_date(as_of)
     reset_yahoo_gate()
-    if timeframe not in ("1h", "4h", "12h", "1d"):
+    if timeframe not in ("1h", "4h", "12h", "1d", "4d"):
         timeframe = "1d"
     interval = "1h" if timeframe in INTRA_TIMEFRAMES else "1d"
     pad = 7 if timeframe in INTRA_TIMEFRAMES else 10
-    extra_ma = 220 if timeframe == "1d" and int(lookback_days) >= 300 else 0
+    extra_ma = 220 if timeframe in ("1d", "4d") and int(lookback_days) >= 300 else 0
     hist_days = int(lookback_days) + extra_ma
     start = as_of - timedelta(days=int(hist_days * 1.2) + pad)
     meta = {
@@ -1246,6 +1284,23 @@ def fetch_ohlcv(
     if timeframe == "1h":
         df = to_market_wall(df, market)
         meta["bar"] = BAR_NAMES["1h"]
+    if timeframe == "4d":
+        daily = df.copy()
+        daily.index = _index_naive_wall(daily.index)
+        if as_of == market_today(market):
+            trimmed = drop_incomplete_session(daily, as_of)
+            if trimmed is not None and not trimmed.empty:
+                daily = trimmed
+        packed = resample_ndays(daily, 4)
+        if packed.empty:
+            df = daily
+            timeframe = "1d"
+            meta["timeframe"] = "1d"
+            meta["bar"] = BAR_NAMES["1d"]
+            meta["note"] = "4일봉 변환에 실패해 일봉으로 계산합니다."
+        else:
+            df = packed
+            meta["bar"] = BAR_NAMES["4d"]
     if timeframe == "1d":
         df = df.copy()
         df.index = _index_naive_wall(df.index)
@@ -1255,7 +1310,7 @@ def fetch_ohlcv(
         return df, meta
 
     cutoff = pd.Timestamp(as_of) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
-    extra_ma = 220 if timeframe == "1d" and int(lookback_days) >= 300 else 0
+    extra_ma = 220 if timeframe in ("1d", "4d") and int(lookback_days) >= 300 else 0
     window_start = pd.Timestamp(as_of) - pd.Timedelta(days=int(lookback_days) + extra_ma)
     work = df.copy()
     work.index = _index_naive_wall(work.index)

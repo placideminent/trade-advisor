@@ -60,10 +60,10 @@ LOOKBACK_OPTIONS = {
     "2개월": {"days": 60, "timeframe": "4h"},
     "3개월": {"days": 90, "timeframe": "1d"},
     "6개월": {"days": 180, "timeframe": "1d"},
-    "1년": {"days": 365, "timeframe": "1d"},
+    "1년": {"days": 365, "timeframe": "4d"},
 }
 
-# 코인은 24시간이라 짧은 조회에서 봉을 더 굵게 쓴다.
+# 코인은 24시간이라 짧은 조회에서 봉을 더 굵게 쓴다. 1년은 주식과 같이 4일봉.
 CRYPTO_LOOKBACK_TIMEFRAMES = {
     "1개월": "12h",
     "2개월": "1d",
@@ -75,6 +75,7 @@ BAR_NAMES = {
     "4h": "4시간봉",
     "12h": "12시간봉",
     "1d": "일봉",
+    "4d": "4일봉",
 }
 
 INTRA_TIMEFRAMES = frozenset({"1h", "4h", "12h"})
@@ -82,13 +83,13 @@ INTRA_TIMEFRAMES = frozenset({"1h", "4h", "12h"})
 
 def lookback_bar_caption() -> str:
     return (
-        "주식은 1개월 1시간봉, 2개월 4시간봉, 3개월·6개월·1년 일봉입니다. "
-        "코인은 1개월 12시간봉, 2·3개월·6개월·1년은 일봉입니다."
+        "주식은 1개월 1시간봉, 2개월 4시간봉, 3개월·6개월 일봉, 1년 4일봉입니다. "
+        "코인은 1개월 12시간봉, 2·3개월·6개월 일봉, 1년 4일봉입니다."
     )
 
 
 def resolve_lookback(label, market=None) -> dict:
-    """조회 기간 설정을 항상 {days, timeframe} 로 맞춘다. 주식 3개월부터·코인 2개월부터는 일봉."""
+    """조회 기간 설정을 항상 {days, timeframe} 로 맞춘다. 1년은 주식·코인 모두 4일봉."""
     spec = LOOKBACK_OPTIONS.get(label)
     if isinstance(spec, dict) and "days" in spec and "timeframe" in spec:
         out = {"days": int(spec["days"]), "timeframe": str(spec["timeframe"])}
@@ -97,8 +98,10 @@ def resolve_lookback(label, market=None) -> dict:
             tf = "1h"
         elif spec <= 60:
             tf = "4h"
-        else:
+        elif spec <= 210:
             tf = "1d"
+        else:
+            tf = "4d"
         out = {"days": int(spec), "timeframe": tf}
     else:
         fallback = LOOKBACK_OPTIONS["6개월"]

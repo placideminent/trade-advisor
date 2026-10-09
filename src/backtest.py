@@ -258,7 +258,7 @@ def run_backtest(
         if df_main is None or df_main.empty:
             df_main, meta = _try_ohlcv(timeframe)
     else:
-        df_main, meta = _try_ohlcv("1d")
+        df_main, meta = _try_ohlcv(timeframe)
 
     if df_main is None or df_main.empty:
         df_main, meta = _try_ohlcv("1d")
