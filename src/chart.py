@@ -127,6 +127,7 @@ def build_chart(an: Analysis, sig: Signal, title: str) -> go.Figure:
 
     add_slant(an.up_line, "장기 상승 추세선", "#22c55e")
     add_slant(getattr(an, "short_up_line", None), "단기 상승 추세선", "#2563eb")
+    add_slant(getattr(an, "price_down_line", None), "현재가 기준 하락추세선", "#92400e")
     if an.down_line:
         i0, y0, i1, y1 = an.down_line
         i0 = int(max(0, min(len(df) - 1, i0)))

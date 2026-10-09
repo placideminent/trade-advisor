@@ -40,6 +40,7 @@ class Analysis:
     up_line: tuple[float, float, float, float] | None = None
     short_up_line: tuple[float, float, float, float] | None = None
     down_line: tuple[float, float, float, float] | None = None
+    price_down_line: tuple[float, float, float, float] | None = None
     swing_highs: list[tuple[pd.Timestamp, float]] = field(default_factory=list)
     swing_lows: list[tuple[pd.Timestamp, float]] = field(default_factory=list)
     df: pd.DataFrame | None = None
@@ -214,6 +215,54 @@ def _chart_short_up_line(lows: list, x_end: int) -> tuple[float, float, float, f
     return _rising_up_line(recent, x_end)
 
 
+def _price_down_line(highs: list, x_end: int, price: float) -> tuple[float, float, float, float] | None:
+    """최고 스윙고점과 현재가를 잇고, 선 위 고점이 없을 때까지 그 고점과 최고점을 다시 잇는다.
+
+    같은 최고가가 여러 개면 가장 오래된 점을 왼쪽으로 쓴다.
+    선 위 고점이 없으면 최고점~현재가 선을 그대로 둔다.
+    """
+    if not highs or price is None or float(price) <= 0:
+        return None
+    x_end = int(x_end)
+    price = float(price)
+    max_i = int(highs[0][2])
+    max_y = float(highs[0][1])
+    for _t, y, i in highs[1:]:
+        y = float(y)
+        i = int(i)
+        if y > max_y:
+            max_y = y
+            max_i = i
+    if max_i >= x_end:
+        return None
+    original = _line_through((max_i, max_y), (x_end, price), x_end)
+    right_i = x_end
+    right_y = price
+    for _ in range(len(highs) + 1):
+        line = _line_through((max_i, max_y), (right_i, right_y), x_end)
+        if line is None:
+            return original
+        x0, y0, x1, y1 = line
+        if x1 == x0:
+            return original
+        piercer_i = None
+        piercer_y = None
+        for _tm, ym, im in highs:
+            im = int(im)
+            if im <= max_i or im >= right_i:
+                continue
+            y_at = y0 + (y1 - y0) / (x1 - x0) * (im - x0)
+            if float(ym) > y_at + max(1e-6, abs(y_at) * 1e-4):
+                if piercer_i is None or im > piercer_i:
+                    piercer_i = im
+                    piercer_y = float(ym)
+        if piercer_i is None:
+            return line
+        right_i = piercer_i
+        right_y = piercer_y
+    return original
+
+
 def volume_profile(df: pd.DataFrame, bins: int = 48) -> tuple[np.ndarray, np.ndarray, float, float, float]:
     """일봉 [저가, 고가] 구간에 거래량을 균등 분배한 가격대 히스토그램."""
     pmin = float(df["low"].min())
@@ -370,6 +419,7 @@ def analyze(
     down_line = None
     if len(highs) >= 2:
         down_line = _line_through((highs[-2][2], highs[-2][1]), (highs[-1][2], highs[-1][1]), x_end)
+    price_down_line = _price_down_line(highs, x_end, price) if highs else None
 
     structure = "sideways"
     if len(lows) >= 2 and len(highs) >= 2:
@@ -496,6 +546,7 @@ def analyze(
         up_line=up_line,
         short_up_line=short_up_line,
         down_line=down_line,
+        price_down_line=price_down_line,
         swing_highs=[(t, p) for t, p, _ in highs[-8:]],
         swing_lows=[(t, p) for t, p, _ in lows[-8:]],
         df=work,
