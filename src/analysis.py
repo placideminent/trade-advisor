@@ -115,7 +115,11 @@ def classify_trend(df: pd.DataFrame, price: float) -> str:
     return ma_trend
 
 
-def find_swings(df: pd.DataFrame, left: int = 4, right: int = 4) -> tuple[list, list]:
+SWING_SIDE = 3
+
+
+def find_swings(df: pd.DataFrame, left: int = SWING_SIDE, right: int = SWING_SIDE) -> tuple[list, list]:
+    """고점·저점은 앞뒤 SWING_SIDE봉보다 높/낮고, 같은 값이 창 안에 하나일 때만 스윙."""
     highs: list[tuple[pd.Timestamp, float, int]] = []
     lows: list[tuple[pd.Timestamp, float, int]] = []
     h = df["high"].to_numpy()
