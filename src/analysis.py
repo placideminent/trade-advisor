@@ -146,29 +146,26 @@ def _line_through(p0: tuple[int, float], p1: tuple[int, float], x_end: int) -> t
     return (float(x0), float(y0), float(x_end), float(y_end))
 
 
-def _rising_up_line(lows: list, x_end: int) -> tuple[float, float, float, float] | None:
-    """조회기간 최저 저점과 최근 저점을 잇고, 선 아래가 없을 때까지 오른쪽을 당긴다.
-
-    같은 최저가 여러 개면 가장 오래된 점을 왼쪽으로 쓴다.
-    최근 스윙이 곧 유일한 최저면 마지막 두 저점을 쓴다.
-    """
+def _rising_up_anchors(lows: list, x_end: int):
+    """최저~최근 저점을 잇고 선 아래가 없을 때까지 오른쪽을 당긴다. (선, 왼쪽 스윙, 오른쪽 스윙)."""
     if len(lows) < 2:
-        return None
-    last_i = int(lows[-1][2])
-    last_y = float(lows[-1][1])
-    fallback = _line_through((int(lows[-2][2]), float(lows[-2][1])), (last_i, last_y), x_end)
+        return None, None, None
+    last_pt = lows[-1]
+    last_i = int(last_pt[2])
+    last_y = float(last_pt[1])
+    fallback_line = _line_through((int(lows[-2][2]), float(lows[-2][1])), (last_i, last_y), x_end)
+    fallback = (fallback_line, lows[-2], last_pt)
 
-    min_i = int(lows[0][2])
-    min_y = float(lows[0][1])
-    for _t, y, i in lows[1:]:
-        y = float(y)
-        i = int(i)
-        if y < min_y:
-            min_y = y
-            min_i = i
+    min_pt = lows[0]
+    for pt in lows[1:]:
+        if float(pt[1]) < float(min_pt[1]):
+            min_pt = pt
+    min_i = int(min_pt[2])
+    min_y = float(min_pt[1])
     if min_i >= last_i:
         return fallback
 
+    right_pt = last_pt
     right_i = last_i
     right_y = last_y
     for _ in range(len(lows) + 1):
@@ -178,22 +175,66 @@ def _rising_up_line(lows: list, x_end: int) -> tuple[float, float, float, float]
         x0, y0, x1, y1 = line
         if x1 == x0:
             return fallback
-        piercer_i = None
-        piercer_y = None
-        for _tm, ym, im in lows:
-            im = int(im)
+        piercer = None
+        for pt in lows:
+            im = int(pt[2])
             if im <= min_i or im >= right_i:
                 continue
             y_at = y0 + (y1 - y0) / (x1 - x0) * (im - x0)
-            if float(ym) < y_at - max(1e-6, abs(y_at) * 1e-4):
-                if piercer_i is None or im > piercer_i:
-                    piercer_i = im
-                    piercer_y = float(ym)
-        if piercer_i is None:
-            return line
-        right_i = piercer_i
-        right_y = piercer_y
+            if float(pt[1]) < y_at - max(1e-6, abs(y_at) * 1e-4):
+                if piercer is None or im > int(piercer[2]):
+                    piercer = pt
+        if piercer is None:
+            return line, min_pt, right_pt
+        right_pt = piercer
+        right_i = int(piercer[2])
+        right_y = float(piercer[1])
     return fallback
+
+
+def _rising_up_line_skip_similar(lows: list, x_end: int, similar_th: float):
+    """두 끝점 가격이 비슷하면 더 낮은 점만 남기고 나머지 스윙으로 다시 긋는다."""
+    work = list(lows)
+    dropped: set[int] = set()
+    th = max(float(similar_th), 0.0)
+    for _ in range(len(lows) + 1):
+        if len(work) < 2:
+            return None
+        line, left, right = _rising_up_anchors(work, x_end)
+        if line is None or left is None or right is None:
+            return line
+        ly, ry = float(left[1]), float(right[1])
+        if abs(ly - ry) > th:
+            return line
+        if ly < ry:
+            drop_i = int(right[2])
+        elif ry < ly:
+            drop_i = int(left[2])
+        else:
+            drop_i = max(int(left[2]), int(right[2]))
+        if drop_i in dropped:
+            return line
+        dropped.add(drop_i)
+        work = [pt for pt in work if int(pt[2]) != drop_i]
+    line, _, _ = _rising_up_anchors(work, x_end)
+    return line
+
+
+def _rising_up_line(
+    lows: list,
+    x_end: int,
+    similar_th: float | None = None,
+) -> tuple[float, float, float, float] | None:
+    """조회기간 최저 저점과 최근 저점을 잇고, 선 아래가 없을 때까지 오른쪽을 당긴다.
+
+    같은 최저가 여러 개면 가장 오래된 점을 왼쪽으로 쓴다.
+    최근 스윙이 곧 유일한 최저면 마지막 두 저점을 쓴다.
+    similar_th가 있으면 두 끝점 가격이 그 거리 안일 때 더 높은 점을 무시하고 다시 긋는다.
+    """
+    if similar_th is not None:
+        return _rising_up_line_skip_similar(lows, x_end, float(similar_th))
+    line, _, _ = _rising_up_anchors(lows, x_end)
+    return line
 
 
 def _last_two_up_line(lows: list, x_end: int) -> tuple[float, float, float, float] | None:
@@ -206,9 +247,17 @@ def _last_two_up_line(lows: list, x_end: int) -> tuple[float, float, float, floa
 SHORT_UP_SWING_COUNT = 4
 
 
-def _chart_up_line(lows: list, x_end: int, lookback_days: int | None) -> tuple[float, float, float, float] | None:
-    """장기 상승 추세선. 조회기간 전체 스윙 저점으로 긋는다."""
-    return _rising_up_line(lows, x_end)
+def _chart_up_line(
+    lows: list,
+    x_end: int,
+    lookback_days: int | None,
+    similar_th: float | None = None,
+) -> tuple[float, float, float, float] | None:
+    """장기 상승 추세선. 조회기간 전체 스윙 저점으로 긋는다.
+
+    선이 지나는 스윙 저점 두 개의 가격이 비슷하면 더 낮은 점만 쓰고 다시 긋는다.
+    """
+    return _rising_up_line(lows, x_end, similar_th=similar_th)
 
 
 def _chart_short_up_line(lows: list, x_end: int) -> tuple[float, float, float, float] | None:
@@ -416,8 +465,9 @@ def analyze(
     highs, lows = find_swings(work)
     n = len(work)
     x_end = n - 1
+    cluster_th = max(last_atr * 0.4, price * 0.008)
 
-    up_line = _chart_up_line(lows, x_end, lookback_days) if len(lows) >= 2 else None
+    up_line = _chart_up_line(lows, x_end, lookback_days, similar_th=cluster_th) if len(lows) >= 2 else None
     short_up_line = _chart_short_up_line(lows, x_end) if len(lows) >= 2 else None
 
     down_line = None
@@ -477,7 +527,6 @@ def analyze(
             )
         )
 
-    cluster_th = max(last_atr * 0.4, price * 0.008)
     clustered = cluster_prices([p for _, p, _ in highs + lows], cluster_th)
 
     supports: list[Level] = []
