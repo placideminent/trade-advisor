@@ -27,6 +27,7 @@ DEFAULT_WEIGHTS = {
     "swing_low_near": 0,
     "swing_high_near": 0,
     "down_line_near": -1,
+    "price_down_line_near": -1,
     "trendline_dir_down": 0,
     "trendline_dir_down_break": 0,
     "trendline_dir_down_upnear": 0,
@@ -110,6 +111,7 @@ WEIGHT_FIELDS = [
     ("trend_lookback_1m_up", "조회기간 추세", "(3개월,6개월,1년 조회에만 적용) 조회기간 상승 · 1개월(1시간봉) 상승 / (3개월,6개월,1년 조회에만 적용) 조회기간 횡보 · 1개월(1시간봉) 상승"),
     ("trend_lookback_1m_down", "조회기간 추세", "(3개월,6개월,1년 조회에만 적용) 조회기간 하락 · 1개월(1시간봉) 하락 / (3개월,6개월,1년 조회에만 적용) 조회기간 횡보 · 1개월(1시간봉) 하락"),
     ("down_line_near", "하락 추세선 근접", "하락 추세선에 근접 했을 때, 돌파하면 무효"),
+    ("price_down_line_near", "전체 기준 하락추세선 근접", "현재가가 전체 기준 하락추세선에 근접 했을 때, 돌파하면 무효"),
     ("up_line_near", "장기 상승 추세선 근접", "장기 상승 추세선 근접 했을 때, 이탈하면 무효"),
     ("short_up_line_near", "단기 상승 추세선 근접", "단기 상승 추세선 근접 했을 때, 이탈하면 무효. 장기 상승선 근접 가점과 겹치면 무효"),
     ("support_near", "지지 근접", "지지선 근접이고 강도 4 이상일 때"),
@@ -907,6 +909,27 @@ def recommend(
         add(
             "하락 추세선 근접",
             f"하락선 {_fmt(y_dn)} 과 이격 {_fmt(abs(price - y_dn))}",
+            0,
+        )
+
+    pdn_line = getattr(an, "price_down_line", None)
+    y_pdn = _line_y_at(pdn_line, float(pdn_line[2])) if pdn_line else None
+    if not pdn_line:
+        add("전체 기준 하락추세선 근접", "전체 기준 하락선 없음", 0)
+    elif y_pdn is None:
+        add("전체 기준 하락추세선 근접", "전체 기준 하락선 위치를 계산하지 못함", 0)
+    elif price > y_pdn:
+        add("전체 기준 하락추세선 근접", f"전체 기준 하락선 {_fmt(y_pdn)} 상향 돌파라 무효", 0)
+    elif abs(price - y_pdn) <= near:
+        add(
+            "전체 기준 하락추세선 근접",
+            f"전체 기준 하락선 {_fmt(y_pdn)} 근처 (이격 {_fmt(abs(price - y_pdn))})",
+            wp("price_down_line_near"),
+        )
+    else:
+        add(
+            "전체 기준 하락추세선 근접",
+            f"전체 기준 하락선 {_fmt(y_pdn)} 과 이격 {_fmt(abs(price - y_pdn))}",
             0,
         )
 
