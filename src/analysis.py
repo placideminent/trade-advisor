@@ -237,67 +237,28 @@ def _rising_up_line(
     return line
 
 
-def _higher_endpoint_index(left, right) -> int:
-    """두 점 중 더 높은 가격의 봉 번호. 같으면 더 최근 봉.
-
-    장기 상승선이 비슷한 저점을 버릴 때와 같은 선택이다.
-    """
-    ly, ry = float(left[1]), float(right[1])
-    li, ri = int(left[2]), int(right[2])
-    if ly < ry:
-        return ri
-    if ry < ly:
-        return li
-    return li if li > ri else ri
-
-
 def _chart_down_line(
     highs: list,
     x_end: int,
     similar_th: float | None = None,
 ) -> tuple[float, float, float, float] | None:
-    """마지막 스윙 고점 두 개를 오른쪽 끝까지 잇는다.
+    """가장 최근 스윙 고점과, 최근 스윙 고점 4개 중 가장 높은 고점을 잇는다.
 
-    두 가격이 비슷하면 더 높은 고점을 스윙에서 빼고, 남은 고점을 그보다
-    앞(과거)의 스윙 고점과 다시 잇는다.
-    새 쌍도 비슷하면 같은 방식으로 반복한다.
-    더 앞의 스윙 고점이 없으면 그 두 고점을 그대로 잇는다.
+    가장 최근 고점은 반드시 오른쪽 끝점이다. 왼쪽 끝점은 그 앞 3개 고점 중
+    가장 높은 점(같은 가격이면 더 오래된 점)이다. 가장 최근 고점이 4개 중
+    가장 높으면 하락선이 아니므로 긋지 않는다. similar_th는 쓰지 않는다.
     """
     if len(highs) < 2:
         return None
-    seq = sorted(highs, key=lambda pt: int(pt[2]))
-    left, right = seq[-2], seq[-1]
-    if similar_th is None:
-        return _line_through((int(left[2]), float(left[1])), (int(right[2]), float(right[1])), x_end)
-
-    left, right = _down_anchors_skip_similar(seq, left, right, similar_th)
+    seq = sorted(highs, key=lambda pt: int(pt[2]))[-4:]
+    right = seq[-1]
+    left = None
+    for pt in seq[:-1]:
+        if left is None or float(pt[1]) > float(left[1]):
+            left = pt
+    if left is None or float(left[1]) < float(right[1]):
+        return None
     return _line_through((int(left[2]), float(left[1])), (int(right[2]), float(right[1])), x_end)
-
-
-def _down_anchors_skip_similar(seq, left, right, similar_th: float):
-    """비슷한 고점 쌍이면 더 높은 점을 빼고, 남은 점을 바로 앞(과거) 고점과 잇는다.
-
-    seq는 시간순. 앞에 고점이 없으면 left, right를 그대로 돌려준다.
-    """
-    th = max(float(similar_th), 0.0)
-    points = sorted(seq, key=lambda pt: int(pt[2]))
-    for _ in range(len(points) + 1):
-        if abs(float(left[1]) - float(right[1])) > th:
-            break
-        drop_i = _higher_endpoint_index(left, right)
-        kept = left if int(left[2]) != drop_i else right
-        nxt = None
-        for pt in reversed(points):
-            bi = int(pt[2])
-            if bi == drop_i or bi >= int(kept[2]):
-                continue
-            nxt = pt
-            break
-        if nxt is None:
-            break
-        points = [pt for pt in points if int(pt[2]) != drop_i]
-        left, right = (kept, nxt) if int(kept[2]) < int(nxt[2]) else (nxt, kept)
-    return left, right
 
 
 def _last_two_up_line(lows: list, x_end: int) -> tuple[float, float, float, float] | None:
