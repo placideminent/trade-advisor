@@ -246,7 +246,7 @@ def _chart_down_line(
 
     가장 최근 고점은 반드시 오른쪽 끝점이다. 왼쪽 끝점은 그 앞 3개 고점 중
     가장 높은 점(같은 가격이면 더 오래된 점)이다. 가장 최근 고점이 4개 중
-    가장 높으면 하락선이 아니므로 긋지 않는다. similar_th는 쓰지 않는다.
+    가장 높으면 4개 중 가장 오래된 고점과 잇는다. similar_th는 쓰지 않는다.
     """
     if len(highs) < 2:
         return None
@@ -256,8 +256,10 @@ def _chart_down_line(
     for pt in seq[:-1]:
         if left is None or float(pt[1]) > float(left[1]):
             left = pt
-    if left is None or float(left[1]) < float(right[1]):
+    if left is None:
         return None
+    if float(left[1]) < float(right[1]):
+        left = seq[0]
     return _line_through((int(left[2]), float(left[1])), (int(right[2]), float(right[1])), x_end)
 
 
