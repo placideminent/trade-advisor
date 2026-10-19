@@ -171,7 +171,7 @@ def main() -> None:
             ["조회기간 추세", "(3개월,6개월,1년 조회에만 적용) 조회기간 횡보 · 1개월(1시간봉) 하락", DEFAULT_WEIGHTS["trend_lookback_1m_down"]],
             ["조회기간 추세", "(3개월,6개월,1년 조회에만 적용) 조회기간 횡보 · 1개월(1시간봉) 상승", DEFAULT_WEIGHTS["trend_lookback_1m_up"]],
             ["조회기간 추세", "그 외의 경우", 0],
-            ["하락 추세선 근접", "하락 추세선에 근접 했을 때, 돌파하면 무효", DEFAULT_WEIGHTS["down_line_near"]],
+            ["하락 추세선 근접", "하락 추세선에 근접 했을 때, 돌파하면 무효. 전체 기준 하락추세선 근접 감점과 겹치면 무효", DEFAULT_WEIGHTS["down_line_near"]],
             ["전체 기준 하락추세선 근접", "현재가가 전체 기준 하락추세선에 근접 했을 때, 돌파하면 무효. 선이 현재가에서 끝나면 점수 없음", DEFAULT_WEIGHTS["price_down_line_near"]],
             ["장기 상승 추세선 근접", "장기 상승 추세선 근접 했을 때, 이탈하면 무효", DEFAULT_WEIGHTS["up_line_near"]],
             ["단기 상승 추세선 근접", "단기 상승 추세선 근접 했을 때, 이탈하면 무효. 장기 상승선 근접 가점과 겹치면 무효", DEFAULT_WEIGHTS["short_up_line_near"]],

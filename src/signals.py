@@ -110,7 +110,7 @@ WEIGHT_FIELDS = [
     ("trend_lookback_short_down", "조회기간 추세", "(1개월,2개월 조회에만 적용) 조회기간 하락"),
     ("trend_lookback_1m_up", "조회기간 추세", "(3개월,6개월,1년 조회에만 적용) 조회기간 상승 · 1개월(1시간봉) 상승 / (3개월,6개월,1년 조회에만 적용) 조회기간 횡보 · 1개월(1시간봉) 상승"),
     ("trend_lookback_1m_down", "조회기간 추세", "(3개월,6개월,1년 조회에만 적용) 조회기간 하락 · 1개월(1시간봉) 하락 / (3개월,6개월,1년 조회에만 적용) 조회기간 횡보 · 1개월(1시간봉) 하락"),
-    ("down_line_near", "하락 추세선 근접", "하락 추세선에 근접 했을 때, 돌파하면 무효"),
+    ("down_line_near", "하락 추세선 근접", "하락 추세선에 근접 했을 때, 돌파하면 무효. 전체 기준 하락추세선 근접 감점과 겹치면 무효"),
     ("price_down_line_near", "전체 기준 하락추세선 근접", "현재가가 전체 기준 하락추세선에 근접 했을 때, 돌파하면 무효. 선이 현재가에서 끝나면 점수 없음"),
     ("up_line_near", "장기 상승 추세선 근접", "장기 상승 추세선 근접 했을 때, 이탈하면 무효"),
     ("short_up_line_near", "단기 상승 추세선 근접", "단기 상승 추세선 근접 했을 때, 이탈하면 무효. 장기 상승선 근접 가점과 겹치면 무효"),
@@ -893,12 +893,28 @@ def recommend(
     broke_dn = y_dn is not None and price > y_dn
     near_up = y_up is not None and abs(price - y_up) <= near and price >= y_up
     broke_up = y_up is not None and price < y_up
+    pdn_line = getattr(an, "price_down_line", None)
+    y_pdn = _line_y_at(pdn_line, float(pdn_line[2])) if pdn_line else None
+    pdn_ends_at_price = y_pdn is not None and abs(price - y_pdn) <= max(1e-9, abs(price) * 1e-7)
+    pdn_near = (
+        y_pdn is not None
+        and not pdn_ends_at_price
+        and price <= y_pdn
+        and abs(price - y_pdn) <= near
+        and wp("price_down_line_near") != 0
+    )
     if not down_line:
         add("하락 추세선 근접", "하락선 없음", 0)
     elif y_dn is None:
         add("하락 추세선 근접", "하락선 위치를 계산하지 못함", 0)
     elif broke_dn:
         add("하락 추세선 근접", f"하락선 {_fmt(y_dn)} 상향 돌파라 무효", 0)
+    elif near_dn and pdn_near:
+        add(
+            "하락 추세선 근접",
+            f"하락선 {_fmt(y_dn)} 근처지만 전체 기준 하락선 근접과 겹쳐 무효",
+            0,
+        )
     elif near_dn:
         add(
             "하락 추세선 근접",
@@ -912,13 +928,11 @@ def recommend(
             0,
         )
 
-    pdn_line = getattr(an, "price_down_line", None)
-    y_pdn = _line_y_at(pdn_line, float(pdn_line[2])) if pdn_line else None
     if not pdn_line:
         add("전체 기준 하락추세선 근접", "전체 기준 하락선 없음", 0)
     elif y_pdn is None:
         add("전체 기준 하락추세선 근접", "전체 기준 하락선 위치를 계산하지 못함", 0)
-    elif abs(price - y_pdn) <= max(1e-9, abs(price) * 1e-7):
+    elif pdn_ends_at_price:
         add("전체 기준 하락추세선 근접", "전체 기준 하락선이 현재가에서 끝나 점수 없음", 0)
     elif price > y_pdn:
         add("전체 기준 하락추세선 근접", f"전체 기준 하락선 {_fmt(y_pdn)} 상향 돌파라 무효", 0)
