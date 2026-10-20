@@ -294,52 +294,34 @@ def _chart_short_up_line(lows: list, x_end: int) -> tuple[float, float, float, f
     return _rising_up_line(recent, x_end)
 
 
-def _price_down_line(highs: list, x_end: int, price: float) -> tuple[float, float, float, float] | None:
-    """최고 스윙고점과 현재가를 잇고, 선 위 고점이 없을 때까지 그 고점과 최고점을 다시 잇는다.
+PRICE_DOWN_MIN_GAP = 3
 
-    같은 최고가가 여러 개면 가장 오래된 점을 왼쪽으로 쓴다.
-    선 위 고점이 없으면 최고점~현재가 선을 그대로 둔다.
+
+def _price_down_line(highs: list, x_end: int, price: float = None) -> tuple[float, float, float, float] | None:
+    """전체 기준 하락추세선. 조회기간 최고 스윙고점과 두 번째로 높은 스윙고점을 잇고 오른쪽 끝까지 연장한다.
+
+    - 높이가 같으면 오래된 고점이 앞 순위.
+    - 2등이 1등의 왼쪽이든 오른쪽이든 그대로 잇는다 (선이 올라갈 수도 있음).
+    - 1등과 간격이 3봉 이내인 고점은 건너뛰고 다음 순위 고점을 쓴다.
+    - 짝이 없으면 1등 고점 높이로 수평선을 긋는다.
     """
-    if not highs or price is None or float(price) <= 0:
+    if not highs:
         return None
     x_end = int(x_end)
-    price = float(price)
-    max_i = int(highs[0][2])
-    max_y = float(highs[0][1])
-    for _t, y, i in highs[1:]:
-        y = float(y)
-        i = int(i)
-        if y > max_y:
-            max_y = y
-            max_i = i
-    if max_i >= x_end:
+    ranked = sorted(((float(y), int(i)) for _t, y, i in highs), key=lambda p: (-p[0], p[1]))
+    top_y, top_i = ranked[0]
+    if top_i > x_end:
         return None
-    original = _line_through((max_i, max_y), (x_end, price), x_end)
-    right_i = x_end
-    right_y = price
-    for _ in range(len(highs) + 1):
-        line = _line_through((max_i, max_y), (right_i, right_y), x_end)
-        if line is None:
-            return original
-        x0, y0, x1, y1 = line
-        if x1 == x0:
-            return original
-        piercer_i = None
-        piercer_y = None
-        for _tm, ym, im in highs:
-            im = int(im)
-            if im <= max_i or im >= right_i:
-                continue
-            y_at = y0 + (y1 - y0) / (x1 - x0) * (im - x0)
-            if float(ym) > y_at + max(1e-6, abs(y_at) * 1e-4):
-                if piercer_i is None or im > piercer_i:
-                    piercer_i = im
-                    piercer_y = float(ym)
-        if piercer_i is None:
+    for y, i in ranked[1:]:
+        if abs(i - top_i) <= PRICE_DOWN_MIN_GAP:
+            continue
+        p0, p1 = ((top_i, top_y), (i, y)) if top_i < i else ((i, y), (top_i, top_y))
+        line = _line_through(p0, p1, x_end)
+        if line is not None:
             return line
-        right_i = piercer_i
-        right_y = piercer_y
-    return original
+    if top_i >= x_end:
+        return None
+    return (float(top_i), top_y, float(x_end), top_y)
 
 
 def volume_profile(df: pd.DataFrame, bins: int = 48) -> tuple[np.ndarray, np.ndarray, float, float, float]:
