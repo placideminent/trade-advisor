@@ -237,30 +237,41 @@ def _rising_up_line(
     return line
 
 
+def _oldest_unbroken_down_line(highs: list, x_end: int) -> tuple[float, float, float, float] | None:
+    """가장 최근 스윙고점을 오른쪽 끝으로, 나머지 고점과 이은 선 중
+    사이 고점이 선 위로 뚫지 않는 선들 가운데 가장 오래된 고점과 이은 선."""
+    seq = sorted(highs, key=lambda pt: int(pt[2]))
+    if len(seq) < 2:
+        return None
+    ri, ry = int(seq[-1][2]), float(seq[-1][1])
+    for k in range(len(seq) - 1):
+        li, ly = int(seq[k][2]), float(seq[k][1])
+        if li == ri:
+            continue
+        slope = (ry - ly) / (ri - li)
+        ok = True
+        for pt in seq[k + 1:-1]:
+            yi = ly + slope * (int(pt[2]) - li)
+            if float(pt[1]) > yi + max(1e-6, abs(yi) * 1e-4):
+                ok = False
+                break
+        if ok:
+            return _line_through((li, ly), (ri, ry), x_end)
+    return None
+
+
+SHORT_DOWN_SWING_COUNT = 4
+
+
 def _chart_down_line(
     highs: list,
     x_end: int,
     similar_th: float | None = None,
 ) -> tuple[float, float, float, float] | None:
-    """가장 최근 스윙 고점과, 최근 스윙 고점 4개 중 가장 높은 고점을 잇는다.
-
-    가장 최근 고점은 반드시 오른쪽 끝점이다. 왼쪽 끝점은 그 앞 3개 고점 중
-    가장 높은 점(같은 가격이면 더 오래된 점)이다. 가장 최근 고점이 4개 중
-    가장 높으면 4개 중 가장 오래된 고점과 잇는다. similar_th는 쓰지 않는다.
-    """
-    if len(highs) < 2:
-        return None
-    seq = sorted(highs, key=lambda pt: int(pt[2]))[-4:]
-    right = seq[-1]
-    left = None
-    for pt in seq[:-1]:
-        if left is None or float(pt[1]) > float(left[1]):
-            left = pt
-    if left is None:
-        return None
-    if float(left[1]) < float(right[1]):
-        left = seq[0]
-    return _line_through((int(left[2]), float(left[1])), (int(right[2]), float(right[1])), x_end)
+    """단기 하락 추세선. 최근 스윙고점 4개 안에서 가장 최근 고점을 반드시 포함하고,
+    선 위로 뚫는 고점이 없는 선 중 가장 오래된 고점과 이은 선. similar_th는 쓰지 않는다."""
+    seq = sorted(highs, key=lambda pt: int(pt[2]))[-SHORT_DOWN_SWING_COUNT:]
+    return _oldest_unbroken_down_line(seq, x_end)
 
 
 def _last_two_up_line(lows: list, x_end: int) -> tuple[float, float, float, float] | None:
@@ -294,34 +305,15 @@ def _chart_short_up_line(lows: list, x_end: int) -> tuple[float, float, float, f
     return _rising_up_line(recent, x_end)
 
 
-PRICE_DOWN_MIN_GAP = 3
-
-
 def _price_down_line(highs: list, x_end: int, price: float = None) -> tuple[float, float, float, float] | None:
-    """전체 기준 하락추세선. 조회기간 최고 스윙고점과 두 번째로 높은 스윙고점을 잇고 오른쪽 끝까지 연장한다.
-
-    - 높이가 같으면 오래된 고점이 앞 순위.
-    - 2등이 1등의 왼쪽이든 오른쪽이든 그대로 잇는다 (선이 올라갈 수도 있음).
-    - 1등과 간격이 3봉 이내인 고점은 건너뛰고 다음 순위 고점을 쓴다.
-    - 짝이 없으면 1등 고점 높이로 수평선을 긋는다.
-    """
+    """장기 하락 추세선. 조회기간 전체 스윙고점에서 가장 최근 고점을 반드시 포함하고,
+    선 위로 뚫는 고점이 없는 선 중 가장 오래된 고점과 이은 선. 고점이 1개면 수평선."""
     if not highs:
         return None
-    x_end = int(x_end)
-    ranked = sorted(((float(y), int(i)) for _t, y, i in highs), key=lambda p: (-p[0], p[1]))
-    top_y, top_i = ranked[0]
-    if top_i > x_end:
-        return None
-    for y, i in ranked[1:]:
-        if abs(i - top_i) <= PRICE_DOWN_MIN_GAP:
-            continue
-        p0, p1 = ((top_i, top_y), (i, y)) if top_i < i else ((i, y), (top_i, top_y))
-        line = _line_through(p0, p1, x_end)
-        if line is not None:
-            return line
-    if top_i >= x_end:
-        return None
-    return (float(top_i), top_y, float(x_end), top_y)
+    if len(highs) == 1:
+        i, y = int(highs[0][2]), float(highs[0][1])
+        return (float(i), y, float(x_end), y) if i < int(x_end) else None
+    return _oldest_unbroken_down_line(highs, int(x_end))
 
 
 def volume_profile(df: pd.DataFrame, bins: int = 48) -> tuple[np.ndarray, np.ndarray, float, float, float]:
