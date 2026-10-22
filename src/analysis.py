@@ -305,15 +305,55 @@ def _chart_short_up_line(lows: list, x_end: int) -> tuple[float, float, float, f
     return _rising_up_line(recent, x_end)
 
 
+LONG_DOWN_RECENT_COUNT = 3
+
+
 def _price_down_line(highs: list, x_end: int, price: float = None) -> tuple[float, float, float, float] | None:
-    """장기 하락 추세선. 조회기간 전체 스윙고점에서 가장 최근 고점을 반드시 포함하고,
-    선 위로 뚫는 고점이 없는 선 중 가장 오래된 고점과 이은 선. 고점이 1개면 수평선."""
+    """장기 하락 추세선.
+
+    1. 최근 스윙고점 3개 중 가장 높은 고점(A)을 반드시 포함한다.
+    2. 조회기간 전체 최고 스윙고점(M)과 A를 잇는다. (같은 가격이면 오래된 점)
+    3. M이 A와 같은 점이면, A와 나머지 스윙고점을 각각 이었을 때 사이 고점이
+       선 위로 뚫지 않는 선 중 가장 오래된 고점과 이은 선을 쓴다.
+    고점이 1개면 수평선.
+    """
     if not highs:
         return None
-    if len(highs) == 1:
-        i, y = int(highs[0][2]), float(highs[0][1])
-        return (float(i), y, float(x_end), y) if i < int(x_end) else None
-    return _oldest_unbroken_down_line(highs, int(x_end))
+    x_end = int(x_end)
+    seq = sorted(((int(i), float(y)) for _t, y, i in highs), key=lambda p: p[0])
+    if len(seq) == 1:
+        i, y = seq[0]
+        return (float(i), y, float(x_end), y) if i < x_end else None
+
+    def top(pts):
+        best = pts[0]
+        for p in pts[1:]:
+            if p[1] > best[1]:
+                best = p
+        return best
+
+    a_pt = top(seq[-LONG_DOWN_RECENT_COUNT:])
+    m_pt = top(seq)
+    if m_pt[0] != a_pt[0]:
+        p0, p1 = (m_pt, a_pt) if m_pt[0] < a_pt[0] else (a_pt, m_pt)
+        return _line_through(p0, p1, x_end)
+    ai, ay = a_pt
+    for ji, jy in seq:
+        if ji == ai:
+            continue
+        lo, hi = (ji, ai) if ji < ai else (ai, ji)
+        (x0, y0), (x1, y1) = ((ji, jy), (ai, ay)) if ji < ai else ((ai, ay), (ji, jy))
+        slope = (y1 - y0) / (x1 - x0)
+        ok = True
+        for ki, ky in seq:
+            if lo < ki < hi:
+                yk = y0 + slope * (ki - x0)
+                if ky > yk + max(1e-6, abs(yk) * 1e-4):
+                    ok = False
+                    break
+        if ok:
+            return _line_through((x0, y0), (x1, y1), x_end)
+    return None
 
 
 def volume_profile(df: pd.DataFrame, bins: int = 48) -> tuple[np.ndarray, np.ndarray, float, float, float]:
