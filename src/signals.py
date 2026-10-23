@@ -8,7 +8,7 @@ import pandas as pd
 
 from .universe import is_crypto
 
-SIGNAL_RULE_VERSION = 113
+SIGNAL_RULE_VERSION = 114
 # 이 숫자를 올리면 배점 조절창 위젯 키·제목도 같이 바뀌어 예전 설명이 남지 않는다.
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 10
@@ -74,9 +74,9 @@ DEFAULT_CUTS_STOCK = {
     "buy_weak": 75,
     "buy_mid": 80,
     "buy_strong": 85,
-    "sell_weak": 35,
-    "sell_mid": 30,
-    "sell_strong": 25,
+    "sell_weak": 30,
+    "sell_mid": 25,
+    "sell_strong": 20,
 }
 DEFAULT_CUTS_CRYPTO = {
     "buy_weak": 75,
@@ -413,7 +413,25 @@ def migrate_cuts_v107(stock: dict, crypto: dict) -> tuple[dict, dict]:
     if _cuts_match(crypto, _PREV_CUTS_V106):
         crypto = dict(DEFAULT_CUTS_CRYPTO)
     crypto = migrate_crypto_buy_cuts(crypto)
+    stock = migrate_stock_sell_cuts(stock)
     return stock, crypto
+
+
+def migrate_stock_sell_cuts(cuts: dict) -> dict:
+    """예전 주식 기본 매도 컷(35/30/25)을 새 기본(30/25/20)으로 내린다. 직접 바꾼 값은 유지."""
+    try:
+        trio = (
+            int(cuts.get("sell_weak") or 0),
+            int(cuts.get("sell_mid") or 0),
+            int(cuts.get("sell_strong") or 0),
+        )
+    except (TypeError, ValueError):
+        return cuts
+    if trio == (35, 30, 25):
+        cuts = dict(cuts)
+        for k in ("sell_weak", "sell_mid", "sell_strong"):
+            cuts[k] = int(DEFAULT_CUTS_STOCK[k])
+    return cuts
 
 
 def migrate_crypto_buy_cuts(cuts: dict) -> dict:
