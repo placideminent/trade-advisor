@@ -8,7 +8,7 @@ import pandas as pd
 
 from .universe import is_crypto
 
-SIGNAL_RULE_VERSION = 119
+SIGNAL_RULE_VERSION = 120
 # 이 숫자를 올리면 배점 조절창 위젯 키·제목도 같이 바뀌어 예전 설명이 남지 않는다.
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 10
@@ -868,7 +868,10 @@ def _daily_closes(df, price: float) -> list[float]:
     return out
 
 
-def _price_gate(action: str, price: float, closes_d: list[float]) -> tuple[str, str]:
+UPLINE_BB_SKIP = 0.05
+
+
+def _price_gate(action: str, price: float, closes_d: list[float], skip_bb: bool = False) -> tuple[str, str]:
     """매수는 20일 최저 종가 +5% 안이고 볼린저 하단(20일, 2σ) 아래일 때만, 매도는 20일 최고 종가 -3% 안일 때만 낸다."""
     if action not in _BUY_SET and action not in _SELL_SET:
         return action, ""
@@ -883,6 +886,8 @@ def _price_gate(action: str, price: float, closes_d: list[float]) -> tuple[str, 
                 f"20일 저점 조건: 합산은 {action} 구간이지만 20일 최저 종가 {_fmt(low)}보다 "
                 f"{gap:.1f}% 높아(5% 초과) 홀딩"
             )
+        if skip_bb:
+            return action, ""
         bb = [c for c in closes_d[-BB_DAYS:] if c and c > 0]
         if len(bb) < BB_DAYS:
             return "홀딩", f"볼린저 하단 조건: 합산은 {action} 구간이지만 종가가 {BB_DAYS}일보다 적어 하단을 못 구해 홀딩"
@@ -1438,8 +1443,13 @@ def recommend(
     score_pct = score_to_pct(score)
     action = _action_from_pct(score_pct, cuts)
     gate_note = ""
-    action_base, _ = _price_gate(action_base, price, closes_d)
-    action, gate_note = _price_gate(action, price, closes_d)
+    # v120: 장기 상승 추세선을 5% 이상 밑돌면(이탈) 점수 매수의 볼린저 하단 확인을 생략 (20일 저점 조건은 유지)
+    skip_bb = bool(y_up is not None and y_up > 0 and price < y_up * (1.0 - UPLINE_BB_SKIP))
+    action_base, _ = _price_gate(action_base, price, closes_d, skip_bb)
+    pre_gate = action
+    action, gate_note = _price_gate(action, price, closes_d, skip_bb)
+    if skip_bb and action in _BUY_SET and pre_gate in _BUY_SET and _price_gate(pre_gate, price, closes_d)[0] == "홀딩":
+        reasons.append(f"장기 상승선 {_fmt(y_up)} 대비 {(price / y_up - 1) * 100:.1f}% 이탈로 볼린저 하단 확인 생략")
     if gate_note:
         reasons.append(gate_note)
     dip_note = ""
