@@ -8,7 +8,7 @@ import pandas as pd
 
 from .universe import is_crypto
 
-SIGNAL_RULE_VERSION = 114
+SIGNAL_RULE_VERSION = 115
 # 이 숫자를 올리면 배점 조절창 위젯 키·제목도 같이 바뀌어 예전 설명이 남지 않는다.
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 10
@@ -43,7 +43,9 @@ DEFAULT_WEIGHTS = {
     "poc": 1,
     "val": 1,
     "vah": -1,
-    "rsi": 1,
+    "rsi": 2,
+    "rsi_high": 0,
+    "drop10_15": 1,
     "ma20": 1,
     "ma60_near": 1,
     "ma200_near": 1,
@@ -62,10 +64,10 @@ DEFAULT_WEIGHTS = {
     "chg1_down50": 0,
     "chg6_50": 0,
     "chg6_200": 0,
-    "chg6_300": -1,
+    "chg6_300": -2,
     "chg6_500": 0,
-    "chg6_600": -2,
-    "chg6_800": -3,
+    "chg6_600": -4,
+    "chg6_800": -6,
     "rr_penalty": 0,
     "option_wall": 1,
 }
@@ -119,7 +121,9 @@ WEIGHT_FIELDS = [
     ("poc", "최대 매물 (POC)", "현재가가 거래가 가장 많았던 가격 근접 했을 때, 이탈 시 무효"),
     ("val", "밸류 하단 (VAL)", "현재가가 싼 구간 아래일때 (추세 무관)"),
     ("vah", "밸류 상단 (VAH)", "현재가가 비싼 구간 위일때 (거리 무관)"),
-    ("rsi", "RSI", "35 이하 (너무 많이 떨어짐) / 70 이상 (너무 많이 오름)"),
+    ("rsi", "RSI 35 이하", "RSI 35 이하 (너무 많이 떨어짐)일 때 가점"),
+    ("rsi_high", "RSI 70 이상", "RSI 70 이상 (너무 많이 오름)일 때 이 크기만큼 감점. 기본 0 (v115부터 끔)"),
+    ("drop10_15", "10일 고점 대비 하락", "(주식만, 코인 제외) 종가가 최근 10일 최고 종가보다 15% 이상 낮을 때 가점"),
     ("ma20", "20일선", "현재가가 20일선 근처일때, 20일선 완전 이탈시 무효"),
     ("ma60_near", "60일선", "현재가가 60일선 근처일때, 60일선 완전 이탈시 무효"),
     ("ma200_near", "180일선", "현재가가 장기 이평 근처일 때. 6개월 조회는 180일선, 1년 조회는 300일선, 완전이탈시 무효"),
@@ -127,9 +131,9 @@ WEIGHT_FIELDS = [
     ("chg1_down10", "1개월 하락률", "한 달동안 15% 이상 25%미만 하락 했을 때, 장기 상승 추세선 이탈시 무효"),
     ("chg1_down20", "1개월 하락률", "한 달 동안 25% 이상 35% 미만 떨어짐, 장기 상승 추세선 이탈시 무효"),
     ("chg1_down30", "1개월 하락률", "한 달 동안 35% 이상 떨어짐, 장기 상승 추세선 이탈시 무효"),
-    ("chg6_800", "6개월 상승률", "6개월 동안 800% 이상 오름, 횡보 추세나 하락 추세시 무효, 장기 하락 추세선 돌파시 무효"),
-    ("chg6_600", "6개월 상승률", "6개월 동안 600% 이상 오름, 횡보 추세나 하락 추세시 무효, 장기 하락 추세선 돌파시 무효"),
-    ("chg6_300", "6개월 상승률", "6개월 동안 300% 이상 600% 미만 오름, 횡보 추세나 하락 추세시 무효, 장기 하락 추세선 돌파시 무효"),
+    ("chg6_800", "6개월 상승률", "6개월 동안 800% 이상 오름, 횡보 추세나 하락 추세시 무효, 장기 하락 추세선 돌파시 무효 (v115부터 감점 2배)"),
+    ("chg6_600", "6개월 상승률", "6개월 동안 600% 이상 오름, 횡보 추세나 하락 추세시 무효, 장기 하락 추세선 돌파시 무효 (v115부터 감점 2배)"),
+    ("chg6_300", "6개월 상승률", "6개월 동안 300% 이상 600% 미만 오름, 횡보 추세나 하락 추세시 무효, 장기 하락 추세선 돌파시 무효 (v115부터 감점 2배)"),
     ("bar_spike_20", "단기 급상승", "1개 봉만에 20% 이상 상승했을 시"),
     ("option_wall", "옵션", "기존 결과가 홀딩이면 옵션은 보지 않음 / 기존이 매도인데, 만기가 14일 안이고, 위쪽에 콜 벽이 두껍고 아래 풋 벽이 얇음 / 반대로 아래 풋 벽이 두껍고 위 콜 벽이 얇음 / 기존이 매수인데, 아래 풋 벽이 얇고 위 콜 벽이 두꺼움"),
 ]
@@ -202,10 +206,10 @@ RETURN_TIER_DEFAULTS = {
     "chg1_down50": 0,
     "chg6_50": 0,
     "chg6_200": 0,
-    "chg6_300": -1,
+    "chg6_300": -2,
     "chg6_500": 0,
-    "chg6_600": -2,
-    "chg6_800": -3,
+    "chg6_600": -4,
+    "chg6_800": -6,
     "swing_low_near": 0,
     "swing_high_near": 0,
     "trendline_up_1m_down": 0,
@@ -229,6 +233,36 @@ def migrate_return_tiers(weights: dict) -> dict:
     """1개월·6개월 수익률 구간 배점을 새 기본값으로 맞춘다."""
     for key, val in RETURN_TIER_DEFAULTS.items():
         weights[key] = int(val)
+    return weights
+
+
+_V114_WEIGHT_DEFAULTS = {"rsi": 1, "chg6_300": -1, "chg6_600": -2, "chg6_800": -3}
+
+
+def migrate_weights_v115(weights: dict, src_keys=None) -> dict:
+    """v114 기본 배점(RSI ±1, 6개월 상승률 -1/-2/-3)을 v115 기본으로 바꾼다. 직접 바꾼 값은 유지.
+
+    v114까지 RSI 한 칸이 35 이하 가점·70 이상 감점을 같이 정했다. 기본(1)이면 35 이하 +2, 70 이상 0.
+    직접 바꾼 값이면 35 이하는 그대로, 70 이상 감점도 같은 크기로 남긴다. rsi_high는 감점 크기(양수)로 저장한다.
+    """
+    try:
+        old_rsi = int(weights.get("rsi", _V114_WEIGHT_DEFAULTS["rsi"]))
+    except (TypeError, ValueError):
+        old_rsi = _V114_WEIGHT_DEFAULTS["rsi"]
+    keys = set(src_keys) if src_keys is not None else set(weights)
+    if "rsi_high" not in keys:
+        if old_rsi == _V114_WEIGHT_DEFAULTS["rsi"]:
+            weights["rsi"] = int(DEFAULT_WEIGHTS["rsi"])
+            weights["rsi_high"] = int(DEFAULT_WEIGHTS["rsi_high"])
+        else:
+            weights["rsi_high"] = abs(old_rsi)
+    for key in ("chg6_300", "chg6_600", "chg6_800"):
+        try:
+            if int(weights.get(key, _V114_WEIGHT_DEFAULTS[key])) == _V114_WEIGHT_DEFAULTS[key]:
+                weights[key] = int(DEFAULT_WEIGHTS[key])
+        except (TypeError, ValueError):
+            weights[key] = int(DEFAULT_WEIGHTS[key])
+    weights.setdefault("drop10_15", int(DEFAULT_WEIGHTS["drop10_15"]))
     return weights
 
 
@@ -800,6 +834,60 @@ def _line_dir(line) -> str | None:
     return "up" if dy > 0 else "down"
 
 
+GATE_DAYS = 20
+GATE_BAND = 0.05
+_BUY_SET = ("약한 매수", "매수", "강한 매수")
+_SELL_SET = ("약한 매도", "매도", "강한 매도")
+
+
+def _daily_closes(df, price: float) -> list[float]:
+    """봉을 날짜별 마지막 종가로 묶고, 마지막 날은 현재가로 바꾼다. 일봉이면 종가 그대로."""
+    out: list[float] = []
+    try:
+        if df is not None and not getattr(df, "empty", True) and "close" in df:
+            close = pd.to_numeric(df["close"], errors="coerce").dropna()
+            if len(close):
+                idx = pd.DatetimeIndex(close.index)
+                days = idx.normalize()
+                daily = close.groupby(days).last()
+                out = [float(v) for v in daily.iloc[:-1].tolist()]
+    except Exception:
+        out = []
+    try:
+        px = float(price)
+    except (TypeError, ValueError):
+        px = 0.0
+    if px > 0:
+        out.append(px)
+    return out
+
+
+def _price_gate(action: str, price: float, closes_d: list[float]) -> tuple[str, str]:
+    """매수는 20일 최저 종가 +5% 안, 매도는 20일 최고 종가 -5% 안일 때만 낸다."""
+    if action not in _BUY_SET and action not in _SELL_SET:
+        return action, ""
+    window = [c for c in closes_d[-GATE_DAYS:] if c and c > 0]
+    if not window or not price or price <= 0:
+        return action, ""
+    if action in _BUY_SET:
+        low = min(window)
+        if price > low * (1.0 + GATE_BAND) + 1e-12:
+            gap = (price / low - 1.0) * 100.0
+            return "홀딩", (
+                f"20일 저점 조건: 합산은 {action} 구간이지만 20일 최저 종가 {_fmt(low)}보다 "
+                f"{gap:.1f}% 높아(5% 초과) 홀딩"
+            )
+        return action, ""
+    high = max(window)
+    if price < high * (1.0 - GATE_BAND) - 1e-12:
+        gap = (1.0 - price / high) * 100.0
+        return "홀딩", (
+            f"20일 고점 조건: 합산은 {action} 구간이지만 20일 최고 종가 {_fmt(high)}보다 "
+            f"{gap:.1f}% 낮아(5% 초과) 홀딩"
+        )
+    return action, ""
+
+
 def _action_from_pct(score_pct: int, cuts: dict) -> str:
     buy_weak = int(cuts["buy_weak"])
     buy_mid = int(cuts["buy_mid"])
@@ -1088,11 +1176,10 @@ def recommend(
     else:
         add("밸류 상단 (VAH)", f"상단 {_fmt(an.vah)} (해당 없음)", 0)
 
-    rsi_pts = abs(wp("rsi"))
     if an.rsi >= 70:
-        add("RSI", f"{an.rsi:.1f} (70 이상)", -rsi_pts)
+        add("RSI", f"{an.rsi:.1f} (70 이상)", -abs(wp("rsi_high")))
     elif an.rsi <= 35:
-        add("RSI", f"{an.rsi:.1f} (35 이하)", rsi_pts)
+        add("RSI", f"{an.rsi:.1f} (35 이하)", abs(wp("rsi")))
     else:
         add("RSI", f"{an.rsi:.1f} 중립", 0)
 
@@ -1134,6 +1221,19 @@ def recommend(
             add("1개월 하락률", f"{chg_pct:.1f}%", 0)
         else:
             add("1개월 하락률", "해당 없음", 0)
+
+    closes_d = _daily_closes(getattr(an, "df", None), price)
+    if crypto:
+        add("10일 고점 대비 하락", "코인 제외", 0)
+    elif len(closes_d) < 2:
+        add("10일 고점 대비 하락", "직전 종가 없음", 0)
+    else:
+        hi10 = max(closes_d[-11:])
+        drop10 = price / hi10 - 1.0 if hi10 > 0 else 0.0
+        if drop10 <= -0.15 + 1e-9:
+            add("10일 고점 대비 하락", f"10일 최고 종가 {_fmt(hi10)} 대비 {drop10 * 100:.1f}% (15% 이상 하락)", wp("drop10_15"))
+        else:
+            add("10일 고점 대비 하락", f"10일 최고 종가 {_fmt(hi10)} 대비 {drop10 * 100:.1f}%", 0)
 
     chg6 = six_month_chg
     if chg6 is None:
@@ -1206,6 +1306,11 @@ def recommend(
     lo, hi = SCORE_LO, SCORE_HI
     score_pct = score_to_pct(score)
     action = _action_from_pct(score_pct, cuts)
+    gate_note = ""
+    action_base, _ = _price_gate(action_base, price, closes_d)
+    action, gate_note = _price_gate(action, price, closes_d)
+    if gate_note:
+        reasons.append(gate_note)
     reasons.append(
         f"합산 {score_pct}% ({score}점, 범위 {lo}~{hi}) · "
         f"{cut_kind} 컷 · 약한매수 {buy_weak}%↑ / 매수 {buy_mid}%↑ / 강한매수 {buy_strong}%↑ · "
@@ -1232,6 +1337,8 @@ def recommend(
         if bar_count < 50:
             summary = "조회 기간이 짧아 신호가 쉽게 바뀝니다. 지금은 관망(홀딩)이 낫습니다."
 
+    if gate_note:
+        summary = gate_note + " 지금은 관망(홀딩)이 낫습니다."
     if action != action_base:
         summary = f"기존 규칙 {action_base}에 옵션을 반영해 {action}로 조정했습니다. " + summary
     if action in ("매수", "약한 매수", "강한 매수"):

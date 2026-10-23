@@ -37,6 +37,7 @@ from .signals import (
     migrate_base_v103,
     migrate_return_tiers,
     migrate_sell_cuts,
+    migrate_weights_v115,
 )
 
 BROWSER_PENDING = "__pending__"
@@ -264,7 +265,9 @@ def _normalize(raw: dict | None) -> dict:
         rule_ver = int(raw.get("rule_ver") or 0)
     except (TypeError, ValueError):
         rule_ver = 0
+    src_weight_keys = set(weights.keys()) if isinstance(weights, dict) else set()
     if rule_ver < 54:
+        src_weight_keys = set(DEFAULT_WEIGHTS.keys())
         data["weights"] = dict(DEFAULT_WEIGHTS)
         data["cuts"] = dict(DEFAULT_CUTS_STOCK)
         data["cuts_crypto"] = dict(DEFAULT_CUTS_CRYPTO)
@@ -296,6 +299,9 @@ def _normalize(raw: dict | None) -> dict:
     if rule_ver < 107:
         data["cuts"], data["cuts_crypto"] = migrate_cuts_v107(data["cuts"], data["cuts_crypto"])
         rule_ver = 107
+    if rule_ver < 115:
+        migrate_weights_v115(data["weights"], src_weight_keys)
+        rule_ver = 115
     data["cuts_crypto"] = migrate_crypto_buy_cuts(data["cuts_crypto"])
     data["cuts"] = migrate_stock_sell_cuts(data["cuts"])
     for key, val in RETURN_TIER_DEFAULTS.items():
