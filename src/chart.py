@@ -7,7 +7,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 from .analysis import Analysis
-from .signals import Signal, _fmt
+from .signals import BB_DAYS, BB_K, Signal, _fmt
 
 
 def _price_text(value: float) -> str:
@@ -20,7 +20,26 @@ def _idle_drag(fig: go.Figure) -> go.Figure:
     return fig
 
 
-def build_chart(an: Analysis, sig: Signal, title: str) -> go.Figure:
+def _bollinger(df: pd.DataFrame) -> tuple[pd.Series, pd.Series, pd.Series, bool] | None:
+    """볼린저 밴드(20봉 종가 평균 ± 2σ, 표본 표준편차 — 규칙과 같은 방식).
+
+    표시 봉 기준으로 계산한다. 봉이 일봉이 아니면(시간봉·4일봉) 네 번째 값이 False.
+    """
+    try:
+        close = pd.to_numeric(df["close"], errors="coerce")
+        if close.notna().sum() < BB_DAYS:
+            return None
+        mid = close.rolling(BB_DAYS).mean()
+        sd = close.rolling(BB_DAYS).std()
+        idx = pd.DatetimeIndex(df.index)
+        step = pd.Series(idx).diff().dropna().median() if len(idx) > 2 else pd.Timedelta(days=1)
+        daily = pd.Timedelta(hours=20) <= step <= pd.Timedelta(days=1, hours=12)
+        return mid + BB_K * sd, mid - BB_K * sd, mid, bool(daily)
+    except Exception:
+        return None
+
+
+def build_chart(an: Analysis, sig: Signal, title: str, bollinger: bool = True) -> go.Figure:
     df = an.df
     if df is None or df.empty:
         fig = go.Figure()
@@ -54,6 +73,37 @@ def build_chart(an: Analysis, sig: Signal, title: str) -> go.Figure:
         row=1,
         col=1,
     )
+
+    bb = _bollinger(df) if bollinger else None
+    if bb is not None:
+        bb_up, bb_lo, bb_mid, bb_daily = bb
+        tag = "" if bb_daily else " (표시 봉 기준)"
+        fig.add_trace(
+            go.Scatter(
+                x=df.index, y=bb_up, name="볼린저 상단" + tag, legendgroup="bb",
+                line=dict(color="rgba(234,88,12,0.55)", width=1), hoverinfo="skip",
+            ),
+            row=1,
+            col=1,
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=df.index, y=bb_lo, name="볼린저 하단" + tag, legendgroup="bb",
+                line=dict(color="rgba(234,88,12,0.55)", width=1),
+                fill="tonexty", fillcolor="rgba(234,88,12,0.07)", hoverinfo="skip",
+            ),
+            row=1,
+            col=1,
+        )
+        if "ma20" not in df.columns:
+            fig.add_trace(
+                go.Scatter(
+                    x=df.index, y=bb_mid, name="볼린저 중심", legendgroup="bb",
+                    line=dict(color="rgba(234,88,12,0.55)", width=1, dash="dash"), hoverinfo="skip",
+                ),
+                row=1,
+                col=1,
+            )
 
     if "ma20" in df.columns:
         fig.add_trace(
