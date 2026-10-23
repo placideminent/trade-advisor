@@ -8,7 +8,7 @@ import pandas as pd
 
 from .universe import is_crypto
 
-SIGNAL_RULE_VERSION = 118
+SIGNAL_RULE_VERSION = 119
 # 이 숫자를 올리면 배점 조절창 위젯 키·제목도 같이 바뀌어 예전 설명이 남지 않는다.
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 10
@@ -556,6 +556,7 @@ class Signal:
     option_applied: bool = False
     dip_buy: bool = False
     market_dip: bool = False
+    hammer_buy: bool = False
 
 
 def score_bounds(_has_6m: bool | None = None) -> tuple[int, int]:
@@ -962,6 +963,60 @@ def _market_dip_note(as_of, market, rsi_val) -> str:
     if idx is None or idx > MKT_DIP_INDEX_RSI_MAX:
         return ""
     return f"시장 과매도 매수: 나스닥 RSI {idx:.0f} · RSI {rsi_f:.0f}"
+
+
+HAMMER_WICK_MIN = 0.60
+HAMMER_BODY_MAX = 0.30
+HAMMER_RSI_MAX = 35.0
+HAMMER_DD20_MIN = 0.10
+
+
+def _hammer_buy_note(df, price: float, rsi_val) -> str:
+    """망치형 반등 매수: 오늘 일봉 아래꼬리 ≥ 고저폭 60%, 몸통 ≤ 30%, RSI 35 이하, 종가가 20일 최고 종가 대비 10% 이상 아래.
+
+    일봉(또는 일봉으로 묶을 수 있는 시간봉) OHLC가 없으면 건너뛴다.
+    """
+    try:
+        rsi_f = float(rsi_val)
+        px = float(price)
+    except (TypeError, ValueError):
+        return ""
+    if rsi_f != rsi_f or rsi_f > HAMMER_RSI_MAX or not px > 0:
+        return ""
+    try:
+        if df is None or getattr(df, "empty", True) or not all(c in df for c in ("open", "high", "low", "close")):
+            return ""
+        work = df[["open", "high", "low", "close"]].apply(pd.to_numeric, errors="coerce").dropna()
+        if len(work) < 20:
+            return ""
+        idx = pd.DatetimeIndex(work.index)
+        if len(idx) > 2 and pd.Series(idx).diff().dropna().median() > pd.Timedelta(days=1, hours=12):
+            return ""  # 여러 날 묶음 봉이면 일봉 캔들이 아님
+        g = work.groupby(idx.normalize())
+        day = pd.DataFrame({"open": g["open"].first(), "high": g["high"].max(), "low": g["low"].min(), "close": g["close"].last()})
+        if len(day) < 20:
+            return ""
+        o, h, l = float(day["open"].iloc[-1]), float(day["high"].iloc[-1]), float(day["low"].iloc[-1])
+        c = px
+        h, l = max(h, c), min(l, c)
+        rng = h - l
+        if not rng > 0:
+            return ""
+        wick = (min(o, c) - l) / rng
+        body = abs(c - o) / rng
+        if wick < HAMMER_WICK_MIN or body > HAMMER_BODY_MAX:
+            return ""
+        closes = [float(v) for v in day["close"].iloc[-20:-1].tolist()] + [c]
+        hi20 = max(closes)
+        dd = c / hi20 - 1
+        if dd > -HAMMER_DD20_MIN:
+            return ""
+    except Exception:
+        return ""
+    return (
+        f"망치형 반등 매수: 아래꼬리 {wick * 100:.0f}% · 몸통 {body * 100:.0f}% · "
+        f"20일 고점 {_fmt(hi20)} 대비 {dd * 100:.1f}% · RSI {rsi_f:.0f}"
+    )
 
 
 def _action_from_pct(score_pct: int, cuts: dict) -> str:
@@ -1401,6 +1456,13 @@ def recommend(
             action = "약한 매수"
             action_base = "약한 매수"
             reasons.insert(0, mkt_note)
+    ham_note = ""
+    if action == "홀딩":
+        ham_note = _hammer_buy_note(getattr(an, "df", None), price, getattr(an, "rsi", None))
+        if ham_note:
+            action = "약한 매수"
+            action_base = "약한 매수"
+            reasons.insert(0, ham_note)
     reasons.append(
         f"합산 {score_pct}% ({score}점, 범위 {lo}~{hi}) · "
         f"{cut_kind} 컷 · 약한매수 {buy_weak}%↑ / 매수 {buy_mid}%↑ / 강한매수 {buy_strong}%↑ · "
@@ -1431,11 +1493,13 @@ def recommend(
         summary = gate_note + " 지금은 관망(홀딩)이 낫습니다."
     if dip_note:
         summary = dip_note + ". 합산 점수와 상관없이 상승 추세 속 급한 눌림이라 약한 매수로 봅니다."
+    if ham_note:
+        summary = ham_note + ". 합산 점수와 상관없이 과매도 급락 뒤 망치형 반등 캔들이라 약한 매수로 봅니다."
     if mkt_note:
         summary = mkt_note + ". 합산 점수와 상관없이 시장 전체가 과매도라 약한 매수로 봅니다."
     if action != action_base:
         summary = f"기존 규칙 {action_base}에 옵션을 반영해 {action}로 조정했습니다. " + summary
-    if action in ("매수", "약한 매수", "강한 매수") and not dip_note and not mkt_note:
+    if action in ("매수", "약한 매수", "강한 매수") and not dip_note and not mkt_note and not ham_note:
         summary = "하락·눌림 쪽에서 지지·하단 조건이 맞습니다. " + summary
     elif action in ("매도", "약한 매도", "강한 매도"):
         summary = "상승·고가 쪽에서 저항·상단 조건이 맞습니다. " + summary
@@ -1465,4 +1529,5 @@ def recommend(
         option_applied=option_applied,
         dip_buy=bool(dip_note),
         market_dip=bool(mkt_note),
+        hammer_buy=bool(ham_note),
     )
