@@ -8,7 +8,7 @@ import pandas as pd
 
 from .universe import is_crypto
 
-SIGNAL_RULE_VERSION = 116
+SIGNAL_RULE_VERSION = 117
 # 이 숫자를 올리면 배점 조절창 위젯 키·제목도 같이 바뀌어 예전 설명이 남지 않는다.
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 10
@@ -554,6 +554,7 @@ class Signal:
     action_base: str = ""
     score_pct_base: int = 0
     option_applied: bool = False
+    dip_buy: bool = False
 
 
 def score_bounds(_has_6m: bool | None = None) -> tuple[int, int]:
@@ -900,6 +901,43 @@ def _price_gate(action: str, price: float, closes_d: list[float]) -> tuple[str, 
             f"{gap:.1f}% 낮아(3% 초과) 홀딩"
         )
     return action, ""
+
+
+DIP_MA_DAYS = 60
+DIP_MA_SHIFT = 10
+DIP_RSI_MAX = 40.0
+
+
+def _dip_buy_note(closes_d: list[float], price: float, chg6, rsi_val) -> str:
+    """눌림목 매수: 60일선이 10일 전보다 높고, 6개월 수익률 > 0, 종가가 볼린저 하단(20일, 2σ) 아래, RSI 40 이하.
+
+    합산 점수 컷과 20일 저점 조건은 보지 않는다. 맞으면 설명 문장, 아니면 빈 문자열.
+    """
+    try:
+        rsi_f = float(rsi_val)
+    except (TypeError, ValueError):
+        return ""
+    if rsi_f != rsi_f or rsi_f > DIP_RSI_MAX:
+        return ""
+    if chg6 is None or not float(chg6) > 0:
+        return ""
+    vals = [c for c in closes_d if c and c > 0]
+    if len(vals) < DIP_MA_DAYS + DIP_MA_SHIFT or not price or price <= 0:
+        return ""
+    ma_now = sum(vals[-DIP_MA_DAYS:]) / DIP_MA_DAYS
+    ma_prev = sum(vals[-DIP_MA_DAYS - DIP_MA_SHIFT:-DIP_MA_SHIFT]) / DIP_MA_DAYS
+    if not ma_now > ma_prev:
+        return ""
+    bb = vals[-BB_DAYS:]
+    mean = sum(bb) / len(bb)
+    var = sum((c - mean) ** 2 for c in bb) / (len(bb) - 1)
+    lower = mean - BB_K * var ** 0.5
+    if not price < lower:
+        return ""
+    return (
+        f"눌림목 매수: 60일선 상승 중(10일 전 {_fmt(ma_prev)} → {_fmt(ma_now)}) · 6개월 {float(chg6) * 100:+.1f}% · "
+        f"볼린저 하단 {_fmt(lower)} 아래 · RSI {rsi_f:.0f}"
+    )
 
 
 def _action_from_pct(score_pct: int, cuts: dict) -> str:
@@ -1325,6 +1363,13 @@ def recommend(
     action, gate_note = _price_gate(action, price, closes_d)
     if gate_note:
         reasons.append(gate_note)
+    dip_note = ""
+    if action == "홀딩":
+        dip_note = _dip_buy_note(closes_d, price, chg6, getattr(an, "rsi", None))
+        if dip_note:
+            action = "약한 매수"
+            action_base = "약한 매수"
+            reasons.append(dip_note)
     reasons.append(
         f"합산 {score_pct}% ({score}점, 범위 {lo}~{hi}) · "
         f"{cut_kind} 컷 · 약한매수 {buy_weak}%↑ / 매수 {buy_mid}%↑ / 강한매수 {buy_strong}%↑ · "
@@ -1353,9 +1398,11 @@ def recommend(
 
     if gate_note:
         summary = gate_note + " 지금은 관망(홀딩)이 낫습니다."
+    if dip_note:
+        summary = dip_note + ". 합산 점수와 상관없이 상승 추세 속 급한 눌림이라 약한 매수로 봅니다."
     if action != action_base:
         summary = f"기존 규칙 {action_base}에 옵션을 반영해 {action}로 조정했습니다. " + summary
-    if action in ("매수", "약한 매수", "강한 매수"):
+    if action in ("매수", "약한 매수", "강한 매수") and not dip_note:
         summary = "하락·눌림 쪽에서 지지·하단 조건이 맞습니다. " + summary
     elif action in ("매도", "약한 매도", "강한 매도"):
         summary = "상승·고가 쪽에서 저항·상단 조건이 맞습니다. " + summary
@@ -1383,4 +1430,5 @@ def recommend(
         action_base=action_base,
         score_pct_base=score_pct_base,
         option_applied=option_applied,
+        dip_buy=bool(dip_note),
     )
