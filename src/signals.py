@@ -8,7 +8,7 @@ import pandas as pd
 
 from .universe import is_crypto
 
-SIGNAL_RULE_VERSION = 111
+SIGNAL_RULE_VERSION = 112
 # 이 숫자를 올리면 배점 조절창 위젯 키·제목도 같이 바뀌어 예전 설명이 남지 않는다.
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 10
@@ -71,9 +71,9 @@ DEFAULT_WEIGHTS = {
 }
 
 DEFAULT_CUTS_STOCK = {
-    "buy_weak": 65,
-    "buy_mid": 70,
-    "buy_strong": 75,
+    "buy_weak": 75,
+    "buy_mid": 80,
+    "buy_strong": 85,
     "sell_weak": 35,
     "sell_mid": 30,
     "sell_strong": 25,
