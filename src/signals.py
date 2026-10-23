@@ -8,7 +8,7 @@ import pandas as pd
 
 from .universe import is_crypto
 
-SIGNAL_RULE_VERSION = 115
+SIGNAL_RULE_VERSION = 116
 # 이 숫자를 올리면 배점 조절창 위젯 키·제목도 같이 바뀌어 예전 설명이 남지 않는다.
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 10
@@ -836,6 +836,9 @@ def _line_dir(line) -> str | None:
 
 GATE_DAYS = 20
 GATE_BAND = 0.05
+GATE_BAND_SELL = 0.03
+BB_DAYS = 20
+BB_K = 2.0
 _BUY_SET = ("약한 매수", "매수", "강한 매수")
 _SELL_SET = ("약한 매도", "매도", "강한 매도")
 
@@ -863,7 +866,7 @@ def _daily_closes(df, price: float) -> list[float]:
 
 
 def _price_gate(action: str, price: float, closes_d: list[float]) -> tuple[str, str]:
-    """매수는 20일 최저 종가 +5% 안, 매도는 20일 최고 종가 -5% 안일 때만 낸다."""
+    """매수는 20일 최저 종가 +5% 안이고 볼린저 하단(20일, 2σ) 아래일 때만, 매도는 20일 최고 종가 -3% 안일 때만 낸다."""
     if action not in _BUY_SET and action not in _SELL_SET:
         return action, ""
     window = [c for c in closes_d[-GATE_DAYS:] if c and c > 0]
@@ -877,13 +880,24 @@ def _price_gate(action: str, price: float, closes_d: list[float]) -> tuple[str, 
                 f"20일 저점 조건: 합산은 {action} 구간이지만 20일 최저 종가 {_fmt(low)}보다 "
                 f"{gap:.1f}% 높아(5% 초과) 홀딩"
             )
+        bb = [c for c in closes_d[-BB_DAYS:] if c and c > 0]
+        if len(bb) < BB_DAYS:
+            return "홀딩", f"볼린저 하단 조건: 합산은 {action} 구간이지만 종가가 {BB_DAYS}일보다 적어 하단을 못 구해 홀딩"
+        mean = sum(bb) / len(bb)
+        var = sum((c - mean) ** 2 for c in bb) / (len(bb) - 1)
+        lower = mean - BB_K * var ** 0.5
+        if not price < lower:
+            return "홀딩", (
+                f"볼린저 하단 조건: 합산은 {action} 구간이지만 현재가 {_fmt(price)}가 "
+                f"볼린저 하단(20일, 2σ) {_fmt(lower)}보다 위라 홀딩"
+            )
         return action, ""
     high = max(window)
-    if price < high * (1.0 - GATE_BAND) - 1e-12:
+    if price < high * (1.0 - GATE_BAND_SELL) - 1e-12:
         gap = (1.0 - price / high) * 100.0
         return "홀딩", (
             f"20일 고점 조건: 합산은 {action} 구간이지만 20일 최고 종가 {_fmt(high)}보다 "
-            f"{gap:.1f}% 낮아(5% 초과) 홀딩"
+            f"{gap:.1f}% 낮아(3% 초과) 홀딩"
         )
     return action, ""
 
