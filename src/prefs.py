@@ -32,6 +32,7 @@ from .signals import (
     migrate_cuts_v85,
     migrate_cuts_v102,
     migrate_cuts_v107,
+    migrate_crypto_buy_cuts,
     migrate_base_v103,
     migrate_return_tiers,
     migrate_sell_cuts,
@@ -294,6 +295,7 @@ def _normalize(raw: dict | None) -> dict:
     if rule_ver < 107:
         data["cuts"], data["cuts_crypto"] = migrate_cuts_v107(data["cuts"], data["cuts_crypto"])
         rule_ver = 107
+    data["cuts_crypto"] = migrate_crypto_buy_cuts(data["cuts_crypto"])
     for key, val in RETURN_TIER_DEFAULTS.items():
         data["weights"].setdefault(key, int(val))
     data["rule_ver"] = max(rule_ver, 107)
