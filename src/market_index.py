@@ -108,3 +108,22 @@ def index_rsi_on(as_of, market: str | None, symbol: str = NASDAQ_SYMBOL) -> floa
         return None
     v = float(rsi_series(s).iloc[-1])
     return v if v == v else None
+
+
+def index_drop20_on(as_of, market: str | None, symbol: str = NASDAQ_SYMBOL) -> float | None:
+    """as_of 기준 지수 종가의 20일 최고 종가 대비 변화율(예: -0.12). 한국 주식은 전날까지만. 없으면 None."""
+    d = _as_date(as_of)
+    if d is None:
+        return None
+    s = _load_closes(symbol)
+    if s is None:
+        return None
+    if str(market or "").upper() == "KR":
+        s = s[[x < d for x in s.index]]
+    else:
+        s = s[[x <= d for x in s.index]]
+    if len(s) < 20:
+        return None
+    w = s.iloc[-20:]
+    hi = float(w.max())
+    return float(w.iloc[-1]) / hi - 1 if hi > 0 else None

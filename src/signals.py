@@ -8,7 +8,7 @@ import pandas as pd
 
 from .universe import is_crypto
 
-SIGNAL_RULE_VERSION = 120
+SIGNAL_RULE_VERSION = 121
 # 이 숫자를 올리면 배점 조절창 위젯 키·제목도 같이 바뀌어 예전 설명이 남지 않는다.
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 10
@@ -557,6 +557,7 @@ class Signal:
     dip_buy: bool = False
     market_dip: bool = False
     hammer_buy: bool = False
+    nasdaq_drop_buy: bool = False
 
 
 def score_bounds(_has_6m: bool | None = None) -> tuple[int, int]:
@@ -1024,6 +1025,29 @@ def _hammer_buy_note(df, price: float, rsi_val) -> str:
     )
 
 
+NQ_DROP_MIN = 0.10
+NQ_DROP_RSI_MAX = 40.0
+
+
+def _nasdaq_drop_note(as_of, market, rsi_val) -> str:
+    """나스닥 급락 매수: 나스닥 종가가 20일 최고 종가보다 10% 이상 아래이고 종목 RSI 40 이하. 지수 데이터 없으면 건너뜀."""
+    try:
+        rsi_f = float(rsi_val)
+    except (TypeError, ValueError):
+        return ""
+    if rsi_f != rsi_f or rsi_f > NQ_DROP_RSI_MAX:
+        return ""
+    try:
+        from .market_index import index_drop20_on
+
+        dd = index_drop20_on(as_of, market)
+    except Exception:
+        dd = None
+    if dd is None or dd > -NQ_DROP_MIN:
+        return ""
+    return f"나스닥 급락 매수: 나스닥 20일 고점 대비 {dd * 100:.1f}% · RSI {rsi_f:.0f}"
+
+
 def _action_from_pct(score_pct: int, cuts: dict) -> str:
     buy_weak = int(cuts["buy_weak"])
     buy_mid = int(cuts["buy_mid"])
@@ -1473,6 +1497,13 @@ def recommend(
             action = "약한 매수"
             action_base = "약한 매수"
             reasons.insert(0, ham_note)
+    nqd_note = ""
+    if action == "홀딩":
+        nqd_note = _nasdaq_drop_note(getattr(an, "as_of", None), market, getattr(an, "rsi", None))
+        if nqd_note:
+            action = "약한 매수"
+            action_base = "약한 매수"
+            reasons.insert(0, nqd_note)
     reasons.append(
         f"합산 {score_pct}% ({score}점, 범위 {lo}~{hi}) · "
         f"{cut_kind} 컷 · 약한매수 {buy_weak}%↑ / 매수 {buy_mid}%↑ / 강한매수 {buy_strong}%↑ · "
@@ -1503,13 +1534,15 @@ def recommend(
         summary = gate_note + " 지금은 관망(홀딩)이 낫습니다."
     if dip_note:
         summary = dip_note + ". 합산 점수와 상관없이 상승 추세 속 급한 눌림이라 약한 매수로 봅니다."
+    if nqd_note:
+        summary = nqd_note + ". 합산 점수와 상관없이 나스닥이 짧은 기간에 크게 빠져 약한 매수로 봅니다."
     if ham_note:
         summary = ham_note + ". 합산 점수와 상관없이 과매도 급락 뒤 망치형 반등 캔들이라 약한 매수로 봅니다."
     if mkt_note:
         summary = mkt_note + ". 합산 점수와 상관없이 시장 전체가 과매도라 약한 매수로 봅니다."
     if action != action_base:
         summary = f"기존 규칙 {action_base}에 옵션을 반영해 {action}로 조정했습니다. " + summary
-    if action in ("매수", "약한 매수", "강한 매수") and not dip_note and not mkt_note and not ham_note:
+    if action in ("매수", "약한 매수", "강한 매수") and not dip_note and not mkt_note and not ham_note and not nqd_note:
         summary = "하락·눌림 쪽에서 지지·하단 조건이 맞습니다. " + summary
     elif action in ("매도", "약한 매도", "강한 매도"):
         summary = "상승·고가 쪽에서 저항·상단 조건이 맞습니다. " + summary
@@ -1540,4 +1573,5 @@ def recommend(
         dip_buy=bool(dip_note),
         market_dip=bool(mkt_note),
         hammer_buy=bool(ham_note),
+        nasdaq_drop_buy=bool(nqd_note),
     )
