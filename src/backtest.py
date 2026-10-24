@@ -210,6 +210,31 @@ def run_backtest(
     meta: dict = {"ticker": ticker, "name": ticker}
     notes: list[str] = []
 
+    # v125 고변동 매도 보류용 긴 일봉(250거래일 ATR 중앙값). 주식 매도 판정일 때만 한 번 받는다.
+    _long_daily: dict = {}
+
+    def _daily_long_until(as_of_day):
+        if str(market or "").upper() == "CRYPTO":
+            return None
+
+        def _load():
+            if "df" not in _long_daily:
+                got_df = None
+                try:
+                    got_df, _m = fetch_ohlcv(market, ticker, end, max((end - start).days, 1) + 420, "1d")
+                except Exception:
+                    got_df = None
+                _long_daily["df"] = got_df if got_df is not None and not getattr(got_df, "empty", True) else None
+            full = _long_daily["df"]
+            if full is None:
+                return None
+            idx = pd.DatetimeIndex(full.index)
+            if idx.tz is not None:
+                idx = idx.tz_localize(None)
+            return full[idx.normalize() <= pd.Timestamp(as_of_day)]
+
+        return _load
+
     def _try_ohlcv(tf: str):
         last_meta = dict(meta)
         for attempt in range(3):
@@ -393,6 +418,7 @@ def run_backtest(
                 market=market,
                 ticker=ticker,
                 df_1m=w1m,
+                daily_long=_daily_long_until(as_of),
             )
         except TypeError:
             sig = recommend(
