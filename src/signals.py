@@ -8,7 +8,7 @@ import pandas as pd
 
 from .universe import is_crypto
 
-SIGNAL_RULE_VERSION = 122
+SIGNAL_RULE_VERSION = 123
 # 이 숫자를 올리면 배점 조절창 위젯 키·제목도 같이 바뀌어 예전 설명이 남지 않는다.
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 10
@@ -1066,6 +1066,23 @@ def _nasdaq_drop_note(as_of, market, rsi_val) -> str:
     return f"나스닥 급락 매수: 나스닥 20일 고점 대비 {dd * 100:.1f}% · RSI {rsi_f:.0f}"
 
 
+def _stock_sell_hold_note(market, ticker, price: float, closes_d: list[float]) -> str:
+    """v123: 주식 매도 보류 사유 (크립토는 빈 문자열). 종가가 볼린저 상단(20일, 2σ) 위가 아니면 보류."""
+    mk = str(market or "").upper()
+    tk = str(ticker or "").upper()
+    if mk == "CRYPTO" or (not mk and tk.endswith("-USD")):
+        return ""
+    bb = [c for c in (closes_d or [])[-BB_DAYS:] if c and c > 0]
+    if len(bb) < BB_DAYS:
+        return f"매도 보류: 종가가 {BB_DAYS}일보다 적어 볼린저 상단을 못 구함 (주식)"
+    mean = sum(bb) / len(bb)
+    var = sum((c - mean) ** 2 for c in bb) / (len(bb) - 1)
+    upper = mean + BB_K * var ** 0.5
+    if float(price) > upper:
+        return ""
+    return f"매도 보류: 볼린저 상단(20일, 2σ) {_fmt(upper)} 아래 (주식)"
+
+
 def _action_from_pct(score_pct: int, cuts: dict) -> str:
     buy_weak = int(cuts["buy_weak"])
     buy_mid = int(cuts["buy_mid"])
@@ -1501,6 +1518,16 @@ def recommend(
         reasons.append(f"장기 상승선 {_fmt(y_up)} 대비 {(price / y_up - 1) * 100:.1f}% 이탈로 볼린저 하단 확인 생략")
     if gate_note:
         reasons.append(gate_note)
+    # v123: 주식(비크립토) 매도는 종가가 볼린저 상단(20일, 2σ) 위일 때만. 옵션 반영 후 결과에도 적용.
+    if action in _SELL_SET or action_base in _SELL_SET:
+        sell_hold = _stock_sell_hold_note(market, ticker, price, closes_d)
+        if sell_hold:
+            if action in _SELL_SET:
+                action = "홀딩"
+                gate_note = gate_note or sell_hold
+                reasons.append(sell_hold)
+            if action_base in _SELL_SET:
+                action_base = "홀딩"
     dip_note = ""
     if action == "홀딩":
         dip_note = _dip_buy_note(closes_d, price, chg6, getattr(an, "rsi", None))
