@@ -1575,3 +1575,103 @@ def recommend(
         hammer_buy=bool(ham_note),
         nasdaq_drop_buy=bool(nqd_note),
     )
+
+
+REPEAT_BUY_DAYS = 20
+REPEAT_BUY_TOL = 0.001
+
+
+def repeat_buy_warning(
+    an: Analysis,
+    sig: Signal,
+    lookback_days: int | None = None,
+    rule: dict | None = None,
+    market: str | None = None,
+    ticker: str | None = None,
+    days: int = REPEAT_BUY_DAYS,
+    df_full=None,
+    df_1m_full=None,
+) -> str:
+    """표시 전용 경고. 매수 신호 + 20일 신저가 종가 + 직전 20거래일 안에 더 높은 가격의 매수 신호가 있었으면 문구를 돌려준다.
+    매수/매도 판정·점수는 바꾸지 않는다 (규칙 버전과 무관)."""
+    try:
+        if sig is None or sig.action not in _BUY_SET:
+            return ""
+        df = getattr(an, "df", None)
+        price = float(getattr(an, "price", 0) or 0)
+        if df is None or getattr(df, "empty", True) or price <= 0:
+            return ""
+        closes_d = _daily_closes(df, price)
+        if len(closes_d) < 2:
+            return ""
+        if price > min(closes_d[-days:]) * (1.0 + REPEAT_BUY_TOL):
+            return ""
+        from .analysis import analyze
+
+        close = pd.to_numeric(df["close"], errors="coerce").dropna()
+        idx = pd.DatetimeIndex(close.index)
+        daily = close.groupby(idx.normalize()).last()
+        prior = list(daily.index[:-1])[-days:]
+        lb = int(lookback_days or 180)
+        src = df
+        if df_full is not None and not getattr(df_full, "empty", True) and "close" in df_full:
+            if getattr(df_full.index, "tz", None) == getattr(df.index, "tz", None):
+                src = df_full
+        for d in reversed(prior):
+            px = float(daily.loc[d])
+            if px <= price * (1.0 + REPEAT_BUY_TOL):
+                continue
+            cutoff = d + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
+            start = d - pd.Timedelta(days=lb)
+            if getattr(src.index, "tz", None) is not None:
+                cutoff = cutoff.tz_localize(src.index.tz) if cutoff.tzinfo is None else cutoff
+                start = start.tz_localize(src.index.tz) if start.tzinfo is None else start
+            sub = src.loc[(src.index >= start) & (src.index <= cutoff)]
+            if len(sub) < 20:
+                continue
+            try:
+                an_d = analyze(sub, as_of=d.date(), spot_price=px, price_source="해당일 종가", lookback_days=lookback_days)
+                chg6 = period_return(src, d.date(), px, 180)
+                w1m = None
+                if df_1m_full is not None and not getattr(df_1m_full, "empty", True):
+                    t1 = df_1m_full.index
+                    c1, s1 = d + pd.Timedelta(days=1) - pd.Timedelta(seconds=1), d - pd.Timedelta(days=30)
+                    if getattr(t1, "tz", None) is not None:
+                        c1, s1 = c1.tz_localize(t1.tz), s1.tz_localize(t1.tz)
+                    w1m = df_1m_full.loc[(t1 >= s1) & (t1 <= c1)]
+                    if len(w1m) < 24:
+                        w1m = None
+                s = recommend(
+                    an_d, six_month_chg=chg6, lookback_days=lookback_days, rule=rule,
+                    market=market, ticker=ticker, df_1m=w1m,
+                )
+            except Exception:
+                continue
+            if s.action in _BUY_SET:
+                return (
+                    f"⚠️ 하락 중 반복 매수: 최근 {days}일 내 매수({d.strftime('%m-%d')} {_fmt(px)}) 후 "
+                    f"신저가 갱신 · 분할 진입 권장"
+                )
+        return ""
+    except Exception:
+        return ""
+
+
+def repeat_buy_candidate(an: Analysis, sig: Signal, days: int = REPEAT_BUY_DAYS) -> bool:
+    """추가 시세를 불러올 필요가 있는지 빠르게 확인 (매수 + 20일 신저가 종가)."""
+    try:
+        if sig is None or sig.action not in _BUY_SET:
+            return False
+        price = float(getattr(an, "price", 0) or 0)
+        closes_d = _daily_closes(getattr(an, "df", None), price)
+        return price > 0 and len(closes_d) >= 2 and price <= min(closes_d[-days:]) * (1.0 + REPEAT_BUY_TOL)
+    except Exception:
+        return False
+
+
+def add_repeat_buy_warning(an: Analysis, sig: Signal, **kwargs) -> Signal:
+    note = repeat_buy_warning(an, sig, **kwargs)
+    if note:
+        sig.reasons.insert(0, note)
+        sig.summary = note + ". " + (sig.summary or "")
+    return sig

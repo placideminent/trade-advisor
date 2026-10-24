@@ -118,6 +118,8 @@ from src.signals import (
     migrate_stock_buy_cuts,
     period_return,
     recommend,
+    repeat_buy_candidate,
+    add_repeat_buy_warning,
     _fmt,
 )
 
@@ -157,7 +159,7 @@ def _load_df_1m(market, ticker, as_of, lookback_days, timeframe, live=False, cac
         return None
 
 
-def _make_signal(
+def _make_signal_base(
     an,
     six_month_chg=None,
     lookback_days=None,
@@ -203,6 +205,46 @@ def _make_signal(
                 return recommend(an, six_month_chg=six_month_chg)
             except TypeError:
                 return recommend(an)
+
+
+def _make_signal(
+    an,
+    six_month_chg=None,
+    lookback_days=None,
+    rule=None,
+    market=None,
+    ticker=None,
+    live=False,
+    use_options=None,
+    df_1m=None,
+):
+    signal = _make_signal_base(
+        an, six_month_chg, lookback_days, rule,
+        market=market, ticker=ticker, live=live, use_options=use_options, df_1m=df_1m,
+    )
+    # 표시 전용: 하락 중 반복 매수 경고 (판정·점수는 그대로)
+    try:
+        if repeat_buy_candidate(an, signal):
+            as_of = pd.Timestamp(getattr(an, "as_of", None) or date.today()).date()
+            lb = int(lookback_days or 180)
+            df_full = None
+            df_1m_full = None
+            try:
+                df_full, _m = _load_ohlcv(market, ticker, as_of, lb + 40, "1d", retries=1)
+            except Exception:
+                df_full = None
+            if df_1m is not None and lb > 60:
+                try:
+                    df_1m_full, _m = _load_ohlcv(market, ticker, as_of, 60, "1h", retries=1)
+                except Exception:
+                    df_1m_full = None
+            add_repeat_buy_warning(
+                an, signal, lookback_days=lookback_days, rule=rule, market=market,
+                ticker=ticker, df_full=df_full, df_1m_full=df_1m_full,
+            )
+    except Exception:
+        pass
+    return signal
 
 
 def _weight_bounds(key: str) -> tuple[int, int]:
@@ -1728,6 +1770,7 @@ def _quick_signal(
         "option_applied": bool(getattr(signal, "option_applied", False)),
         "price": analysis.price,
         "price_label": analysis.price_label,
+        "warning": next((r for r in (signal.reasons or []) if str(r).startswith("⚠️ 하락 중 반복 매수")), ""),
         "error": None,
     }
 
@@ -1865,6 +1908,8 @@ def _render_fav_row(row: dict, as_of, *, analyzed: bool, jump_page: str = "종�
             )
         else:
             st.markdown(_fav_bar_markup(css, meta, main), unsafe_allow_html=True)
+        if clickable and row.get("warning"):
+            st.caption(row["warning"])
         if clickable:
             if st.button(
                 "이 종목 분석",
