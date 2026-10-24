@@ -8,7 +8,7 @@ import pandas as pd
 
 from .universe import is_crypto
 
-SIGNAL_RULE_VERSION = 121
+SIGNAL_RULE_VERSION = 122
 # 이 숫자를 올리면 배점 조절창 위젯 키·제목도 같이 바뀌어 예전 설명이 남지 않는다.
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 10
@@ -131,9 +131,9 @@ WEIGHT_FIELDS = [
     ("chg1_down10", "1개월 하락률", "한 달동안 15% 이상 25%미만 하락 했을 때, 장기 상승 추세선 이탈시 무효"),
     ("chg1_down20", "1개월 하락률", "한 달 동안 25% 이상 35% 미만 떨어짐, 장기 상승 추세선 이탈시 무효"),
     ("chg1_down30", "1개월 하락률", "한 달 동안 35% 이상 떨어짐, 장기 상승 추세선 이탈시 무효"),
-    ("chg6_800", "6개월 상승률", "6개월 동안 800% 이상 오름, 횡보 추세나 하락 추세시 무효, 장기 하락 추세선 돌파시 무효 (v115부터 감점 2배)"),
-    ("chg6_600", "6개월 상승률", "6개월 동안 600% 이상 오름, 횡보 추세나 하락 추세시 무효, 장기 하락 추세선 돌파시 무효 (v115부터 감점 2배)"),
-    ("chg6_300", "6개월 상승률", "6개월 동안 300% 이상 600% 미만 오름, 횡보 추세나 하락 추세시 무효, 장기 하락 추세선 돌파시 무효 (v115부터 감점 2배)"),
+    ("chg6_800", "6개월 상승률", "6개월 동안 800% 이상 오름, 횡보 추세나 하락 추세시 무효, 현재가가 볼린저 밴드(20일, 2σ) 안이면 감점 절반 (v115부터 감점 2배, v122부터 장기 하락선 돌파 무효 제거)"),
+    ("chg6_600", "6개월 상승률", "6개월 동안 600% 이상 오름, 횡보 추세나 하락 추세시 무효, 현재가가 볼린저 밴드(20일, 2σ) 안이면 감점 절반 (v115부터 감점 2배, v122부터 장기 하락선 돌파 무효 제거)"),
+    ("chg6_300", "6개월 상승률", "6개월 동안 300% 이상 600% 미만 오름, 횡보 추세나 하락 추세시 무효, 현재가가 볼린저 밴드(20일, 2σ) 안이면 감점 절반 (v115부터 감점 2배, v122부터 장기 하락선 돌파 무효 제거)"),
     ("bar_spike_20", "단기 급상승", "1개 봉만에 20% 이상 상승했을 시"),
     ("option_wall", "옵션", "기존 결과가 홀딩이면 옵션은 보지 않음 / 기존이 매도인데, 만기가 14일 안이고, 위쪽에 콜 벽이 두껍고 아래 풋 벽이 얇음 / 반대로 아래 풋 벽이 두껍고 위 콜 벽이 얇음 / 기존이 매수인데, 아래 풋 벽이 얇고 위 콜 벽이 두꺼움"),
 ]
@@ -558,6 +558,24 @@ class Signal:
     market_dip: bool = False
     hammer_buy: bool = False
     nasdaq_drop_buy: bool = False
+
+
+def _inside_bollinger(an, price: float) -> bool:
+    """종가 기준 20일·2σ 볼린저 밴드 안(하단 < 현재가 < 상단)인지."""
+    try:
+        df = an.df
+        col = "close" if "close" in df else "Close"
+        c = df[col]
+        if getattr(an, "as_of", None) is not None:
+            c = c[c.index <= an.as_of]
+        bb = [float(x) for x in c.tail(BB_DAYS) if x == x and x > 0]
+        if len(bb) < BB_DAYS:
+            return False
+        mean = sum(bb) / len(bb)
+        sd = (sum((x - mean) ** 2 for x in bb) / (len(bb) - 1)) ** 0.5
+        return mean - BB_K * sd < float(price) < mean + BB_K * sd
+    except Exception:
+        return False
 
 
 def score_bounds(_has_6m: bool | None = None) -> tuple[int, int]:
@@ -1130,10 +1148,14 @@ def recommend(
     reasons: list[str] = []
     score_rows: list[dict] = []
 
-    def add(item: str, detail: str, pts: int) -> None:
+    def add(item: str, detail: str, pts: float) -> None:
         nonlocal score
+        if isinstance(pts, float) and pts.is_integer():
+            pts = int(pts)
         score += pts
-        label = f"+{pts}" if pts > 0 else str(pts)
+        if isinstance(score, float) and score.is_integer():
+            score = int(score)
+        label = f"+{pts:g}" if pts > 0 else f"{pts:g}"
         score_rows.append({"항목": item, "내용": detail, "점수": label})
         reasons.append(f"{item}: {detail} ({label})")
 
@@ -1410,10 +1432,13 @@ def recommend(
         if an.trend != "up":
             kind = "하락" if an.trend == "down" else "횡보"
             add("6개월 상승률", f"{chg6 * 100:.1f}% ({band}) · {kind}라 무효", 0)
-        elif y_pdn is not None and price > y_pdn:
-            add("6개월 상승률", f"{chg6 * 100:.1f}% ({band}) · 장기 하락선 돌파라 무효", 0)
         else:
-            add("6개월 상승률", f"{chg6 * 100:.1f}% ({rng})", wp(key))
+            pen = wp(key)
+            bb_in = _inside_bollinger(an, price)
+            if bb_in and pen:
+                add("6개월 상승률", f"{chg6 * 100:.1f}% ({rng}) · 볼린저 밴드 내 감점 절반", pen / 2)
+            else:
+                add("6개월 상승률", f"{chg6 * 100:.1f}% ({rng})", pen)
     else:
         add("6개월 상승률", f"{chg6 * 100:.1f}%", 0)
 
