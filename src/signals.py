@@ -8,7 +8,7 @@ import pandas as pd
 
 from .universe import is_crypto
 
-SIGNAL_RULE_VERSION = 124
+SIGNAL_RULE_VERSION = 125
 # 이 숫자를 올리면 배점 조절창 위젯 키·제목도 같이 바뀌어 예전 설명이 남지 않는다.
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 10
@@ -1088,16 +1088,33 @@ HIVOL_DAYS = 250
 HIVOL_MIN_BARS = 60
 
 
-def _atr_pct_median(an) -> float | None:
-    """일봉 기준 14일 ATR%(ATR/종가)의 최근 250거래일 중앙값. 데이터가 60봉 미만이면 None."""
+def _atr_pct_median(an, daily_long=None) -> float | None:
+    """일봉 기준 14일 ATR%(ATR/종가)의 최근 250거래일 중앙값. 데이터가 60봉 미만이면 None.
+
+    v125: daily_long(약 400일 일봉 DataFrame 또는 그것을 돌려주는 함수)이 있으면 그것으로 계산한다.
+    없으면 분석 데이터(조회기간)로 계산한다."""
     try:
-        df = getattr(an, "df", None)
+        df = None
+        if daily_long is not None:
+            try:
+                df = daily_long() if callable(daily_long) else daily_long
+            except Exception:
+                df = None
+        if df is None or getattr(df, "empty", True):
+            df = getattr(an, "df", None)
         if df is None or getattr(df, "empty", True):
             return None
         d = df[["high", "low", "close"]].apply(pd.to_numeric, errors="coerce").dropna()
         as_of = getattr(an, "as_of", None)
+        idx = pd.DatetimeIndex(d.index)
+        if idx.tz is not None:
+            idx = idx.tz_localize(None)
+        d.index = idx
         if as_of is not None:
-            d = d[d.index <= as_of]
+            cut = pd.Timestamp(as_of)
+            if cut.tzinfo is not None:
+                cut = cut.tz_localize(None)
+            d = d[d.index.normalize() <= cut.normalize()]
         idx = pd.DatetimeIndex(d.index)
         g = d.groupby(idx.normalize())
         d = pd.DataFrame({"high": g["high"].max(), "low": g["low"].min(), "close": g["close"].last()})
@@ -1111,13 +1128,13 @@ def _atr_pct_median(an) -> float | None:
         return None
 
 
-def _high_vol_sell_hold_note(market, ticker, an) -> str:
+def _high_vol_sell_hold_note(market, ticker, an, daily_long=None) -> str:
     """v124: 주식 중 ATR% 중앙값이 6% 이상인 고변동 종목은 매도 보류 (크립토 제외)."""
     mk = str(market or "").upper()
     tk = str(ticker or "").upper()
     if mk == "CRYPTO" or (not mk and tk.endswith("-USD")):
         return ""
-    med = _atr_pct_median(an)
+    med = _atr_pct_median(an, daily_long)
     if med is None or med < HIVOL_ATR_MED:
         return ""
     return f"매도 보류: 고변동 종목 (ATR 중앙값 {med:.1f}%)"
@@ -1183,6 +1200,7 @@ def recommend(
     market: str | None = None,
     ticker: str | None = None,
     df_1m=None,
+    daily_long=None,
     **_unused,
 ) -> Signal:
     cfg = merge_rule(rule)
@@ -1562,7 +1580,7 @@ def recommend(
     if action in _SELL_SET or action_base in _SELL_SET:
         sell_hold = _stock_sell_hold_note(market, ticker, price, closes_d)
         if not sell_hold:
-            sell_hold = _high_vol_sell_hold_note(market, ticker, an)
+            sell_hold = _high_vol_sell_hold_note(market, ticker, an, daily_long)
         if sell_hold:
             if action in _SELL_SET:
                 action = "홀딩"

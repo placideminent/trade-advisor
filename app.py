@@ -159,6 +159,22 @@ def _load_df_1m(market, ticker, as_of, lookback_days, timeframe, live=False, cac
         return None
 
 
+def _daily_long_loader(market, ticker, as_of):
+    """v125: 고변동 매도 보류용 약 400일 일봉. 주식 매도 판정일 때만 판정 함수가 호출한다 (캐시 사용)."""
+    if not ticker or str(market or "").upper() == "CRYPTO":
+        return None
+
+    def _load():
+        try:
+            day = as_of.date() if hasattr(as_of, "date") else date.fromisoformat(str(as_of)[:10])
+        except Exception:
+            day = date.today()
+        df, _meta = _load_ohlcv(market, ticker, day, 400, "1d", retries=1, cached=True)
+        return df if df is not None and not getattr(df, "empty", True) else None
+
+    return _load
+
+
 def _make_signal_base(
     an,
     six_month_chg=None,
@@ -196,6 +212,7 @@ def _make_signal_base(
             market=market,
             ticker=ticker,
             df_1m=df_1m,
+            daily_long=_daily_long_loader(market, ticker, getattr(an, "as_of", None)),
         )
     except TypeError:
         try:
