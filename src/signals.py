@@ -8,7 +8,7 @@ import pandas as pd
 
 from .universe import is_crypto
 
-SIGNAL_RULE_VERSION = 123
+SIGNAL_RULE_VERSION = 124
 # 이 숫자를 올리면 배점 조절창 위젯 키·제목도 같이 바뀌어 예전 설명이 남지 않는다.
 # 중립 기준점. 이보다 높으면 매수, 낮으면 매도.
 SCORE_BASE = 10
@@ -1083,6 +1083,46 @@ def _stock_sell_hold_note(market, ticker, price: float, closes_d: list[float]) -
     return f"매도 보류: 볼린저 상단(20일, 2σ) {_fmt(upper)} 아래 (주식)"
 
 
+HIVOL_ATR_MED = 6.0  # v124: 최근 250거래일 14일 ATR% 중앙값 기준
+HIVOL_DAYS = 250
+HIVOL_MIN_BARS = 60
+
+
+def _atr_pct_median(an) -> float | None:
+    """일봉 기준 14일 ATR%(ATR/종가)의 최근 250거래일 중앙값. 데이터가 60봉 미만이면 None."""
+    try:
+        df = getattr(an, "df", None)
+        if df is None or getattr(df, "empty", True):
+            return None
+        d = df[["high", "low", "close"]].apply(pd.to_numeric, errors="coerce").dropna()
+        as_of = getattr(an, "as_of", None)
+        if as_of is not None:
+            d = d[d.index <= as_of]
+        idx = pd.DatetimeIndex(d.index)
+        g = d.groupby(idx.normalize())
+        d = pd.DataFrame({"high": g["high"].max(), "low": g["low"].min(), "close": g["close"].last()})
+        h, l, c = d["high"], d["low"], d["close"]
+        tr = pd.concat([h - l, (h - c.shift()).abs(), (l - c.shift()).abs()], axis=1).max(axis=1)
+        atrp = (tr.rolling(14).mean() / c * 100.0).dropna().tail(HIVOL_DAYS)
+        if len(atrp) < HIVOL_MIN_BARS:
+            return None
+        return float(atrp.median())
+    except Exception:
+        return None
+
+
+def _high_vol_sell_hold_note(market, ticker, an) -> str:
+    """v124: 주식 중 ATR% 중앙값이 6% 이상인 고변동 종목은 매도 보류 (크립토 제외)."""
+    mk = str(market or "").upper()
+    tk = str(ticker or "").upper()
+    if mk == "CRYPTO" or (not mk and tk.endswith("-USD")):
+        return ""
+    med = _atr_pct_median(an)
+    if med is None or med < HIVOL_ATR_MED:
+        return ""
+    return f"매도 보류: 고변동 종목 (ATR 중앙값 {med:.1f}%)"
+
+
 def _action_from_pct(score_pct: int, cuts: dict) -> str:
     buy_weak = int(cuts["buy_weak"])
     buy_mid = int(cuts["buy_mid"])
@@ -1521,6 +1561,8 @@ def recommend(
     # v123: 주식(비크립토) 매도는 종가가 볼린저 상단(20일, 2σ) 위일 때만. 옵션 반영 후 결과에도 적용.
     if action in _SELL_SET or action_base in _SELL_SET:
         sell_hold = _stock_sell_hold_note(market, ticker, price, closes_d)
+        if not sell_hold:
+            sell_hold = _high_vol_sell_hold_note(market, ticker, an)
         if sell_hold:
             if action in _SELL_SET:
                 action = "홀딩"
