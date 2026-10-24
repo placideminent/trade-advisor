@@ -14,10 +14,83 @@ def _price_text(value: float) -> str:
     return _fmt(value)
 
 
-def _idle_drag(fig: go.Figure) -> go.Figure:
-    """드래그·터치는 아무것도 하지 않는다. 확대는 툴바 버튼을 누른 뒤에만."""
-    fig.update_layout(dragmode=False)
+_KO_WD = "월화수목금토일"
+# 축 눈금: 확대 정도에 따라 한글 날짜 형식 (영문 월 이름 없음)
+_KO_TICKSTOPS = [
+    dict(dtickrange=[None, 86400000], value="%-m월 %-d일 %H:%M"),
+    dict(dtickrange=[86400000, 2419200000], value="%-m월 %-d일"),
+    dict(dtickrange=["M1", "M12"], value="%Y년 %-m월"),
+    dict(dtickrange=["M12", None], value="%Y년"),
+]
+
+
+def _ko_date(t) -> str:
+    try:
+        ts = pd.Timestamp(t)
+    except Exception:
+        return str(t)
+    out = f"{ts.year}년 {ts.month}월 {ts.day}일 ({_KO_WD[ts.weekday()]})"
+    if ts.hour or ts.minute:
+        out += f" {ts.hour:02d}:{ts.minute:02d}"
+    return out
+
+
+def _is_date_seq(xs) -> bool:
+    try:
+        if xs is None or len(xs) == 0:
+            return False
+        x0 = xs[0]
+        import datetime as _dt
+        import numpy as _np
+
+        return isinstance(x0, (pd.Timestamp, _dt.date, _np.datetime64))
+    except Exception:
+        return False
+
+
+def _korean_dates(fig: go.Figure) -> go.Figure:
+    """모든 날짜 축·호버를 한글로 (예: 2026년 10월, 10월 22일, 2026년 10월 22일 (수))."""
+    try:
+        date_axes = set()
+        for tr in fig.data:
+            xs = getattr(tr, "x", None)
+            if not _is_date_seq(xs):
+                continue
+            date_axes.add(getattr(tr, "xaxis", None) or "x")
+            if getattr(tr, "customdata", None) is not None:
+                continue
+            labels = [_ko_date(t) for t in xs]
+            ht = getattr(tr, "hovertemplate", None)
+            if ht:
+                for f in ("%{x|%Y-%m-%d}", "%{x}"):
+                    ht = ht.replace(f, "%{customdata}")
+                tr.update(customdata=labels, hovertemplate=ht)
+            elif tr.type == "candlestick":
+                tr.update(
+                    customdata=labels,
+                    hovertemplate="%{customdata}<br>시가 %{open:,.2~f}<br>고가 %{high:,.2~f}<br>저가 %{low:,.2~f}<br>종가 %{close:,.2~f}<extra></extra>",
+                )
+            elif tr.type in ("scatter", "bar", "scattergl"):
+                name = (tr.name or "").replace("%", "%%")
+                tr.update(customdata=labels, hovertemplate="%{customdata}<br>" + (name + ": " if name else "") + "%{y:,.2~f}<extra></extra>")
+        for ax in date_axes:
+            key = "xaxis" if ax == "x" else "xaxis" + ax[1:]
+            fig.layout[key].update(tickformatstops=_KO_TICKSTOPS, hoverformat="%Y년 %-m월 %-d일")
+        # 공유 축(서브플롯)도 같은 형식
+        for key in fig.layout:
+            if key.startswith("xaxis"):
+                ax = fig.layout[key]
+                if ax.type == "date" or (ax.matches and ("xaxis" + ax.matches[1:] if ax.matches != "x" else "xaxis") in {("xaxis" if a == "x" else "xaxis" + a[1:]) for a in date_axes}):
+                    ax.update(tickformatstops=_KO_TICKSTOPS, hoverformat="%Y년 %-m월 %-d일")
+    except Exception:
+        pass
     return fig
+
+
+def _idle_drag(fig: go.Figure) -> go.Figure:
+    """드래그·터치는 아무것도 하지 않는다. 확대는 툴바 버튼을 누른 뒤에만. 날짜는 한글 표시."""
+    fig.update_layout(dragmode=False)
+    return _korean_dates(fig)
 
 
 def _bollinger(df: pd.DataFrame) -> tuple[pd.Series, pd.Series, pd.Series, bool] | None:
