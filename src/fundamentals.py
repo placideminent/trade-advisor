@@ -699,7 +699,7 @@ def _judge_value(fund: Fundamentals) -> tuple[str, list[str], float | None]:
                 )
             else:
                 reasons.append(
-                    f"추정 PER {fund.forward_per:.2f}배가 실적보다 {(1 - fwd_vs) * 100:.0f}% 낮아 이익 증가가 반영된 상태입니다."
+                    f"추정 PER {fund.forward_per:.2f}배가 실적보다 {(1 - fwd_vs) * 100:.0f}% 낮아, 이익 증가가 예상되는데 주가는 아직 덜 반영된 상태입니다."
                 )
             label = nxt
         elif fwd_vs >= 1.20:
@@ -710,7 +710,7 @@ def _judge_value(fund: Fundamentals) -> tuple[str, list[str], float | None]:
                 )
             else:
                 reasons.append(
-                    f"추정 PER {fund.forward_per:.2f}배가 실적보다 {(fwd_vs - 1) * 100:.0f}% 높아 이익 감소가 반영된 상태입니다."
+                    f"추정 PER {fund.forward_per:.2f}배가 실적보다 {(fwd_vs - 1) * 100:.0f}% 높아, 이익 감소가 예상되어 주가가 이를 반영해 더 비싸 보이는 상태입니다."
                 )
             label = nxt
         else:
